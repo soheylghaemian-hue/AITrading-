@@ -12,6 +12,7 @@ import {
 import {
   Watchlist, Opportunities, TradeJournal, PerformanceFull, LearningEngine, Exposure, Settings,
 } from "./sections2";
+import { TradingRisk } from "./TradingRisk";
 import type { Snapshot } from "../lib/types";
 
 const NAV = [
@@ -108,6 +109,7 @@ export function Terminal({ view = "overview" }: { view?: string }) {
         {view === "market" && <><Subscriptions s={s} /><MarketRegimes s={s} /></>}
         {view === "opportunities" && <><Funnel s={s} /><MarketRegimes s={s} /></>}
 
+        {showAll && <TradingRisk s={s} />}
         {showAll && (
           <div className="grid3">
             <Positions s={s} />
@@ -115,7 +117,7 @@ export function Terminal({ view = "overview" }: { view?: string }) {
           </div>
         )}
         {view === "positions" && <><Positions s={s} /><Exposure s={s} /></>}
-        {view === "risk" && <RiskCenter s={s} />}
+        {view === "risk" && <><TradingRisk s={s} /><RiskCenter s={s} /></>}
 
         {(showAll || view === "agents") && <AiTeam s={s} />}
         {(showAll || view === "agents") && <AiAnalysis s={s} />}

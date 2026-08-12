@@ -227,6 +227,7 @@ async def main(args: argparse.Namespace) -> int:
             market_data=market_data, subscriptions=_subscriptions(market_data),
             ai_analysis=ai_analysis, data_ok=any(r["status"] in ("DATA_AVAILABLE", "DELAYED") for r in market_data),
             historical_ok=historical_ok,
+            risk_capital=account.equity,   # capital mandate reference for the TRADING RISK panel
         ).as_dict()
         OUT.write_text(json.dumps(snap, indent=2))
     finally:

@@ -17,10 +17,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from typing import Callable
+
 from ..brokers.base import Broker
 from ..desk.desk import AutonomousTradingDesk
 from ..governance.registry import StrategyRegistry
 from ..journal.store import TradeJournal
+from ..risk.config import TradingRiskConfig
 from ..risk.engine import RiskEngine
 from .notifications import Kind, NotificationCenter, Severity
 from .snapshot import build_snapshot
@@ -45,6 +48,11 @@ class DashboardContext:
     market_data: list[dict] | None = None     # per-instrument quote availability (5 states)
     subscriptions: list[dict] | None = None   # required/missing IBKR data subscriptions
     ai_analysis: list[dict] | None = None      # read-only agent observations/signals
+    # TRADING RISK — the 3 user parameters. When set, the section shows the mandate capital;
+    # otherwise the account equity is used as the capital reference. Changes are applied to the
+    # authoritative Risk Engine (and, via on_risk_config_change, to the Position Sizer/policy).
+    risk_config: TradingRiskConfig | None = None
+    on_risk_config_change: Callable[[TradingRiskConfig], None] | None = None
 
     async def snapshot_dict(self) -> dict:
         account = await self.broker.get_account()
@@ -65,8 +73,37 @@ class DashboardContext:
             notifications=notes, market_data=self.market_data, subscriptions=self.subscriptions,
             ai_analysis=self.ai_analysis, buying_power=buying_power,
             execution_enabled=self.execution_enabled, connected=connected,
+            risk_config=self.risk_config,
+            risk_capital=(self.risk_config.capital if self.risk_config else None),
         )
         return snap.as_dict()
+
+    def set_risk_config(self, capital: float, risk_per_trade_pct: float,
+                        max_daily_loss_pct: float) -> dict:
+        """Apply the 3-parameter TRADING RISK config to the authoritative Risk Engine (and the
+        Position Sizer/policy via the optional hook). The Risk Engine then vetoes any order that
+        would exceed risk-per-trade and blocks all new trades once the daily-loss limit is hit.
+        This does NOT enable execution or live trading."""
+        cfg = TradingRiskConfig(
+            capital=float(capital), risk_per_trade_pct=float(risk_per_trade_pct),
+            max_daily_loss_pct=float(max_daily_loss_pct),
+        )
+        # The Risk Engine is the single authority — update its hard caps first.
+        self.risk.update_limits(
+            max_trade_risk_pct=cfg.risk_per_trade_pct,
+            max_daily_loss_pct=cfg.max_daily_loss_pct,
+        )
+        self.risk_config = cfg
+        if self.on_risk_config_change is not None:
+            self.on_risk_config_change(cfg)   # let the runner update the sizer/policy + capital
+        if self.notifications is not None:
+            self.notifications.push(
+                Kind.SYSTEM_ERROR,
+                f"trading risk updated — capital {cfg.capital:,.0f}, "
+                f"risk/trade {cfg.risk_per_trade_pct:.2%}, daily loss {cfg.max_daily_loss_pct:.2%}",
+                severity=Severity.INFO,
+            )
+        return cfg.as_dict()
 
     def emergency_stop(self, reason: str = "manual emergency stop") -> dict:
         """Trip the Risk Engine kill switch (§13). Stops ALL new orders; does not auto-flatten."""
@@ -89,7 +126,7 @@ def create_app(context: DashboardContext) -> Any:
 
     The emergency-stop / resume mutations require a bearer token from the ATP_DASHBOARD_TOKEN
     env var (never a hard-coded secret). If unset, mutations are disabled (read-only server)."""
-    from fastapi import Depends, FastAPI, Header, HTTPException  # noqa: PLC0415
+    from fastapi import Body, Depends, FastAPI, Header, HTTPException  # noqa: PLC0415
     from fastapi.responses import FileResponse, JSONResponse  # noqa: PLC0415
 
     app = FastAPI(title="atp command center", docs_url="/api/docs")
@@ -128,6 +165,7 @@ def create_app(context: DashboardContext) -> Any:
         ("/dashboard/market-data", "market_data"),
         ("/dashboard/subscriptions", "subscriptions"),
         ("/dashboard/ai-analysis", "ai_analysis"),
+        ("/dashboard/trading-risk", "trading_risk"),
         ("/dashboard/performance", "analytics_overall"),
         ("/dashboard/system", "system_health"),
         ("/dashboard/notifications", "notifications"),
@@ -150,6 +188,22 @@ def create_app(context: DashboardContext) -> Any:
     @app.post("/dashboard/resume")
     async def resume(_: None = Depends(require_token)) -> JSONResponse:
         return JSONResponse(context.resume())
+
+    @app.post("/dashboard/risk-config")
+    async def risk_config(payload: dict = Body(...), _: None = Depends(require_token)) -> JSONResponse:
+        """Set the 3 TRADING RISK parameters (capital, risk-per-trade %, max-daily-loss %). Token
+        protected. Applies to the authoritative Risk Engine; does NOT enable execution."""
+        try:
+            result = context.set_risk_config(
+                capital=payload["capital"],
+                risk_per_trade_pct=payload["risk_per_trade_pct"],
+                max_daily_loss_pct=payload["max_daily_loss_pct"],
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=400, detail=f"missing field: {exc}")
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return JSONResponse(result)
 
     @app.get("/")
     async def index() -> Any:

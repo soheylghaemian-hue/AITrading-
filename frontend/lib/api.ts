@@ -45,6 +45,20 @@ export async function emergencyStop(token: string): Promise<{ ok: boolean; detai
   return { ok: res.ok, detail: body.reason || body.detail || `${res.status}` };
 }
 
+export async function setRiskConfig(
+  token: string,
+  cfg: { capital: number; risk_per_trade_pct: number; max_daily_loss_pct: number },
+): Promise<{ ok: boolean; detail: string; data?: any }> {
+  if (!API_BASE) return { ok: false, detail: "no backend configured — connect a read-only backend to apply config" };
+  const res = await fetch(`${API_BASE}/dashboard/risk-config`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(cfg),
+  });
+  const body = await res.json().catch(() => ({}));
+  return { ok: res.ok, detail: body.detail || (res.ok ? "updated" : `${res.status}`), data: body };
+}
+
 export async function resumeTrading(token: string): Promise<{ ok: boolean; detail: string }> {
   if (!API_BASE) return { ok: false, detail: "no backend configured" };
   const res = await fetch(`${API_BASE}/dashboard/resume`, {

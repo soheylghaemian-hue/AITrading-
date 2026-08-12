@@ -40,6 +40,11 @@ export interface Snapshot {
   market_data?: MarketDataRow[];
   subscriptions?: Record<string, any>[];
   ai_analysis?: AiAnalysisRow[];
+  trading_risk?: {
+    capital: number; risk_per_trade_pct: number; max_risk_per_trade: number;
+    max_daily_loss_pct: number; max_daily_loss: number; current_daily_pnl: number;
+    remaining_daily_risk: number; status: "ACTIVE" | "DAILY LIMIT REACHED";
+  } | null;
   agents?: Record<string, any>[];
   governance?: Record<string, any>[];
   system_health?: Record<string, string>;

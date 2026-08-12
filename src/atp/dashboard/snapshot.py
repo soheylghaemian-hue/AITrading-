@@ -19,6 +19,7 @@ from ..brokers.base import Account
 from ..governance.registry import StrategyRegistry
 from ..journal.analytics import TradeAnalytics
 from ..journal.store import TradeJournal
+from ..risk.config import TradingRiskConfig, trading_risk_view
 from ..risk.engine import RiskEngine
 
 # The nine+ specialists the AI team is expected to field (§9). Used to show IDLE agents too.
@@ -213,6 +214,7 @@ class DashboardSnapshot:
     market_data: list[dict]            # per-instrument live-quote availability (5 states)
     subscriptions: list[dict]          # required/missing IBKR market-data subscriptions
     ai_analysis: list[dict]            # read-only agent observations/signals (NO execution)
+    trading_risk: dict | None          # the 3-parameter TRADING RISK config + derived limits/status
     agents: list[dict]
     governance: list[dict]
     system_health: dict
@@ -250,6 +252,8 @@ def build_snapshot(
     orders: int = 0,
     connected: bool | None = None,
     historical_ok: bool | None = None,
+    risk_config: TradingRiskConfig | None = None,
+    risk_capital: float | None = None,
 ) -> DashboardSnapshot:
     """Assemble the full Command Center state from live objects (§22). Real data only."""
     trades = journal.all() if journal is not None else []
@@ -265,6 +269,25 @@ def build_snapshot(
             })
 
     notif = [n.as_dict() if hasattr(n, "as_dict") else n for n in (notifications or [])]
+
+    # TRADING RISK: the 3 user parameters + derived monetary limits + today's status. Sourced
+    # from the authoritative Risk Engine limits (and the capital mandate), so it always reflects
+    # what the engine actually enforces. Never fabricated — omitted if it can't be formed.
+    cfg = risk_config
+    if cfg is None:
+        cap = risk_capital if (risk_capital and risk_capital > 0) else account.equity
+        try:
+            cfg = TradingRiskConfig(
+                capital=cap, risk_per_trade_pct=risk.limits.max_trade_risk_pct,
+                max_daily_loss_pct=risk.limits.max_daily_loss_pct,
+            )
+        except (ValueError, TypeError):
+            cfg = None
+    trading_risk = (
+        trading_risk_view(cfg, daily_pnl=risk_view.daily_pnl,
+                          halted=risk_view.halted or risk_view.killed)
+        if cfg is not None else None
+    )
 
     md_flag = _market_data_health(market_data)
     return DashboardSnapshot(
@@ -287,6 +310,7 @@ def build_snapshot(
         market_data=market_data or [],
         subscriptions=subscriptions or [],
         ai_analysis=ai_analysis or [],
+        trading_risk=trading_risk,
         agents=_agents(analytics, registry),
         governance=governance,
         system_health=_system_health(

@@ -18,7 +18,7 @@ stops — you may always cut risk, never only add it, but a kill switch stops ev
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Callable
 
 from ..brokers.base import Account, Order
@@ -123,6 +123,16 @@ class RiskEngine:
     def reset_kill(self) -> None:
         self._state.killed = False
         self._state.kill_reason = ""
+
+    def update_limits(self, **changes: float) -> None:
+        """Update risk limits at runtime (e.g. from the TRADING RISK config). Only known fields
+        are accepted; the new caps take effect immediately for every subsequent `check_order`
+        and `mark_equity` — the Risk Engine stays the single authority (§14)."""
+        valid = {f.name for f in fields(self._limits)}
+        for name, value in changes.items():
+            if name not in valid:
+                raise ValueError(f"unknown risk limit: {name}")
+            setattr(self._limits, name, value)
 
     def check_order(
         self,
