@@ -8,10 +8,15 @@ an empty center means nothing has happened.
 
 from __future__ import annotations
 
+import os
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
+
+from ..logging_config import get_logger
+
+log = get_logger("notify")
 
 
 class Severity(str, Enum):
@@ -50,13 +55,27 @@ class Notification:
 
 
 class NotificationCenter:
-    def __init__(self, *, capacity: int = 500) -> None:
+    def __init__(self, *, capacity: int = 500, sinks: list | None = None) -> None:
         self._items: deque[Notification] = deque(maxlen=capacity)
+        # Optional push sinks (iPhone via ntfy/Telegram). Best-effort — never block trading.
+        self._sinks = list(sinks or [])
+
+    @classmethod
+    def from_env(cls, *, capacity: int = 500, env: dict | None = None) -> "NotificationCenter":
+        """Build a center whose events are also pushed to any phone sink configured in the
+        environment (ntfy / Telegram). See atp.dashboard.notifiers.sinks_from_env."""
+        from .notifiers import sinks_from_env  # local import: keeps the base module dependency-free
+        return cls(capacity=capacity, sinks=sinks_from_env(env if env is not None else os.environ))
 
     def push(self, kind: Kind, message: str, *, severity: Severity = Severity.INFO,
              ts: datetime | None = None) -> Notification:
         n = Notification(ts or datetime.now(timezone.utc), severity, kind, message)
         self._items.append(n)
+        for sink in self._sinks:
+            try:
+                sink.deliver(n)
+            except Exception as exc:  # noqa: BLE001 — a push failure must never break trading
+                log.warning("push notification failed (%s): %r", type(sink).__name__, exc)
         return n
 
     def recent(self, limit: int = 50) -> list[Notification]:
