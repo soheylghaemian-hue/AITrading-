@@ -9,18 +9,25 @@ import {
   KpiGrid, MarketData, Funnel, Positions, AiTeam, AiAnalysis, RiskCenter, Performance,
   Governance, SystemHealth, Notifications, Reconciliation, MarketRegimes, Subscriptions,
 } from "./sections";
+import {
+  Watchlist, Opportunities, TradeJournal, PerformanceFull, LearningEngine, Exposure, Settings,
+} from "./sections2";
 import type { Snapshot } from "../lib/types";
 
 const NAV = [
   ["/dashboard", "Overview"],
-  ["/dashboard/positions", "Positions"],
+  ["/dashboard/market", "Market"],
   ["/dashboard/opportunities", "Opportunities"],
   ["/dashboard/agents", "AI Team"],
+  ["/dashboard/positions", "Portfolio"],
   ["/dashboard/risk", "Risk"],
+  ["/dashboard/journal", "Journal"],
   ["/dashboard/performance", "Performance"],
-  ["/dashboard/governance", "Governance"],
-  ["/dashboard/system", "System"],
+  ["/dashboard/learning", "Learning"],
   ["/dashboard/reconciliation", "Reconciliation"],
+  ["/dashboard/system", "System"],
+  ["/dashboard/notifications", "Notifications"],
+  ["/dashboard/settings", "Settings"],
 ];
 
 function StatusChip({ k, value, cls }: { k: string; value: string; cls: string }) {
@@ -89,15 +96,17 @@ export function Terminal({ view = "overview" }: { view?: string }) {
       {!connected && (
         <div className="banner">
           ● Live backend not reachable — showing <strong>NO DATA</strong>. Configure
-          <code style={{ margin: "0 4px" }}>NEXT_PUBLIC_API_BASE_URL</code> to a read-only backend. No values are fabricated.
+          <code style={{ margin: "0 4px" }}>NEXT_PUBLIC_API_URL</code> to a read-only backend. No values are fabricated.
         </div>
       )}
 
       <main>
-        {(showAll) && <KpiGrid s={s} />}
-        {(showAll || view === "market") && <MarketData s={s} />}
-        {(showAll || view === "opportunities") && <Funnel s={s} />}
-        {(showAll || view === "opportunities") && view !== "overview" && <MarketRegimes s={s} />}
+        {showAll && <KpiGrid s={s} />}
+        {(showAll || view === "market") && <Watchlist s={s} />}
+        {(showAll || view === "opportunities") && <Opportunities s={s} />}
+
+        {view === "market" && <><Subscriptions s={s} /><MarketRegimes s={s} /></>}
+        {view === "opportunities" && <><Funnel s={s} /><MarketRegimes s={s} /></>}
 
         {showAll && (
           <div className="grid3">
@@ -105,26 +114,30 @@ export function Terminal({ view = "overview" }: { view?: string }) {
             <RiskCenter s={s} />
           </div>
         )}
-        {view === "positions" && <Positions s={s} />}
+        {view === "positions" && <><Positions s={s} /><Exposure s={s} /></>}
         {view === "risk" && <RiskCenter s={s} />}
 
         {(showAll || view === "agents") && <AiTeam s={s} />}
         {(showAll || view === "agents") && <AiAnalysis s={s} />}
 
-        {view === "performance" && <Performance s={s} />}
-        {view === "governance" && <Governance s={s} />}
+        {view === "journal" && <TradeJournal s={s} />}
+        {view === "performance" && <PerformanceFull s={s} />}
+        {view === "learning" && <LearningEngine s={s} />}
         {view === "reconciliation" && <Reconciliation s={s} />}
         {view === "system" && <SystemHealth s={s} />}
+        {view === "notifications" && <Notifications s={s} />}
+        {view === "settings" && <Settings s={s} />}
 
         {showAll && (
           <>
-            <div className="grid2"><Performance s={s} /><Governance s={s} /></div>
+            <Funnel s={s} />
+            <div className="grid2"><PerformanceFull s={s} /><LearningEngine s={s} /></div>
+            <TradeJournal s={s} />
             <Subscriptions s={s} />
             <div className="grid2"><SystemHealth s={s} /><Notifications s={s} /></div>
             <Reconciliation s={s} />
           </>
         )}
-        {view === "market" && <Subscriptions s={s} />}
       </main>
 
       <footer>

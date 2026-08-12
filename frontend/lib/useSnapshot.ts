@@ -1,10 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { fetchSnapshot } from "./api";
+import { fetchSnapshot, POLL_MS } from "./api";
 import type { SnapshotState } from "./types";
-
-const POLL_MS = 4000;
 
 /** Polls the read-only backend snapshot. On any failure the state is `connected:false` with
  *  `data:null` → the UI shows NO DATA everywhere (never fabricated). */

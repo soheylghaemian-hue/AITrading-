@@ -8,7 +8,18 @@
 
 import type { Snapshot } from "./types";
 
-export const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "").replace(/\/+$/, "");
+// Public base URL of the read-only backend Dashboard API. NEXT_PUBLIC_API_URL is the canonical
+// name (spec §19); NEXT_PUBLIC_API_BASE_URL kept as a backward-compatible fallback.
+export const API_BASE = (
+  process.env.NEXT_PUBLIC_API_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? ""
+).replace(/\/+$/, "");
+
+// Reserved for a future backend push channel (WebSocket/SSE). The backend is REST-only today,
+// so the dashboard uses polling; when a WS endpoint exists, set NEXT_PUBLIC_WS_URL.
+export const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "";
+
+// Configurable poll interval (ms). Defaults to 4000; clamped to a sane floor.
+export const POLL_MS = Math.max(1000, Number(process.env.NEXT_PUBLIC_POLL_MS ?? "4000") || 4000);
 
 export async function fetchSnapshot(signal?: AbortSignal): Promise<Snapshot> {
   if (!API_BASE) {
