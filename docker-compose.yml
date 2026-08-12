@@ -1,0 +1,54 @@
+# atp deployment stack (§21).
+#
+# Postgres (durable trade journal, §11/§21) + Redis (realtime state, §21) + the app.
+# IB Gateway is NOT containerized here — run it on the host (or a dedicated image) and point
+# IB_GATEWAY_HOST/PORT at it. See docs/IBKR_SETUP.md.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: atp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+      POSTGRES_DB: atp
+    volumes:
+      - atp_pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      args:
+        EXTRAS: ".[live]"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ATP_LOG_LEVEL: INFO
+      ATP_DATABASE_URL: postgresql://atp:${POSTGRES_PASSWORD:-change_me}@postgres:5432/atp
+      ATP_REDIS_URL: redis://redis:6379/0
+      # Point at an IB Gateway running on the host (macOS/Windows: host.docker.internal).
+      IB_GATEWAY_HOST: ${IB_GATEWAY_HOST:-host.docker.internal}
+      IB_GATEWAY_PORT: ${IB_GATEWAY_PORT:-4002}
+    command: ["backtest", "--bars", "400"]   # default: safe paper backtest (no live creds)
+
+volumes:
+  atp_pgdata:

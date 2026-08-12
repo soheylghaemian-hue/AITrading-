@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI Trading Desk — Command Center</title>
+<style>
+  :root{
+    --bg:#0a0e14; --panel:#111722; --panel2:#0d131c; --border:#1e2836; --text:#e6edf3;
+    --muted:#8b98a9; --green:#3fb950; --red:#f85149; --amber:#d29922; --accent:#58a6ff;
+    --crit:#f85149;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  a{color:inherit}
+  /* header */
+  header{display:flex;align-items:center;gap:16px;padding:12px 20px;border-bottom:1px solid var(--border);
+         background:var(--panel2);position:sticky;top:0;z-index:10;flex-wrap:wrap}
+  .brand{font-weight:700;letter-spacing:.5px;font-size:15px}
+  .status{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;padding:4px 10px;border-radius:20px}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+  .online{background:rgba(63,185,80,.12);color:var(--green)} .online .dot{background:var(--green)}
+  .degraded{background:rgba(210,153,34,.12);color:var(--amber)} .degraded .dot{background:var(--amber)}
+  .halted{background:rgba(248,81,73,.14);color:var(--red)} .halted .dot{background:var(--red)}
+  .mode{margin-left:4px;font-size:12px;font-weight:700;padding:4px 12px;border-radius:20px;letter-spacing:.5px}
+  .paper{background:rgba(210,153,34,.14);color:var(--amber)}
+  .live{background:rgba(248,81,73,.16);color:var(--red)}
+  .spacer{flex:1}
+  .equity{font-variant-numeric:tabular-nums;font-weight:600}
+  .estop{background:var(--red);color:#fff;border:none;border-radius:8px;padding:9px 16px;font-weight:700;
+         cursor:pointer;letter-spacing:.5px;font-size:12px}
+  .estop:hover{filter:brightness(1.1)}
+  main{padding:20px;max-width:1360px;margin:0 auto}
+  /* kpi cards */
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+  .card .label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.7px}
+  .card .value{font-size:24px;font-weight:700;margin-top:6px;font-variant-numeric:tabular-nums}
+  .card .sub{color:var(--muted);font-size:12px;margin-top:2px;font-variant-numeric:tabular-nums}
+  .pos{color:var(--green)} .neg{color:var(--red)} .warn{color:var(--amber)}
+  /* sections */
+  section{background:var(--panel);border:1px solid var(--border);border-radius:10px;margin-bottom:16px;overflow:hidden}
+  section h2{font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);margin:0;
+             padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:860px){.grid2{grid-template-columns:1fr}}
+  .wrap{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+  th,td{text-align:right;padding:9px 14px;border-bottom:1px solid var(--border);white-space:nowrap;font-size:13px}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  tbody tr:last-child td{border-bottom:none}
+  .pill{padding:2px 9px;border-radius:10px;font-size:11px;font-weight:600}
+  .p-active,.p-online{background:rgba(63,185,80,.12);color:var(--green)}
+  .p-idle,.p-unknown{background:rgba(139,152,169,.12);color:var(--muted)}
+  .p-suspended,.p-offline,.p-halted,.p-error{background:rgba(248,81,73,.14);color:var(--red)}
+  .p-probation,.p-degraded{background:rgba(210,153,34,.14);color:var(--amber)}
+  /* market-data + read-only states */
+  .p-data_available,.p-signal{background:rgba(63,185,80,.12);color:var(--green)}
+  .p-delayed,.p-stale{background:rgba(210,153,34,.14);color:var(--amber)}
+  .p-data_not_available,.p-no_data,.p-disabled{background:rgba(139,152,169,.14);color:var(--muted)}
+  .p-observation{background:rgba(88,166,255,.12);color:var(--accent)}
+  .empty{padding:18px 16px;color:var(--muted);font-size:13px}
+  .funnel{display:flex;gap:10px;padding:14px 16px;flex-wrap:wrap}
+  .funnel .step{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;min-width:120px}
+  .funnel .step .n{font-size:20px;font-weight:700}
+  .funnel .step .t{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  .health{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;padding:14px 16px}
+  .health .h{display:flex;justify-content:space-between;align-items:center;background:var(--panel2);
+             border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13px}
+  footer{text-align:center;color:var(--muted);font-size:11px;padding:18px}
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">AI TRADING DESK</span>
+  <span id="status" class="status online"><span class="dot"></span><span id="statusText">CONNECTING…</span></span>
+  <span id="mode" class="mode paper">PAPER MODE</span>
+  <span class="spacer"></span>
+  <span class="equity">Equity <span id="equityHdr">—</span></span>
+  <button class="estop" onclick="emergencyStop()">■ STOP TRADING</button>
+</header>
+<main>
+  <div class="cards" id="cards"></div>
+
+  <section>
+    <h2><span>Market data · real IBKR availability</span><span id="mdHealth" class="pill p-unknown">—</span></h2>
+    <div class="wrap"><table id="marketdata"></table></div>
+  </section>
+
+  <section>
+    <h2>Discovery funnel · what the system is looking at</h2>
+    <div class="funnel" id="funnel"></div>
+  </section>
+
+  <div class="grid2">
+    <section><h2>Active positions · reconciliation</h2><div class="wrap"><table id="positions"></table></div></section>
+    <section><h2>Market regimes</h2><div class="wrap"><table id="market"></table></div></section>
+  </div>
+
+  <section><h2><span>AI trading team · read-only observation</span><span id="execBadge" class="pill p-disabled">EXECUTION DISABLED</span></h2><div class="wrap"><table id="agents"></table></div></section>
+
+  <section><h2>AI read-only analysis · observations &amp; signals (no execution)</h2><div class="wrap"><table id="analysis"></table></div></section>
+
+  <section><h2>Market-data subscription report</h2><div class="wrap"><table id="subs"></table></div></section>
+
+  <div class="grid2">
+    <section><h2>System health</h2><div class="health" id="health"></div></section>
+    <section><h2>Notifications</h2><div id="notifications"></div></section>
+  </div>
+
+  <section><h2>Recent trades</h2><div class="wrap"><table id="trades"></table></div></section>
+</main>
+<footer>Read-only command center · the Risk Engine and Portfolio Manager are authoritative · no fabricated data</footer>
+
+<script>
+const fmt=(n,d=2)=>(n==null||isNaN(n))?"—":Number(n).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
+const pct=(n)=>(n==null||isNaN(n))?"—":(n*100).toFixed(1)+"%";
+const cls=(n)=>n>0?"pos":(n<0?"neg":"");
+const el=(id)=>document.getElementById(id);
+const card=(l,v,k="",sub="")=>`<div class="card"><div class="label">${l}</div><div class="value ${k}">${v}</div>${sub?`<div class="sub">${sub}</div>`:""}</div>`;
+const table=(head,rows)=>rows.length?`<thead><tr>${head.map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody>`:`<tr><td class="empty">NO DATA</td></tr>`;
+const slug=(s)=>String(s==null?"unknown":s).toLowerCase().replace(/[^a-z0-9]+/g,"_");
+const q=(v)=>(v==null||isNaN(v))?"—":Number(v);
+
+async function load(){
+  for(const u of ["/dashboard/summary","/api/snapshot","./snapshot.json"]){
+    try{const r=await fetch(u);if(r.ok)return await r.json();}catch(e){}
+  }
+  throw new Error("no data source");
+}
+
+async function emergencyStop(){
+  if(!confirm("Emergency STOP: block ALL new orders. Continue?"))return;
+  const token=prompt("Owner token (ATP_DASHBOARD_TOKEN):")||"";
+  try{
+    const r=await fetch("/dashboard/emergency-stop",{method:"POST",headers:{Authorization:"Bearer "+token}});
+    const j=await r.json();
+    alert(r.ok?("TRADING HALTED — "+(j.reason||"")):("Failed: "+(j.detail||r.status)));
+    refresh();
+  }catch(e){alert("Request failed: "+e);}
+}
+
+function setStatus(s){
+  const map={online:"SYSTEM ONLINE",degraded:"DEGRADED",halted:"TRADING HALTED"};
+  const cl=el("status");cl.className="status "+s;
+  el("statusText").textContent=map[s]||s.toUpperCase();
+}
+
+async function refresh(){
+  let s;
+  try{s=await load();}catch(e){setStatus("halted");el("statusText").textContent="DISCONNECTED";return;}
+  const a=s.account,r=s.risk;
+  setStatus(s.system_status||"online");
+  el("mode").textContent=(s.mode==="live"?"LIVE MODE":"PAPER MODE");
+  el("mode").className="mode "+(s.mode==="live"?"live":"paper");
+  el("equityHdr").textContent="$"+fmt(a.equity,0);
+
+  el("cards").innerHTML=
+    card("Current Equity","$"+fmt(a.equity,0),"",`start-of-day $${fmt(r.day_start_equity,0)}`)+
+    card("Today P&L","$"+fmt(r.daily_pnl,0),cls(r.daily_pnl),`realized $${fmt(a.realized_pnl,0)} · unreal $${fmt(a.unrealized_pnl,0)}`)+
+    card("Total realized P&L","$"+fmt(a.realized_pnl,0),cls(a.realized_pnl))+
+    card("Available cash","$"+fmt(a.cash,0))+
+    card("Buying power",a.buying_power==null?"NO DATA":"$"+fmt(a.buying_power,0))+
+    card("Orders (session)",s.orders==null?"—":s.orders,s.orders?"":"pos",s.execution_enabled?"execution on":"execution disabled")+
+    card("Leverage",fmt(r.gross_leverage,2)+"×","",`max ${fmt(r.max_gross_leverage,2)}×`)+
+    card("Daily drawdown",pct(r.drawdown),r.drawdown>0?"warn":"",`limit ${pct(r.max_drawdown_pct)}`)+
+    card("Open positions",(s.positions||[]).length,"")+
+    card("Trades",s.n_trades,"");
+
+  // Market data availability (5 states) — unavailable instruments are shown, never hidden.
+  const md=s.market_data||[];
+  const mdFlag=(s.system_health||{}).market_data||"unknown";
+  el("mdHealth").className="pill p-"+slug(mdFlag);
+  el("mdHealth").textContent=mdFlag==="online"?"CONNECTED":(mdFlag==="degraded"?"PARTIAL":mdFlag.toUpperCase());
+  el("marketdata").innerHTML=table(["Symbol","Class","Exchange","Status","Type","Bid","Ask","Last","Reason"],
+    md.map(m=>`<tr><td>${m.symbol}</td><td>${m.asset_class}</td><td>${m.exchange||"—"}</td><td><span class="pill p-${slug(m.status)}">${m.status.replace(/_/g," ")}</span></td><td>${m.market_data_type?`<span class="pill p-${m.market_data_type==='REALTIME'?'data_available':'delayed'}">${m.market_data_type}</span>`:"—"}</td><td>${q(m.bid)}</td><td>${q(m.ask)}</td><td>${q(m.last)}</td><td style="text-align:left;color:var(--muted)">${m.status==='DATA_AVAILABLE'?'':(m.reason||'')}</td></tr>`));
+
+  // Read-only AI analysis: OBSERVATION / SIGNAL / NO DATA (no execution).
+  el("analysis").innerHTML=table(["Agent","Instrument","Status","Action","Confidence","Reason"],
+    (s.ai_analysis||[]).map(o=>`<tr><td>${o.agent}</td><td>${o.instrument}</td><td><span class="pill p-${slug(o.status)}">${o.status}</span></td><td>${o.action||"—"}</td><td>${o.confidence==null?"—":pct(o.confidence)}</td><td style="text-align:left;color:var(--muted)">${o.reason||""}</td></tr>`));
+
+  // Market-data subscription report (full technical list).
+  el("subs").innerHTML=table(["Instrument","Class","Exchange","Required market data","Current status","IBKR error","Subscription required"],
+    (s.subscriptions||[]).map(x=>`<tr><td>${x.instrument}</td><td>${x.asset_class}</td><td>${x.exchange||"—"}</td><td style="text-align:left">${x.required_market_data}</td><td><span class="pill p-${slug(x.current_status)}">${(x.current_status||"").replace(/_/g," ")}</span></td><td>${x.ibkr_error==null?"—":x.ibkr_error}</td><td><span class="pill p-${x.subscription_required?'error':'data_available'}">${x.subscription_required?"YES":"NO"}</span></td></tr>`));
+  el("execBadge").textContent=s.execution_enabled?"EXECUTION ON":"EXECUTION DISABLED";
+  el("execBadge").className="pill p-"+(s.execution_enabled?"data_available":"disabled");
+
+  // Discovery funnel (NO DATA until a real scan is provided).
+  const h=s.hero||{};
+  const steps=[["scanned","Instruments scanned"],["opportunities","Opportunities"],["after_liquidity","Passed liquidity"],
+    ["after_statistical","Passed statistical"],["portfolio_approved","Portfolio approved"],["risk_approved","Risk approved"]];
+  el("funnel").innerHTML=steps.map(([k,t])=>`<div class="step"><div class="n">${h[k]==null?"—":h[k]}</div><div class="t">${t}</div></div>`).join("");
+
+  el("positions").innerHTML=table(["Symbol","Side","Qty","Avg","Mark","Notional","uPnL"],
+    (s.positions||[]).map(p=>`<tr><td>${p.symbol}</td><td>${p.side}</td><td>${fmt(p.quantity,0)}</td><td>${fmt(p.avg_price)}</td><td>${fmt(p.market_price)}</td><td>$${fmt(p.notional,0)}</td><td class="${cls(p.unrealized_pnl)}">$${fmt(p.unrealized_pnl,0)}</td></tr>`));
+
+  el("market").innerHTML=table(["Instrument","Regime","Price","Trend"],
+    Object.entries(s.market||{}).map(([k,m])=>`<tr><td>${k}</td><td>${m.regime}</td><td>${fmt(m.price)}</td><td>${fmt(m.trend)}</td></tr>`));
+
+  el("agents").innerHTML=table(["Agent","Status","Trades","Win","PF","Expectancy","Total P&L"],
+    (s.agents||[]).map(g=>`<tr><td>${g.name}</td><td><span class="pill p-${g.status}">${g.status}</span></td><td>${g.trades}</td><td>${g.win_rate==null?"—":pct(g.win_rate)}</td><td>${g.profit_factor==null?"—":(g.profit_factor===null?"∞":fmt(g.profit_factor))}</td><td class="${cls(g.expectancy)}">${g.expectancy==null?"—":"$"+fmt(g.expectancy)}</td><td class="${cls(g.total_pnl)}">${g.total_pnl==null?"—":"$"+fmt(g.total_pnl,0)}</td></tr>`));
+
+  el("health").innerHTML=Object.entries(s.system_health||{}).map(([k,v])=>`<div class="h"><span>${k.replace(/_/g," ")}</span><span class="pill p-${v}">${v}</span></div>`).join("")||`<div class="empty">NO DATA</div>`;
+
+  const notes=s.notifications||[];
+  el("notifications").innerHTML=notes.length?notes.slice(0,12).map(n=>`<div class="h" style="margin:8px 16px"><span>${(n.ts||"").slice(11,19)} · ${n.message}</span><span class="pill p-${n.severity==='critical'?'halted':(n.severity==='warning'?'degraded':'idle')}">${n.severity}</span></div>`).join(""):`<div class="empty">No notifications</div>`;
+
+  el("trades").innerHTML=table(["Time","Agent","Symbol","Dir","Qty","Entry","Exit","P&L","Result"],
+    (s.recent_trades||[]).map(t=>`<tr><td>${(t.exit_ts||"").slice(11,19)}</td><td>${t.agent||t.strategy}</td><td>${(t.instrument_key||"").split(":")[0]}</td><td>${t.direction}</td><td>${fmt(t.quantity,0)}</td><td>${fmt(t.entry_price)}</td><td>${fmt(t.exit_price)}</td><td class="${cls(t.realized_pnl)}">$${fmt(t.realized_pnl)}</td><td>${t.result}</td></tr>`));
+}
+refresh();
+setInterval(refresh,3000);
+</script>
+</body>
+</html>

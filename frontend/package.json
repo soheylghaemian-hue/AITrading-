@@ -1,0 +1,28 @@
+{
+  "name": "atp-command-center",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI Trading Command Center — production dashboard (read-only, no fabricated data)",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "next": "^14.2.35",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "6.5.0",
+    "@testing-library/react": "16.0.1",
+    "@types/node": "20.16.11",
+    "@types/react": "18.3.11",
+    "@types/react-dom": "18.3.0",
+    "jsdom": "25.0.1",
+    "typescript": "5.6.3",
+    "vitest": "2.1.3"
+  }
+}

@@ -1,0 +1,30 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+build/
+dist/
+*.log
+.DS_Store
+# Generated dashboard data (produced by examples/dashboard_snapshot.py)
+src/atp/dashboard/static/snapshot.json
+# Frontend (Next.js) build + deps
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/next-env.d.ts
+frontend/*.tsbuildinfo
+.vercel/
+node_modules/
+
+# Never commit secrets / broker credentials (§23)
+.env
+.env.local
+.env*.local
+*.secrets
+*.pem
+credentials*.json
+credentials/
