@@ -40,6 +40,11 @@ export interface Snapshot {
   market_data?: MarketDataRow[];
   subscriptions?: Record<string, any>[];
   ai_analysis?: AiAnalysisRow[];
+  tradeable_universe?: {
+    symbol: string; asset_class?: string; exchange?: string | null; tradeable: boolean;
+    state: "TRADEABLE" | "BLOCKED"; data_type?: string | null; last_valid_timestamp?: string | null;
+    ibkr_error?: number | null; reason: string;
+  }[];
   trading_risk?: {
     capital: number; risk_per_trade_pct: number; max_risk_per_trade: number;
     max_daily_loss_pct: number; max_daily_loss: number; current_daily_pnl: number;

@@ -186,6 +186,44 @@ def classify_quote(
     return ("DATA_AVAILABLE", "live")
 
 
+def tradeable_universe(market_data: list[dict] | None) -> list[dict]:
+    """Derive the dynamic TRADEABLE universe from live market data. An instrument is TRADEABLE only
+    when its data is DATA_AVAILABLE + REALTIME + carries a valid (positive) price; otherwise it is
+    BLOCKED with the real reason. This is the gate the autonomous engine enforces — a blocked
+    instrument never enters the opportunity pipeline (no stale/delayed/fabricated prices)."""
+    out: list[dict] = []
+    for row in market_data or []:
+        status = row.get("status")
+        mdt = row.get("market_data_type")
+        has_price = any(_present(row.get(k)) for k in ("bid", "ask", "last"))
+        tradeable = status == "DATA_AVAILABLE" and mdt == "REALTIME" and has_price
+        if tradeable:
+            reason = "REALTIME data available"
+        elif status == "DATA_NOT_AVAILABLE" and row.get("error_code") == 10089:
+            reason = "BLOCKED — IBKR 10089 (subscription required)"
+        elif status == "DATA_NOT_AVAILABLE":
+            reason = f"BLOCKED — {row.get('reason') or 'data not available'}"
+        elif status == "STALE":
+            reason = "BLOCKED — stale data"
+        elif status == "DELAYED":
+            reason = "BLOCKED — delayed, not realtime"
+        elif status == "ERROR":
+            reason = "BLOCKED — data error / unavailable"
+        elif not has_price:
+            reason = "BLOCKED — no valid price"
+        else:
+            reason = "BLOCKED — not realtime"
+        out.append({
+            "symbol": row.get("symbol"), "asset_class": row.get("asset_class"),
+            "exchange": row.get("exchange"), "tradeable": bool(tradeable),
+            "state": "TRADEABLE" if tradeable else "BLOCKED",
+            "data_type": mdt if tradeable else None,
+            "last_valid_timestamp": (row.get("timestamp") if tradeable else None),
+            "ibkr_error": row.get("error_code"), "reason": reason,
+        })
+    return out
+
+
 def _market_data_health(market_data: list[dict] | None) -> str:
     """Roll the per-instrument states up into one feed health flag for system health."""
     if not market_data:
@@ -216,6 +254,7 @@ class DashboardSnapshot:
     ai_analysis: list[dict]            # read-only agent observations/signals (NO execution)
     trading_risk: dict | None          # the 3-parameter TRADING RISK config + derived limits/status
     autonomous: dict | None            # PAPER AUTONOMOUS mode/status + decision feed (§ Phase 8)
+    tradeable_universe: list[dict]     # per-instrument TRADEABLE/BLOCKED gate (§ Phase 9)
     agents: list[dict]
     governance: list[dict]
     system_health: dict
@@ -324,6 +363,7 @@ def build_snapshot(
         ai_analysis=ai_analysis or [],
         trading_risk=trading_risk,
         autonomous=autonomous,
+        tradeable_universe=tradeable_universe(market_data),
         agents=_agents(analytics, registry),
         governance=governance,
         system_health=_system_health(

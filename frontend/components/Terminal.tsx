@@ -10,7 +10,7 @@ import {
   Governance, SystemHealth, Notifications, Reconciliation, MarketRegimes, Subscriptions,
 } from "./sections";
 import {
-  Watchlist, Opportunities, TradeJournal, PerformanceFull, LearningEngine, Exposure, Settings,
+  Watchlist, Opportunities, TradeJournal, PerformanceFull, LearningEngine, Exposure, Settings, TradeableUniverse,
 } from "./sections2";
 import { TradingRisk } from "./TradingRisk";
 import { AutonomousPanel } from "./AutonomousPanel";
@@ -108,6 +108,7 @@ export function Terminal({ view = "overview" }: { view?: string }) {
         {showAll && <AutonomousPanel s={s} />}
         {view === "autonomous" && <AutonomousPanel s={s} />}
         {(showAll || view === "market") && <Watchlist s={s} />}
+        {(showAll || view === "market") && <TradeableUniverse s={s} />}
         {(showAll || view === "opportunities") && <Opportunities s={s} />}
 
         {view === "market" && <><Subscriptions s={s} /><MarketRegimes s={s} /></>}

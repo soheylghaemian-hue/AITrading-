@@ -263,6 +263,43 @@ export function Exposure({ s }: { s: Snapshot | null }) {
   );
 }
 
+/* ---------------------------------------------------------------- tradeable universe */
+export function TradeableUniverse({ s }: { s: Snapshot | null }) {
+  const u = s?.tradeable_universe ?? [];
+  const nTradeable = u.filter((x) => x.tradeable).length;
+  return (
+    <Section title="Tradeable universe · data-quality gate" right={
+      <span className="mono" style={{ color: "var(--muted2)", fontSize: 11 }}>{nTradeable}/{u.length} tradeable</span>}>
+      <div className="wrap">
+        {u.length === 0 ? <Empty /> : (
+          <table>
+            <thead><tr><th>Symbol</th><th>Asset</th><th>Exchange</th><th>State</th><th>Data type</th>
+              <th>Last valid</th><th>IBKR error</th><th>Reason</th></tr></thead>
+            <tbody>
+              {u.map((x) => (
+                <tr key={x.symbol}>
+                  <td>{x.symbol}</td><td>{x.asset_class ?? "—"}</td><td>{x.exchange ?? "—"}</td>
+                  <td><Pill text={x.tradeable ? "tradeable" : "blocked"} /></td>
+                  <td>{x.data_type ? <Pill text={x.data_type} /> : "—"}</td>
+                  <td>{hhmmss(x.last_valid_timestamp)}</td>
+                  <td>{x.ibkr_error ?? "—"}</td>
+                  <td className="reason">{x.reason}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <div className="banner ok" style={{ borderTop: "1px solid var(--border)" }}>
+        Only REALTIME · DATA_AVAILABLE · valid-price instruments are tradeable. Blocked instruments
+        never enter the opportunity pipeline — the autonomous engine cannot generate an executable
+        trade for them (no stale/delayed/fabricated prices). Existing positions are governed by a
+        separate risk policy and are not auto-closed on a temporary data loss.
+      </div>
+    </Section>
+  );
+}
+
 /* ---------------------------------------------------------------- autonomous paper trading */
 export function Autonomous({ s }: { s: Snapshot | null }) {
   const a = s?.autonomous ?? null;
