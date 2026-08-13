@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.atp.notify-watchdog</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3</string>
+        <string>/Users/SOG/Documents/Trading/examples/notify_watchdog.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/SOG/Documents/Trading</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONPATH</key>
+        <string>/Users/SOG/Documents/Trading/src</string>
+        <key>NTFY_TOPIC</key>
+        <string>REPLACE_WITH_YOUR_NTFY_TOPIC</string>
+        <key>NOTIFY_MIN_SEVERITY</key>
+        <string>info</string>
+        <key>WATCHDOG_HOST</key>
+        <string>127.0.0.1</string>
+        <key>WATCHDOG_PORT</key>
+        <string>4002</string>
+        <key>WATCHDOG_INTERVAL</key>
+        <string>120</string>
+        <key>WATCHDOG_MARKET_DATA</key>
+        <string>0</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/SOG/Library/Logs/atp-notify-watchdog.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/SOG/Library/Logs/atp-notify-watchdog.log</string>
+</dict>
+</plist>

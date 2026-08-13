@@ -60,6 +60,37 @@ The other kinds (trade opened/closed, risk-halt, reconciliation break, broker di
 data-feed loss, model decay, …) are defined and will push once wired into the live engines — a
 follow-up backend task, no IBKR change.
 
+## Always-on watchdog (automatic alerts)
+
+`examples/notify_watchdog.py` is a tiny always-on monitor that pushes to your phone on real
+**state changes** (never spam). By default it makes **no IBKR API calls** — it only checks
+whether the IB Gateway port is reachable, and alerts when that flips:
+
+- 🚨 *IB Gateway NOT reachable (port 4002)* — the gateway went down.
+- ⚠️ *IB Gateway reachable again* — it came back.
+
+Opt-in market-data alerts (read-only snapshot, no orders): set `WATCHDOG_MARKET_DATA=1` to also
+get *"AAPL: market data now AVAILABLE"* / *"lost"* per instrument — useful to be pinged the moment
+US-equity real-time data finally activates.
+
+### Run it automatically (macOS LaunchAgent)
+
+Installed at `~/Library/LaunchAgents/com.atp.notify-watchdog.plist` (a filled copy of
+`deploy/com.atp.notify-watchdog.plist.template`). It starts at login and restarts on crash.
+
+```bash
+# start / stop / restart
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.atp.notify-watchdog.plist
+launchctl bootout   gui/$(id -u)/com.atp.notify-watchdog
+# logs
+tail -f ~/Library/Logs/atp-notify-watchdog.log
+```
+
+To enable market-data alerts: set `WATCHDOG_MARKET_DATA` to `1` in the plist, then bootout+bootstrap.
+
+> macOS python.org note: if pushes fail with `CERTIFICATE_VERIFY_FAILED`, install CA certs once:
+> `python3 -m pip install certifi` (the sink uses it automatically). No verification is ever disabled.
+
 ## Safety
 
 - Push delivery is **best-effort**: a failed send is logged and never interrupts trading.
