@@ -17,6 +17,7 @@ States:
 
 from __future__ import annotations
 
+import json
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -54,6 +55,13 @@ class Decision:
     risk_decision: str | None = None
     execution_decision: str = ""
     reason: str = ""
+    # § Phase 11 — richer dry-run observability
+    source: str | None = None            # data source (MASSIVE / IDEALPRO / …)
+    data_status: str | None = None       # market-data status the decision was based on
+    regime: str | None = None            # market regime at decision time
+    consensus: str | None = None         # AI agent consensus, e.g. "7/9 BUY"
+    opportunity_score: float | None = None
+    final_decision: str | None = None    # NO_DATA / NO_TRADE / REJECTED_BY_RISK / PAPER_TRADE_WOULD_BE_EXECUTED
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -95,6 +103,9 @@ class PaperAutonomousEngine:
         self._last_start_reasons: list[str] = []
         self._dry_run_until: datetime | None = None   # controlled observation window (auto-stop)
         self._eval_count = 0                           # total evaluation cycles run
+        self._obs_count = 0                            # read-only observation cycles (no execution)
+        self._observed: set[str] = set()               # instruments the engine has consumed
+        self._journal_path: str | None = None          # optional append-only JSONL decision journal live
 
     # ------------------------------------------------------------- status
     @property
@@ -112,6 +123,50 @@ class PaperAutonomousEngine:
 
     def _record(self, dec: Decision) -> None:
         self._decisions.append(dec)
+        if self._journal_path is not None:
+            try:
+                with open(self._journal_path, "a") as fh:
+                    fh.write(json.dumps(dec.as_dict()) + "\n")
+            except OSError:
+                pass
+
+    def set_decision_journal(self, path: str | None) -> None:
+        """Persist every decision as an append-only JSONL line (§ Phase 11 dry-run journal)."""
+        self._journal_path = path
+
+    # -- decision enrichment (read-only observability) -------------------------
+    @staticmethod
+    def _final_from(d: dict) -> str:
+        reason = (d.get("reason") or "").lower()
+        ex = d.get("execution_decision") or ""
+        if "data quality" in reason or (ex == "NO_TRADE"):
+            return "NO_DATA" if "data" in reason else "NO_TRADE"
+        rd = d.get("risk_decision")
+        if rd == "REJECTED":
+            return "REJECTED_BY_RISK"
+        if rd == "APPROVED":
+            return "PAPER_TRADE_WOULD_BE_EXECUTED"
+        return "NO_TRADE"
+
+    def _src_status(self, market_data: list[dict], instrument: str) -> tuple[str | None, str | None]:
+        row = self._md_row(market_data, instrument)
+        if not row:
+            return (None, "NO_DATA")
+        return (row.get("source"), row.get("status"))
+
+    def _decision_from(self, d: dict, market_data: list[dict], now: datetime, exec_note: str) -> Decision:
+        inst = d.get("instrument", "*")
+        src, dstatus = self._src_status(market_data, inst)
+        return Decision(
+            now.isoformat(), inst, agent=d.get("agent"), action=d.get("action"),
+            signal_strength=d.get("signal_strength"), confidence=d.get("confidence"),
+            expected_risk=d.get("expected_risk"), suggested_size=d.get("suggested_size"),
+            approved_size=d.get("approved_size"), entry=d.get("entry"), stop=d.get("stop"),
+            target=d.get("target"), risk_decision=d.get("risk_decision"),
+            execution_decision=exec_note, reason=d.get("reason", ""),
+            source=src, data_status=dstatus, regime=d.get("regime"),
+            consensus=d.get("consensus"), opportunity_score=d.get("opportunity_score"),
+            final_decision=self._final_from(d))
 
     # ------------------------------------------------------------- transitions
     def arm(self, actor: str = "user") -> AutonomousStatus:
@@ -255,13 +310,38 @@ class PaperAutonomousEngine:
             # ARMED / DRY_RUN / HALTED / KILLED → compute + log decisions, NEVER execute.
             await self._evaluate_step(now, bars, market_data, st)
 
+    async def observe(self, *, now: datetime, bars: list, market_data: list[dict]) -> dict:
+        """READ-ONLY realtime intake (§ Phase 10.4). Feeds quality-gated REALTIME quotes to the desk
+        and computes what it WOULD decide — WITHOUT ARM, WITHOUT execution, WITHOUT any order. This
+        is how the autonomous engine consumes the live Massive feed while remaining DISABLED. It can
+        never place a paper or IBKR order: it only reads (`to_broker=False`) and calls the read-only
+        `desk.evaluate`. Returns {received, fed, decisions}."""
+        self._obs_count += 1
+        received = [b.instrument.symbol for b in bars
+                    if self._quality_ok(self._md_row(market_data, b.instrument.key))]
+        self._observed.update(received)
+        fed = self._feed(bars, market_data, now, to_broker=False)
+        n_dec = 0
+        if fed:
+            for d in await self._desk.evaluate(now=now):
+                self._record(self._decision_from(d, market_data, now, "NO_ORDER (observe · disabled)"))
+                n_dec += 1
+        return {"received": received, "fed": fed, "decisions": n_dec}
+
+    @property
+    def observed_instruments(self) -> set[str]:
+        return set(self._observed)
+
     def _feed(self, bars: list, market_data: list[dict], now: datetime, *, to_broker: bool) -> int:
         fed = 0
         for bar in bars:
             row = self._md_row(market_data, bar.instrument.key)
             if not self._quality_ok(row):
                 self._record(Decision(now.isoformat(), bar.instrument.symbol,
-                                      execution_decision="NO_TRADE", reason=self._gate_reason(row)))
+                                      execution_decision="NO_TRADE", reason=self._gate_reason(row),
+                                      source=(row or {}).get("source"),
+                                      data_status=(row or {}).get("status", "NO_DATA"),
+                                      final_decision="NO_DATA"))
                 continue
             self._desk.on_bar(bar)
             bid, ask = row.get("bid"), row.get("ask")
@@ -302,16 +382,9 @@ class PaperAutonomousEngine:
             AutonomousStatus.KILLED: "NO_ORDER (killed)",
         }.get(st, "NO_ORDER")
         for d in await self._desk.evaluate(now=now):
-            self._record(Decision(
-                now.isoformat(), d.get("instrument", "*"), agent=d.get("agent"),
-                action=d.get("action"), signal_strength=d.get("signal_strength"),
-                confidence=d.get("confidence"), expected_risk=d.get("expected_risk"),
-                suggested_size=d.get("suggested_size"), approved_size=d.get("approved_size"),
-                entry=d.get("entry"), stop=d.get("stop"), target=d.get("target"),
-                risk_decision=d.get("risk_decision"),
-                execution_decision=(exec_note if d.get("execution_decision", "").startswith("NO_ORDER")
-                                    else d.get("execution_decision", exec_note)),
-                reason=d.get("reason", "")))
+            note = (exec_note if d.get("execution_decision", "").startswith("NO_ORDER")
+                    else d.get("execution_decision", exec_note))
+            self._record(self._decision_from(d, market_data, now, note))
 
     def _entry_reason(self, journal_before: int) -> str:
         if self._journal is None:
@@ -340,6 +413,8 @@ class PaperAutonomousEngine:
         mean = lambda xs: (sum(xs) / len(xs)) if xs else None  # noqa: E731
         return {
             "total_evaluations": self._eval_count,
+            "observations": self._obs_count,                       # read-only observe() cycles
+            "observed_instruments": sorted(self._observed),        # live instruments the engine consumed
             "opportunities_detected": sum(1 for d in ds if d.agent),
             "potential_trades": sum(1 for d in ds if d.suggested_size),
             "approved_decisions": sum(1 for d in ds if d.risk_decision == "APPROVED"),

@@ -313,7 +313,7 @@ export function GlobalMarketData({ s }: { s: Snapshot | null }) {
             <thead><tr>
               <th>Region</th><th>Exchange</th><th>Symbol</th><th>Source</th><th>Status</th><th>RT</th>
               <th>Bid</th><th>Ask</th><th>Last</th><th>Spread</th><th>Bid Sz</th><th>Ask Sz</th>
-              <th>Volume</th><th>Time</th><th>Subscription</th><th>Detail</th>
+              <th>Volume</th><th>Latency</th><th>Time</th><th>Subscription</th><th>Detail</th>
             </tr></thead>
             <tbody>
               {g.map((x) => (
@@ -327,6 +327,7 @@ export function GlobalMarketData({ s }: { s: Snapshot | null }) {
                   <td>{isPresent(x.bid_size) ? num(x.bid_size, 0) : "—"}</td>
                   <td>{isPresent(x.ask_size) ? num(x.ask_size, 0) : "—"}</td>
                   <td>{isPresent(x.volume) ? num(x.volume, 0) : "—"}</td>
+                  <td>{isPresent(x.latency_ms) ? `${Math.round(x.latency_ms as number)} ms` : "—"}</td>
                   <td>{hhmmss(x.timestamp)}</td>
                   <td><Pill text={x.subscription_state} /></td>
                   <td className="reason">{x.error ?? "—"}</td>
@@ -393,21 +394,26 @@ export function Autonomous({ s }: { s: Snapshot | null }) {
           ) : null}
           <div className="wrap">
             <table>
-              <thead><tr><th>Time</th><th>Instrument</th><th>Agent</th><th>Action</th><th>Conf</th>
-                <th>Exp. risk</th><th>Suggested</th><th>Stop</th><th>Target</th><th>Risk</th><th>Final</th><th>Reason</th></tr></thead>
+              <thead><tr><th>Time</th><th>Instrument</th><th>Source</th><th>Data</th><th>Regime</th>
+                <th>Consensus</th><th>Opp.</th><th>Dir</th><th>Entry</th><th>Size</th><th>Est. risk</th>
+                <th>Risk Engine</th><th>Final decision</th><th>Reason</th></tr></thead>
               <tbody>
                 {(a.decisions ?? []).length === 0
-                  ? <tr><td className="empty" colSpan={12}>No decisions yet</td></tr>
+                  ? <tr><td className="empty" colSpan={14}>No decisions yet</td></tr>
                   : a.decisions.map((d, i) => (
                     <tr key={i}>
-                      <td>{hhmmss(d.ts)}</td><td>{d.instrument}</td><td>{d.agent ?? "—"}</td>
+                      <td>{hhmmss(d.ts)}</td><td>{d.instrument}</td>
+                      <td>{d.source ?? "—"}</td>
+                      <td>{d.data_status ? <Pill text={d.data_status} /> : "—"}</td>
+                      <td>{d.regime ?? "—"}</td>
+                      <td>{d.consensus ?? "—"}</td>
+                      <td>{d.opportunity_score == null ? "—" : num(d.opportunity_score, 2)}</td>
                       <td>{d.action ?? "—"}</td>
-                      <td>{d.confidence == null ? "—" : pct(d.confidence)}</td>
-                      <td>{d.expected_risk == null ? "—" : money(d.expected_risk)}</td>
+                      <td>{price(d.entry)}</td>
                       <td>{d.suggested_size == null ? "—" : money(d.suggested_size, 0)}</td>
-                      <td>{price(d.stop)}</td><td>{price(d.target)}</td>
+                      <td>{d.expected_risk == null ? "—" : money(d.expected_risk)}</td>
                       <td>{d.risk_decision ? <Pill text={d.risk_decision} /> : "—"}</td>
-                      <td><Pill text={d.execution_decision ?? d.decision ?? "—"} /></td>
+                      <td><Pill text={d.final_decision ?? d.execution_decision ?? "—"} /></td>
                       <td className="reason">{d.reason}</td>
                     </tr>
                   ))}

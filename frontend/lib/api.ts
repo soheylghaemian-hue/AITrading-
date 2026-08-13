@@ -37,25 +37,29 @@ export async function fetchSnapshot(signal?: AbortSignal): Promise<Snapshot> {
   return (await res.json()) as Snapshot;
 }
 
-export async function emergencyStop(token: string): Promise<{ ok: boolean; detail: string }> {
+// Mutations are authorized by the SERVER proxy (it injects the owner token from a server env var),
+// so the browser no longer prompts for a token. `token` stays optional for local/dev direct calls.
+function mutHeaders(token = "", json = false): Record<string, string> {
+  const h: Record<string, string> = {};
+  if (token) h["Authorization"] = `Bearer ${token}`;
+  if (json) h["Content-Type"] = "application/json";
+  return h;
+}
+
+export async function emergencyStop(token = ""): Promise<{ ok: boolean; detail: string }> {
   if (!API_BASE) return { ok: false, detail: "no backend configured" };
-  const res = await fetch(`${API_BASE}/dashboard/emergency-stop`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const res = await fetch(`${API_BASE}/dashboard/emergency-stop`, { method: "POST", headers: mutHeaders(token) });
   const body = await res.json().catch(() => ({}));
   return { ok: res.ok, detail: body.reason || body.detail || `${res.status}` };
 }
 
 export async function setRiskConfig(
-  token: string,
   cfg: { capital: number; risk_per_trade_pct: number; max_daily_loss_pct: number },
+  token = "",
 ): Promise<{ ok: boolean; detail: string; data?: any }> {
   if (!API_BASE) return { ok: false, detail: "no backend configured — connect a read-only backend to apply config" };
   const res = await fetch(`${API_BASE}/dashboard/risk-config`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(cfg),
+    method: "POST", headers: mutHeaders(token, true), body: JSON.stringify(cfg),
   });
   const body = await res.json().catch(() => ({}));
   return { ok: res.ok, detail: body.detail || (res.ok ? "updated" : `${res.status}`), data: body };
@@ -63,25 +67,20 @@ export async function setRiskConfig(
 
 export async function autonomousControl(
   action: "arm" | "disarm" | "dry_run" | "start" | "stop" | "kill" | "reset",
-  token: string, payload: Record<string, unknown> = {},
+  payload: Record<string, unknown> = {}, token = "",
 ): Promise<{ ok: boolean; detail: string; data?: any }> {
   if (!API_BASE) return { ok: false, detail: "no backend configured" };
   const res = await fetch(`${API_BASE}/dashboard/autonomous/${action}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    method: "POST", headers: mutHeaders(token, true), body: JSON.stringify(payload),
   });
   const body = await res.json().catch(() => ({}));
   const detail = body.status || body.detail || (body.reasons ? body.reasons.join("; ") : `${res.status}`);
   return { ok: res.ok && body.ok !== false, detail, data: body };
 }
 
-export async function resumeTrading(token: string): Promise<{ ok: boolean; detail: string }> {
+export async function resumeTrading(token = ""): Promise<{ ok: boolean; detail: string }> {
   if (!API_BASE) return { ok: false, detail: "no backend configured" };
-  const res = await fetch(`${API_BASE}/dashboard/resume`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const res = await fetch(`${API_BASE}/dashboard/resume`, { method: "POST", headers: mutHeaders(token) });
   const body = await res.json().catch(() => ({}));
   return { ok: res.ok, detail: body.reason || body.detail || `${res.status}` };
 }

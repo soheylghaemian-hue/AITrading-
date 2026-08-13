@@ -49,6 +49,7 @@ export interface Snapshot {
     region: string; exchange?: string | null; symbol: string; source?: string | null;
     status: string; realtime: boolean; bid: number | null; ask: number | null; last: number | null;
     spread: number | null; bid_size: number | null; ask_size: number | null; volume: number | null;
+    latency_ms?: number | null;
     timestamp?: string | null; error?: string | null; subscription_state: string; currency?: string;
   }[];
   trading_risk?: {
@@ -75,6 +76,8 @@ export interface Snapshot {
       suggested_size?: number | null; approved_size?: number | null; entry?: number | null;
       stop?: number | null; target?: number | null; risk_decision?: string | null;
       quantity?: number | null; price?: number | null; execution_decision?: string; decision?: string;
+      source?: string | null; data_status?: string | null; regime?: string | null;
+      consensus?: string | null; opportunity_score?: number | null; final_decision?: string | null;
       reason: string }[];
   } | null;
   agents?: Record<string, any>[];

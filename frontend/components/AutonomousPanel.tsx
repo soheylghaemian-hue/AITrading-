@@ -22,11 +22,10 @@ export function AutonomousPanel({ s }: { s: Snapshot | null }) {
     if (action === "kill") {
       if (!confirm("KILL SWITCH — block ALL paper trading until an explicit reset. Continue?")) return;
     }
-    const token = prompt("Owner token (ATP_DASHBOARD_TOKEN) — sent only to the backend:") || "";
-    if (!token) return;
     setBusy(true);
+    // Owner token is injected server-side by the proxy (you're already signed in) — no prompt.
     const payload = action === "start" ? { confirm: true } : {};
-    const res = await autonomousControl(action, token, payload);
+    const res = await autonomousControl(action, payload);
     setBusy(false);
     setMsg(res.ok ? `OK — status: ${res.detail}` : `Not applied: ${res.detail}`);
   }

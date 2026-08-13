@@ -6,6 +6,13 @@ directly, never sees delayed/stale/invalid/fabricated prices.
 """
 
 from .manager import MarketDataManager
+from .massive_provider import (
+    MASSIVE_SYMBOLS,
+    MassiveAuthError,
+    MassiveEntitlementError,
+    MassiveError,
+    MassiveProvider,
+)
 from .quality import QualityStatus, quality_gate
 from .quote import NormalizedQuote
 from .universe import GLOBAL_UNIVERSE, InstrumentSpec
@@ -13,4 +20,6 @@ from .universe import GLOBAL_UNIVERSE, InstrumentSpec
 __all__ = [
     "MarketDataManager", "QualityStatus", "quality_gate", "NormalizedQuote",
     "GLOBAL_UNIVERSE", "InstrumentSpec",
+    "MassiveProvider", "MASSIVE_SYMBOLS",
+    "MassiveError", "MassiveAuthError", "MassiveEntitlementError",
 ]

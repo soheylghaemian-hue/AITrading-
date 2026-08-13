@@ -20,14 +20,20 @@ describe("AUTONOMOUS TRADING section", () => {
       open_positions: 1, trades_today: 2, risk_used: 0.25, remaining_daily_loss: 22_500,
       max_daily_loss: 30_000, live_execution: false, ibkr_orders: 0,
       decisions: [
-        { ts: "2026-08-13T14:05:00Z", instrument: "EUR.USD", action: "BUY", quantity: 1000, price: 1.15, decision: "FILLED", reason: "momentum BUY" },
-        { ts: "2026-08-13T14:06:00Z", instrument: "AAPL", action: null, quantity: null, price: null, decision: "NO_DATA", reason: "market data not tradable" },
+        { ts: "2026-08-13T14:05:00Z", instrument: "NVDA", action: "BUY", source: "MASSIVE", data_status: "DATA_AVAILABLE",
+          regime: "BULLISH", consensus: "7/9 BUY", opportunity_score: 0.82, entry: 224.5, suggested_size: 190,
+          expected_risk: 2.1, risk_decision: "APPROVED", final_decision: "PAPER_TRADE_WOULD_BE_EXECUTED", reason: "momentum BUY" },
+        { ts: "2026-08-13T14:06:00Z", instrument: "AAPL", action: null, data_status: "DATA_NOT_AVAILABLE",
+          final_decision: "NO_DATA", reason: "market data not tradable" },
       ],
     } } as Snapshot;
     const html = r(<Autonomous s={s} />);
     expect(html).toContain("RUNNING");
-    expect(html).toContain("FILLED");
-    expect(html).toContain("NO DATA");   // NO_DATA decision pill (underscores rendered as spaces)
+    expect(html).toContain("MASSIVE");
+    expect(html).toContain("BULLISH");
+    expect(html).toContain("7/9 BUY");
+    expect(html).toContain("PAPER TRADE WOULD BE EXECUTED"); // final_decision pill (underscores → spaces)
+    expect(html).toContain("NO DATA");   // NO_DATA decision pill
     expect(html).toContain("momentum BUY");
     expect(html.toLowerCase()).toContain("live execution");
     // safety: live execution DISABLED and 0 IBKR orders visible

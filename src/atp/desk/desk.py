@@ -39,6 +39,15 @@ from ..strategy.base import Strategy
 log = get_logger("desk")
 
 
+def _consensus_str(cons: dict | None, action: str) -> str | None:
+    """Human AI-agent consensus for the chosen side, e.g. "7/9 BUY"."""
+    if not cons:
+        return None
+    total = cons.get("total") or 0
+    agree = cons.get(action.upper(), 0)
+    return f"{agree}/{total} {action.upper()}" if total else None
+
+
 @dataclass(slots=True)
 class StepReport:
     ts: datetime
@@ -301,6 +310,8 @@ class AutonomousTradingDesk:
                      "reason": "market closed (hours/holiday)"}]
 
         scored: list[tuple] = []
+        regime_by_key: dict[str, str] = {}
+        consensus: dict[str, dict] = {}   # key -> {BUY, SELL, total}
         for key in pending:
             fs = self._features.latest(self._instruments[key])
             if fs is None or not fs.ready:
@@ -311,20 +322,30 @@ class AutonomousTradingDesk:
                                   "reason": "data quality: not tradable"})
                 continue
             regime = self._regime.classify(fs)
+            regime_by_key[key] = regime.value
+            active = 0
+            cons = {"BUY": 0, "SELL": 0}
             for strat in self._strategies:
                 if self._registry is not None and not self._registry.is_active(strat.name):
                     continue
+                active += 1
                 sig = strat.generate(fs, regime)
                 if sig is not None:
                     scored.append((sig, fs.price))
+                    a = sig.action.value.upper()
+                    if a in cons:
+                        cons[a] += 1
+            consensus[key] = {**cons, "total": active}
 
         opportunities = self._opportunity.rank(scored)
         if self._portfolio_manager is not None:
             allocs = self._portfolio_manager.allocate(opportunities, account)
             opportunities = [d.opportunity for d in allocs if d.allocate]
 
+        decided: set[str] = set()
         for opp in opportunities:
             key = opp.instrument.key
+            decided.add(key)
             price = self._tradable_price(key, opp.price)
             equity = account.equity
             current_qty = account.positions[key].quantity if key in account.positions else 0.0
@@ -349,7 +370,20 @@ class AutonomousTradingDesk:
                 "target": (price * (1 + sig.direction * sig.expected_return)) if sig.expected_return else None,
                 "risk_decision": "APPROVED" if decision.approved else "REJECTED",
                 "execution_decision": "NO_ORDER (evaluate)", "reason": decision.reason,
+                "regime": regime_by_key.get(key),
+                "opportunity_score": getattr(opp, "score", None),
+                "consensus": _consensus_str(consensus.get(key), sig.action.value),
             })
+        # Observability (§ Phase 11): a NO_TRADE record for every warm, data-OK instrument that
+        # produced no actionable opportunity this cycle — so the dry-run feed shows the full picture.
+        for key, regime_val in regime_by_key.items():
+            if key in decided:
+                continue
+            decisions.append({
+                "instrument": self._instruments[key].symbol, "agent": None,
+                "execution_decision": "NO_TRADE", "risk_decision": None,
+                "regime": regime_val, "opportunity_score": None,
+                "reason": "no actionable signal (below opportunity threshold)"})
         return decisions
 
     # ------------------------------------------------------------- read model

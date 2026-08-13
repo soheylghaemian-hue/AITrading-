@@ -9,6 +9,9 @@ export const runtime = "nodejs";
 
 const BACKEND = (process.env.DASHBOARD_API_URL ?? "").replace(/\/+$/, "");
 const READ_TOKEN = process.env.DASHBOARD_API_READ_TOKEN ?? "";
+// Owner token for mutations, injected SERVER-SIDE (never in the browser). The dashboard is already
+// gated by Basic Auth (middleware), so authenticated users no longer need to re-enter this token.
+const OWNER_TOKEN = process.env.DASHBOARD_API_OWNER_TOKEN ?? "";
 
 // Only these read-model paths may be proxied. No broker/IBKR/execution/order endpoints exist here.
 const READ_PATHS = new Set([
@@ -29,8 +32,12 @@ async function forward(req: NextRequest, path: string[], method: "GET" | "POST")
 
   const headers: Record<string, string> = {};
   if (method === "GET" && READ_TOKEN) headers["Authorization"] = `Bearer ${READ_TOKEN}`;
-  const incomingAuth = req.headers.get("authorization"); // owner token for mutations (user-entered)
-  if (method === "POST" && incomingAuth) headers["Authorization"] = incomingAuth;
+  if (method === "POST") {
+    // Prefer the server-side owner token (no browser prompt); fall back to a user-entered token.
+    const incomingAuth = req.headers.get("authorization");
+    if (OWNER_TOKEN) headers["Authorization"] = `Bearer ${OWNER_TOKEN}`;
+    else if (incomingAuth) headers["Authorization"] = incomingAuth;
+  }
 
   const init: RequestInit = { method, headers, cache: "no-store" };
   if (method === "POST") {

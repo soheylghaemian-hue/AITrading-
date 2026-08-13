@@ -37,10 +37,9 @@ export function TradingRisk({ s }: { s: Snapshot | null }) {
   async function onSave() {
     if (!validNums) { setMsg("Enter capital > 0 and both percentages > 0."); return; }
     if (riskGtDaily) { setMsg("Risk per Trade may not exceed Max Daily Loss."); return; }
-    const token = prompt("Owner token (ATP_DASHBOARD_TOKEN) — sent only to the backend:") || "";
-    if (!token) return;
     setBusy(true);
-    const res = await setRiskConfig(token, {
+    // Owner token injected server-side by the proxy (already signed in) — no prompt.
+    const res = await setRiskConfig({
       capital: capN, risk_per_trade_pct: riskN / 100, max_daily_loss_pct: dailyN / 100,
     });
     setBusy(false);

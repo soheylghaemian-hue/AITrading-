@@ -71,10 +71,8 @@ export function Terminal({ view = "overview" }: { view?: string }) {
 
   async function onEmergencyStop() {
     if (!confirm("EMERGENCY STOP: request the backend to trip the Risk Engine kill switch (blocks ALL new orders). Continue?")) return;
-    const token = prompt("Owner token (ATP_DASHBOARD_TOKEN) — sent only to the backend:") || "";
-    if (!token) return;
     setBusy(true);
-    const res = await emergencyStop(token);
+    const res = await emergencyStop();  // owner token injected server-side by the proxy (already signed in)
     setBusy(false);
     alert(res.ok ? `TRADING HALTED — ${res.detail}` : `Failed: ${res.detail}`);
   }

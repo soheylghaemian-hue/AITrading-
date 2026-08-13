@@ -25,6 +25,7 @@ class NormalizedQuote:
     market_data_type: str | None
     status: str = ""            # data-quality status (set by the gate)
     reason: str = ""            # human reason for the status
+    latency_ms: float | None = None   # feed one-way latency (recv - source ts), when known
     error_code: int | None = None
     error_message: str | None = None
 

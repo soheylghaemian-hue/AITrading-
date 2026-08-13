@@ -25,12 +25,75 @@ from atp.dashboard.notifications import NotificationCenter
 from atp.dashboard.snapshot import build_snapshot
 from atp.live import build_paper_stack
 from atp.live.marketdata import DEFAULT_UNIVERSE, probe_market_data, subscription_report
-from atp.marketdata import GLOBAL_UNIVERSE, MarketDataManager
+from atp.marketdata import GLOBAL_UNIVERSE, MASSIVE_SYMBOLS, MarketDataManager, MassiveProvider
 
 # Provider-independent GLOBAL market-data grid (§ Phase 10). Classifies whatever the read-only IBKR
 # probe returns for the symbols we actually query, against the global universe specs (region/venue).
 _GLOBAL_SPECS = {s.symbol: s for s in GLOBAL_UNIVERSE}
 _MD_MANAGER = MarketDataManager()
+
+# § Phase 10.4 — Massive owns AAPL/NVDA/SPY realtime. IBKR must NOT be their data source, so it does
+# not even probe them here; EUR.USD (and any other non-Massive symbol) stays on IBKR/IDEALPRO.
+_MASSIVE_SYMS = {s.symbol for s in MASSIVE_SYMBOLS}
+IBKR_UNIVERSE = [u for u in DEFAULT_UNIVERSE if u[0] not in _MASSIVE_SYMS]
+
+
+def _merge_massive(ibkr_md: list[dict], massive_rows: list[dict]) -> list[dict]:
+    """Overlay the Massive rows for AAPL/NVDA/SPY on top of the IBKR rows. Massive is the primary
+    (and only) realtime source for its symbols — when it is not READY the row is honestly
+    unavailable/stale, and IBKR is NEVER used as a fallback for them."""
+    if not massive_rows:
+        return ibkr_md
+    syms = {r["symbol"] for r in massive_rows}
+    kept = [r for r in ibkr_md if r.get("symbol") not in syms]
+    return list(massive_rows) + kept
+
+
+class MassiveWorker(threading.Thread):
+    """Owns the persistent Massive realtime WebSocket in its own asyncio loop and publishes 5-state
+    market_data rows. Read-only: it can never place an order. When the key is missing or the feed is
+    down, it keeps emitting DATA_NOT_AVAILABLE rows (no fabrication, no fallback)."""
+
+    def __init__(self, *, refresh: float = 1.5):
+        super().__init__(daemon=True)
+        self.provider = MassiveProvider(MASSIVE_SYMBOLS)
+        self._lock = threading.Lock()
+        self._rows = self.provider.market_rows()   # initial: DATA_NOT_AVAILABLE until ticks arrive
+        self._error: str | None = None
+        self._refresh = refresh
+
+    def run(self):
+        try:
+            asyncio.run(self._main())
+        except Exception as exc:  # noqa: BLE001 — surface, never fake
+            with self._lock:
+                self._error = repr(exc)
+
+    async def _main(self):
+        asyncio.create_task(self._stream())
+        while True:
+            self._store()
+            await asyncio.sleep(self._refresh)
+
+    async def _stream(self):
+        try:
+            await self.provider.run(reconnect=True)
+        except Exception as exc:  # noqa: BLE001 — auth/entitlement/connection; rows stay unavailable
+            with self._lock:
+                self._error = repr(exc)
+
+    def _store(self):
+        rows = self.provider.market_rows()
+        with self._lock:
+            self._rows = rows
+
+    def rows(self) -> list[dict]:
+        with self._lock:
+            return list(self._rows)
+
+    @property
+    def connected(self) -> bool:
+        return bool(getattr(self.provider, "_authed", False))
 
 
 def _global_market_data(md_rows: list[dict]) -> list[dict]:
@@ -48,10 +111,11 @@ class IBKRWorker(threading.Thread):
     Nothing here can trade — the broker is read-only and only get_account/positions/market data
     are called."""
 
-    def __init__(self, *, host, port, client_id, interval, engine=None):
+    def __init__(self, *, host, port, client_id, interval, engine=None, massive=None):
         super().__init__(daemon=True)
         self._host, self._port, self._cid, self._interval = host, port, client_id, interval
         self._engine = engine   # PaperAutonomousEngine — driven read-only from real data (DISABLED default)
+        self._massive = massive  # MassiveWorker — realtime source for AAPL/NVDA/SPY (read-only)
         self.cache: dict = {"connected": False, "account": None, "buying_power": None,
                             "market_data": [], "subscriptions": [], "error": None}
 
@@ -68,7 +132,7 @@ class IBKRWorker(threading.Thread):
                     await broker.connect()
                 account = await broker.get_account()
                 bp = await self._buying_power(broker)
-                md = await probe_market_data(broker, DEFAULT_UNIVERSE)
+                md = await probe_market_data(broker, IBKR_UNIVERSE)  # IBKR: FX only; equities via Massive
                 self.cache = {"connected": True, "account": account, "buying_power": bp,
                               "market_data": md, "subscriptions": subscription_report(md), "error": None}
                 await self._drive_autonomous(md)
@@ -88,8 +152,11 @@ class IBKRWorker(threading.Thread):
         if self._engine is None:
             return
         now = datetime.now(timezone.utc)
+        # Merge Massive realtime (AAPL/NVDA/SPY) over IBKR (FX). Massive is authoritative for its
+        # symbols; IBKR is never a realtime fallback for them.
+        merged = _merge_massive(md, self._massive.rows() if self._massive is not None else [])
         bars = []
-        for row in md:
+        for row in merged:
             if row.get("status") != "DATA_AVAILABLE":
                 continue
             bid, ask = row.get("bid"), row.get("ask")
@@ -101,7 +168,11 @@ class IBKRWorker(threading.Thread):
                     if ac is AssetClass.FX and "." in sym else Instrument(sym, ac))
             bars.append(Bar(inst, mid, mid, mid, mid, 0.0, now))
         try:
-            await self._engine.step(now=now, bars=bars, market_data=md)
+            if self._engine.status.name == "DISABLED":
+                # READ-ONLY: engine consumes the live feed + computes decisions, but NEVER executes.
+                await self._engine.observe(now=now, bars=bars, market_data=merged)
+            else:
+                await self._engine.step(now=now, bars=bars, market_data=merged)
         except Exception as exc:  # noqa: BLE001 — never let the paper engine break data serving
             print(f"  autonomous step error: {exc!r}")
 
@@ -124,20 +195,22 @@ def _unavailable_rows(error: str | None) -> list[dict]:
         "market_data_type": None, "bid": None, "ask": None, "last": None,
         "bid_size": None, "ask_size": None, "timestamp": now, "error_code": None,
         "error_message": error or "IBKR connection unavailable", "reason": "IBKR DATA UNAVAILABLE",
-    } for s, ac, ex in DEFAULT_UNIVERSE]
+    } for s, ac, ex in IBKR_UNIVERSE]
 
 
 class IBKRContext:
     """Adapts the IBKR worker's cache to the dashboard control surface. Delegates the risk/config/
     emergency-stop logic to a real DashboardContext; provides its own read-only snapshot."""
 
-    def __init__(self, base: DashboardContext, worker: IBKRWorker):
-        self._base, self._worker = base, worker
+    def __init__(self, base: DashboardContext, worker: IBKRWorker, massive=None):
+        self._base, self._worker, self._massive = base, worker, massive
 
     async def snapshot_dict(self) -> dict:
         c = self._worker.cache
         connected = bool(c["connected"])
-        md = c["market_data"] if (connected and c["market_data"]) else _unavailable_rows(c.get("error"))
+        md_ibkr = c["market_data"] if (connected and c["market_data"]) else _unavailable_rows(c.get("error"))
+        # Overlay Massive realtime for AAPL/NVDA/SPY (primary source; no IBKR fallback for them).
+        md = _merge_massive(md_ibkr, self._massive.rows() if self._massive is not None else [])
         notes = self._base.notifications.recent(50) if self._base.notifications is not None else []
         data_ok = any(r["status"] in ("DATA_AVAILABLE", "DELAYED") for r in md) if md else None
         eng = self._base.autonomous_engine
@@ -152,7 +225,10 @@ class IBKRContext:
             notifications=notes, data_ok=data_ok, autonomous=autonomous,
             global_market_data=_global_market_data(md),
         )
-        return snap.as_dict()
+        out = snap.as_dict()
+        if self._massive is not None:
+            out["massive_stats"] = self._massive.provider.stats()  # § Phase 11 dry-run telemetry
+        return out
 
     def autonomous(self, action, payload=None):
         eng = self._base.autonomous_engine
@@ -201,15 +277,25 @@ def main() -> None:
         strategies=[MomentumStrategy(), MeanReversionStrategy(), BreakoutStrategy()],
         journal=journal, risk=risk))       # shared Risk Engine
     base.autonomous_engine = PaperAutonomousEngine(desk=desk, broker=paper_broker, risk=risk, journal=journal)
+    base.autonomous_engine.set_decision_journal(os.environ.get("ATP_DECISION_JOURNAL"))  # § Phase 11
+
+    # Massive realtime worker (AAPL/NVDA/SPY) — only if the key is configured server-side. Read-only.
+    massive = None
+    if os.environ.get("MASSIVE_API_KEY"):
+        massive = MassiveWorker()
+        massive.start()
+        print("Massive realtime worker started (AAPL/NVDA/SPY · read-only · no execution)")
+    else:
+        print("MASSIVE_API_KEY not set — AAPL/NVDA/SPY will report DATA_NOT_AVAILABLE (no IBKR fallback)")
 
     worker = IBKRWorker(host=os.environ.get("IBKR_HOST", "127.0.0.1"),
                         port=int(os.environ.get("IBKR_PORT", "4002")),
                         client_id=int(os.environ.get("IBKR_CLIENT_ID", "20")),
                         interval=float(os.environ.get("DASHBOARD_MD_INTERVAL", "30")),
-                        engine=base.autonomous_engine)
+                        engine=base.autonomous_engine, massive=massive)
     worker.start()
 
-    app = create_app(IBKRContext(base, worker))
+    app = create_app(IBKRContext(base, worker, massive=massive))
     host = os.environ.get("DASHBOARD_HOST", "127.0.0.1")  # localhost only
     port = int(os.environ.get("DASHBOARD_PORT", "8000"))
     print(f"IBKR read-only dashboard backend on http://{host}:{port}  (paper · read-only · no execution)")

@@ -72,6 +72,7 @@ class MarketDataManager:
             volume=_num(raw.get("volume")),
             timestamp=ts,
             market_data_type=raw.get("market_data_type"),
+            latency_ms=_num(raw.get("latency_ms")),
             error_code=raw.get("error_code"),
             error_message=raw.get("error_message"),
         )
@@ -112,6 +113,7 @@ class MarketDataManager:
                 "ask_size": q.ask_size,
                 "volume": q.volume,
                 "timestamp": q.timestamp.isoformat() if q.timestamp else None,
+                "latency_ms": q.latency_ms,
                 "error": q.error_message or (q.reason if q.status != QualityStatus.READY.value else None),
                 "subscription_state": _SUBSCRIPTION_STATE.get(q.status, "UNKNOWN"),
                 "currency": q.currency,
