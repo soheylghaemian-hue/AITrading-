@@ -10,9 +10,10 @@ import {
   Governance, SystemHealth, Notifications, Reconciliation, MarketRegimes, Subscriptions,
 } from "./sections";
 import {
-  Watchlist, Opportunities, TradeJournal, PerformanceFull, LearningEngine, Exposure, Settings, Autonomous,
+  Watchlist, Opportunities, TradeJournal, PerformanceFull, LearningEngine, Exposure, Settings,
 } from "./sections2";
 import { TradingRisk } from "./TradingRisk";
+import { AutonomousPanel } from "./AutonomousPanel";
 import type { Snapshot } from "../lib/types";
 
 const NAV = [
@@ -104,8 +105,8 @@ export function Terminal({ view = "overview" }: { view?: string }) {
 
       <main>
         {showAll && <KpiGrid s={s} />}
-        {showAll && <Autonomous s={s} />}
-        {view === "autonomous" && <Autonomous s={s} />}
+        {showAll && <AutonomousPanel s={s} />}
+        {view === "autonomous" && <AutonomousPanel s={s} />}
         {(showAll || view === "market") && <Watchlist s={s} />}
         {(showAll || view === "opportunities") && <Opportunities s={s} />}
 

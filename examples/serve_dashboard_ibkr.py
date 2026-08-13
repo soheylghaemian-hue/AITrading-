@@ -17,9 +17,13 @@ import os
 import threading
 from datetime import datetime, timezone
 
+from atp.autonomous import PaperAutonomousEngine
+from atp.core.enums import AssetClass
+from atp.core.events import Bar, Instrument
 from atp.dashboard.api import DashboardContext, create_app
 from atp.dashboard.notifications import NotificationCenter
 from atp.dashboard.snapshot import build_snapshot
+from atp.live import build_paper_stack
 from atp.live.marketdata import DEFAULT_UNIVERSE, probe_market_data, subscription_report
 from atp.risk.engine import RiskEngine, RiskLimits, RiskState
 from atp.risk.store import RiskConfigStore
@@ -30,9 +34,10 @@ class IBKRWorker(threading.Thread):
     Nothing here can trade — the broker is read-only and only get_account/positions/market data
     are called."""
 
-    def __init__(self, *, host, port, client_id, interval):
+    def __init__(self, *, host, port, client_id, interval, engine=None):
         super().__init__(daemon=True)
         self._host, self._port, self._cid, self._interval = host, port, client_id, interval
+        self._engine = engine   # PaperAutonomousEngine — driven read-only from real data (DISABLED default)
         self.cache: dict = {"connected": False, "account": None, "buying_power": None,
                             "market_data": [], "subscriptions": [], "error": None}
 
@@ -52,6 +57,7 @@ class IBKRWorker(threading.Thread):
                 md = await probe_market_data(broker, DEFAULT_UNIVERSE)
                 self.cache = {"connected": True, "account": account, "buying_power": bp,
                               "market_data": md, "subscriptions": subscription_report(md), "error": None}
+                await self._drive_autonomous(md)
             except Exception as exc:  # noqa: BLE001 — surface, never fake, never paper
                 self.cache = {"connected": False, "account": None, "buying_power": None,
                               "market_data": [], "subscriptions": [], "error": repr(exc)}
@@ -60,6 +66,30 @@ class IBKRWorker(threading.Thread):
                 except Exception:  # noqa: BLE001
                     pass
             await asyncio.sleep(self._interval)
+
+    async def _drive_autonomous(self, md: list[dict]) -> None:
+        """Feed the PAPER AUTONOMOUS engine one bar per available instrument, built from the REAL
+        current mid (not synthetic). A no-op while the engine is DISABLED — nothing runs or trades
+        until the user explicitly ARMs + STARTs. Errors here never affect read-only serving."""
+        if self._engine is None:
+            return
+        now = datetime.now(timezone.utc)
+        bars = []
+        for row in md:
+            if row.get("status") != "DATA_AVAILABLE":
+                continue
+            bid, ask = row.get("bid"), row.get("ask")
+            if not (isinstance(bid, (int, float)) and isinstance(ask, (int, float))):
+                continue
+            mid = (float(bid) + float(ask)) / 2.0
+            sym, ac = row["symbol"], AssetClass(row["asset_class"])
+            inst = (Instrument(sym.split(".")[0], AssetClass.FX, currency=sym.split(".")[1])
+                    if ac is AssetClass.FX and "." in sym else Instrument(sym, ac))
+            bars.append(Bar(inst, mid, mid, mid, mid, 0.0, now))
+        try:
+            await self._engine.step(now=now, bars=bars, market_data=md)
+        except Exception as exc:  # noqa: BLE001 — never let the paper engine break data serving
+            print(f"  autonomous step error: {exc!r}")
 
     @staticmethod
     async def _buying_power(broker):
@@ -96,15 +126,28 @@ class IBKRContext:
         md = c["market_data"] if (connected and c["market_data"]) else _unavailable_rows(c.get("error"))
         notes = self._base.notifications.recent(50) if self._base.notifications is not None else []
         data_ok = any(r["status"] in ("DATA_AVAILABLE", "DELAYED") for r in md) if md else None
+        eng = self._base.autonomous_engine
+        autonomous = (eng.snapshot(account=c["account"], risk_config=self._base.risk_config,
+                                   market_data=md) if eng is not None else None)
         snap = build_snapshot(
             account=c["account"], risk=self._base.risk, mode=self._base.mode, connected=connected,
             execution_enabled=self._base.execution_enabled, market_data=md,
             subscriptions=c["subscriptions"], buying_power=c["buying_power"],
             risk_config=self._base.risk_config,
             risk_capital=(self._base.risk_config.capital if self._base.risk_config else None),
-            notifications=notes, data_ok=data_ok,
+            notifications=notes, data_ok=data_ok, autonomous=autonomous,
         )
         return snap.as_dict()
+
+    def autonomous(self, action, payload=None):
+        eng = self._base.autonomous_engine
+        if eng is None:
+            return {"detail": "autonomous engine not available"}
+        if action == "start":
+            c = self._worker.cache
+            return eng.start(confirm=(payload or {}).get("confirm"), connected=bool(c["connected"]),
+                             market_data=c["market_data"], risk_config=self._base.risk_config)
+        return self._base.autonomous(action, payload)
 
     # control surface used by create_app — delegate to the real context (RiskEngine authoritative)
     def emergency_stop(self, *a, **k):
@@ -128,14 +171,27 @@ def main() -> None:
         execution_enabled=False, config_store=RiskConfigStore(),
     )
     loaded = base.load_persisted_risk_config()
-    if loaded is not None:
-        risk.state.day_start_equity = loaded.capital
-        risk.state.peak_equity = loaded.capital
+    capital = loaded.capital if loaded is not None else float(os.environ.get("DASHBOARD_CAPITAL", "1000000"))
+    risk.state.day_start_equity = capital
+    risk.state.peak_equity = capital
+
+    # PAPER AUTONOMOUS engine — SHARES the authoritative Risk Engine; default DISABLED (nothing
+    # runs or trades until the user explicitly ARMs + STARTs via the token-gated endpoints).
+    from atp.journal import InMemoryJournal  # noqa: PLC0415
+    from atp.policy import TradingPolicy  # noqa: PLC0415
+    from atp.strategy import BreakoutStrategy, MeanReversionStrategy, MomentumStrategy  # noqa: PLC0415
+    journal = InMemoryJournal()
+    desk, paper_broker, _ = asyncio.run(build_paper_stack(
+        policy=TradingPolicy(capital=capital),
+        strategies=[MomentumStrategy(), MeanReversionStrategy(), BreakoutStrategy()],
+        journal=journal, risk=risk))       # shared Risk Engine
+    base.autonomous_engine = PaperAutonomousEngine(desk=desk, broker=paper_broker, risk=risk, journal=journal)
 
     worker = IBKRWorker(host=os.environ.get("IBKR_HOST", "127.0.0.1"),
                         port=int(os.environ.get("IBKR_PORT", "4002")),
                         client_id=int(os.environ.get("IBKR_CLIENT_ID", "20")),
-                        interval=float(os.environ.get("DASHBOARD_MD_INTERVAL", "30")))
+                        interval=float(os.environ.get("DASHBOARD_MD_INTERVAL", "30")),
+                        engine=base.autonomous_engine)
     worker.start()
 
     app = create_app(IBKRContext(base, worker))

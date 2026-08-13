@@ -134,3 +134,38 @@ def test_rate_limit_returns_429():
     client, _ = _client(rate_limit=3)
     codes = [client.get("/api/health").status_code for _ in range(5)]
     assert 429 in codes and codes.count(200) == 3   # first 3 ok, then throttled
+
+
+# --------------------------------------------------------------------------- autonomous control (auth)
+class _FakeEngine:
+    def __init__(self):
+        self.calls = []
+    def arm(self, actor="user"):
+        self.calls.append("arm"); return type("S", (), {"value": "ARMED"})()
+    def start(self, **kw):
+        self.calls.append(("start", kw)); return {"ok": False, "reasons": ["needs data"]}
+
+
+def test_autonomous_endpoints_require_token():
+    if not _HAS_FASTAPI:
+        return
+    client, ctx = _client()
+    ctx.autonomous_engine = _FakeEngine()
+    # unauthorized → 401 (mutation)
+    assert client.post("/dashboard/autonomous/arm").status_code == 401
+    assert client.post("/dashboard/autonomous/start", json={"confirm": True}).status_code == 401
+    # authorized arm works
+    r = client.post("/dashboard/autonomous/arm", headers={"Authorization": f"Bearer {TOKEN}"})
+    assert r.status_code == 200 and r.json()["status"] == "ARMED"
+
+
+def test_autonomous_start_is_forwarded_with_confirm():
+    if not _HAS_FASTAPI:
+        return
+    client, ctx = _client()
+    eng = _FakeEngine()
+    ctx.autonomous_engine = eng
+    r = client.post("/dashboard/autonomous/start", json={"confirm": True},
+                    headers={"Authorization": f"Bearer {TOKEN}"})
+    assert r.status_code == 200 and r.json()["ok"] is False       # start-safety rejected (no data)
+    assert any(c[0] == "start" for c in eng.calls if isinstance(c, tuple))

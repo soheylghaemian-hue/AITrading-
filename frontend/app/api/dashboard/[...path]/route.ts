@@ -17,7 +17,8 @@ const READ_PATHS = new Set([
   "trading-risk",
 ]);
 // Mutations require the OWNER token, supplied by the user (not stored) and enforced by the backend.
-const WRITE_PATHS = new Set(["emergency-stop", "resume", "risk-config"]);
+// "autonomous" covers the token-gated /dashboard/autonomous/{arm,start,stop,disarm,kill,reset}.
+const WRITE_PATHS = new Set(["emergency-stop", "resume", "risk-config", "autonomous"]);
 
 async function forward(req: NextRequest, path: string[], method: "GET" | "POST") {
   // Enforce the path whitelist FIRST — a non-allowed path is 404 regardless of configuration.

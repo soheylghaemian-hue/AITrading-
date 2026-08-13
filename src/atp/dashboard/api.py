@@ -55,6 +55,39 @@ class DashboardContext:
     risk_config: TradingRiskConfig | None = None
     on_risk_config_change: Callable[[TradingRiskConfig], None] | None = None
     config_store: "RiskConfigStore | None" = None   # persistence (survives restart, §15)
+    autonomous_engine: object | None = None         # PAPER AUTONOMOUS engine (default DISABLED)
+
+    def _autonomous_inputs(self):
+        try:
+            connected = self.broker.is_connected()
+        except Exception:  # noqa: BLE001
+            connected = False
+        return connected, (self.market_data or []), self.risk_config
+
+    def autonomous(self, action: str, payload: dict | None = None) -> dict:
+        """Token-gated control of the PAPER AUTONOMOUS engine. Never enables live trading; the
+        Risk Engine stays authoritative. Two-step start (ARM then START with confirmation)."""
+        eng = self.autonomous_engine
+        payload = payload or {}
+        if eng is None:
+            return {"detail": "autonomous engine not available"}
+        if action == "arm":
+            return {"status": eng.arm().value}
+        if action == "dry_run":
+            return {"status": eng.dry_run().value}
+        if action == "disarm":
+            return {"status": eng.disarm().value}
+        if action == "stop":
+            return {"status": eng.stop().value}
+        if action == "kill":
+            return {"status": eng.kill(reason=payload.get("reason", "manual")).value}
+        if action == "reset":
+            return {"status": eng.reset_kill().value}
+        if action == "start":
+            connected, md, cfg = self._autonomous_inputs()
+            return eng.start(confirm=payload.get("confirm"), connected=connected,
+                             market_data=md, risk_config=cfg)
+        return {"detail": f"unknown action: {action}"}
 
     async def snapshot_dict(self) -> dict:
         account = await self.broker.get_account()
@@ -77,6 +110,9 @@ class DashboardContext:
             execution_enabled=self.execution_enabled, connected=connected,
             risk_config=self.risk_config,
             risk_capital=(self.risk_config.capital if self.risk_config else None),
+            autonomous=(self.autonomous_engine.snapshot(
+                account=account, risk_config=self.risk_config, market_data=self.market_data)
+                if self.autonomous_engine is not None else None),
         )
         return snap.as_dict()
 
@@ -259,6 +295,15 @@ def create_app(context: DashboardContext) -> Any:
         except (ValueError, TypeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         return JSONResponse(result)
+
+    # --- PAPER AUTONOMOUS control (§ Phase 8.5) — token-gated, never enables live trading -------
+    def _autonomous_route(action: str):
+        async def endpoint(payload: dict = Body(default={}), _: None = Depends(require_token)) -> JSONResponse:
+            return JSONResponse(context.autonomous(action, payload))
+        return endpoint
+
+    for _act in ("arm", "disarm", "dry_run", "start", "stop", "kill", "reset"):
+        app.add_api_route(f"/dashboard/autonomous/{_act}", _autonomous_route(_act), methods=["POST"])
 
     @app.get("/")
     async def index() -> Any:

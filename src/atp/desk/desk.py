@@ -283,6 +283,75 @@ class AutonomousTradingDesk:
                 report.blocked.append(exec_result)
         return account
 
+    # ------------------------------------------------------------- read-only evaluation
+    async def evaluate(self, *, now: datetime) -> list[dict]:
+        """Compute what the desk WOULD decide this step — WITHOUT executing (dry-run/armed).
+
+        Runs the same features → regime → signals → opportunity → (portfolio) → sizing → RISK
+        VETO path as `step()`, but submits nothing to the broker. Returns one decision dict per
+        opportunity (and per data-gated instrument), for full observability. Read-only."""
+        decisions: list[dict] = []
+        pending = self._pending
+        self._pending = set()
+        if not pending:
+            return decisions
+        account = await self._broker.get_account()
+        if not self._market_open(now):
+            return [{"instrument": "*", "execution_decision": "NO_TRADE",
+                     "reason": "market closed (hours/holiday)"}]
+
+        scored: list[tuple] = []
+        for key in pending:
+            fs = self._features.latest(self._instruments[key])
+            if fs is None or not fs.ready:
+                continue
+            if not self._data_ok(key, now):
+                decisions.append({"instrument": self._instruments[key].symbol, "agent": None,
+                                  "execution_decision": "NO_TRADE", "risk_decision": None,
+                                  "reason": "data quality: not tradable"})
+                continue
+            regime = self._regime.classify(fs)
+            for strat in self._strategies:
+                if self._registry is not None and not self._registry.is_active(strat.name):
+                    continue
+                sig = strat.generate(fs, regime)
+                if sig is not None:
+                    scored.append((sig, fs.price))
+
+        opportunities = self._opportunity.rank(scored)
+        if self._portfolio_manager is not None:
+            allocs = self._portfolio_manager.allocate(opportunities, account)
+            opportunities = [d.opportunity for d in allocs if d.allocate]
+
+        for opp in opportunities:
+            key = opp.instrument.key
+            price = self._tradable_price(key, opp.price)
+            equity = account.equity
+            current_qty = account.positions[key].quantity if key in account.positions else 0.0
+            target_qty = self._target_qty(opp, price, equity, current_qty)
+            delta = target_qty - current_qty
+            if abs(delta) < self._min_trade_units:
+                continue
+            reduce_only = abs(target_qty) < abs(current_qty)
+            order = Order(instrument=opp.instrument,
+                          side=Side.BUY if delta > 0 else Side.SELL, quantity=abs(delta),
+                          order_type=OrderType.MARKET, reduce_only=reduce_only)
+            decision = self._risk.check_order(order, account, price=price, current_qty=current_qty,
+                                              stop_distance=opp.signal.stop_distance)
+            sig = opp.signal
+            decisions.append({
+                "instrument": opp.instrument.symbol, "agent": sig.strategy,
+                "action": sig.action.value, "signal_strength": sig.confidence,
+                "confidence": sig.confidence, "expected_risk": sig.stop_distance,
+                "suggested_size": abs(delta), "approved_size": (abs(delta) if decision.approved else 0.0),
+                "entry": price,
+                "stop": (price - sig.direction * sig.stop_distance) if sig.stop_distance else None,
+                "target": (price * (1 + sig.direction * sig.expected_return)) if sig.expected_return else None,
+                "risk_decision": "APPROVED" if decision.approved else "REJECTED",
+                "execution_decision": "NO_ORDER (evaluate)", "reason": decision.reason,
+            })
+        return decisions
+
     # ------------------------------------------------------------- read model
     def latest_market(self) -> dict[str, dict]:
         """Current per-instrument view (regime + key features) for monitoring/dashboards (§22).

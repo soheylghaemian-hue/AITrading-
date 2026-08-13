@@ -5,6 +5,6 @@ a data-quality gate, a decision log for observability, and a dashboard read-mode
 ever touching IBKR execution. Paper fills are internal (PaperBroker). Default status: DISABLED.
 """
 
-from .engine import AutonomousStatus, Decision, PaperAutonomousEngine
+from .engine import AuditEntry, AutonomousStatus, Decision, PaperAutonomousEngine
 
-__all__ = ["AutonomousStatus", "Decision", "PaperAutonomousEngine"]
+__all__ = ["AuditEntry", "AutonomousStatus", "Decision", "PaperAutonomousEngine"]

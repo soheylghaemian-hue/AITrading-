@@ -61,6 +61,21 @@ export async function setRiskConfig(
   return { ok: res.ok, detail: body.detail || (res.ok ? "updated" : `${res.status}`), data: body };
 }
 
+export async function autonomousControl(
+  action: "arm" | "disarm" | "dry_run" | "start" | "stop" | "kill" | "reset",
+  token: string, payload: Record<string, unknown> = {},
+): Promise<{ ok: boolean; detail: string; data?: any }> {
+  if (!API_BASE) return { ok: false, detail: "no backend configured" };
+  const res = await fetch(`${API_BASE}/dashboard/autonomous/${action}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => ({}));
+  const detail = body.status || body.detail || (body.reasons ? body.reasons.join("; ") : `${res.status}`);
+  return { ok: res.ok && body.ok !== false, detail, data: body };
+}
+
 export async function resumeTrading(token: string): Promise<{ ok: boolean; detail: string }> {
   if (!API_BASE) return { ok: false, detail: "no backend configured" };
   const res = await fetch(`${API_BASE}/dashboard/resume`, {

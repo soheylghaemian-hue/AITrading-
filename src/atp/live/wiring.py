@@ -45,6 +45,7 @@ async def build_paper_stack(
     min_commission: float = 1.0,
     slippage_bps: float = 1.0,
     autonomous: bool = True,
+    risk: RiskEngine | None = None,
 ) -> tuple[AutonomousTradingDesk, PaperBroker, RiskEngine]:
     """Return a connected (desk, broker, risk) ready to hand to a LiveRunner."""
     broker = PaperBroker(
@@ -55,7 +56,7 @@ async def build_paper_stack(
         impact_model=impact_model,
     )
     await broker.connect()
-    risk = RiskEngine(
+    risk = risk or RiskEngine(   # allow an injected shared Risk Engine (autonomous integration)
         limits=policy.to_risk_limits(),
         state=RiskState(day_start_equity=policy.capital, peak_equity=policy.capital),
     )
