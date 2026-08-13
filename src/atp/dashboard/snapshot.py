@@ -215,6 +215,7 @@ class DashboardSnapshot:
     subscriptions: list[dict]          # required/missing IBKR market-data subscriptions
     ai_analysis: list[dict]            # read-only agent observations/signals (NO execution)
     trading_risk: dict | None          # the 3-parameter TRADING RISK config + derived limits/status
+    autonomous: dict | None            # PAPER AUTONOMOUS mode/status + decision feed (§ Phase 8)
     agents: list[dict]
     governance: list[dict]
     system_health: dict
@@ -254,6 +255,7 @@ def build_snapshot(
     historical_ok: bool | None = None,
     risk_config: TradingRiskConfig | None = None,
     risk_capital: float | None = None,
+    autonomous: dict | None = None,
 ) -> DashboardSnapshot:
     """Assemble the full Command Center state from live objects (§22). Real data only.
 
@@ -321,6 +323,7 @@ def build_snapshot(
         subscriptions=subscriptions or [],
         ai_analysis=ai_analysis or [],
         trading_risk=trading_risk,
+        autonomous=autonomous,
         agents=_agents(analytics, registry),
         governance=governance,
         system_health=_system_health(

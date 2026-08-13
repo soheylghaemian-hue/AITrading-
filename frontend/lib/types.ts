@@ -45,6 +45,14 @@ export interface Snapshot {
     max_daily_loss_pct: number; max_daily_loss: number; current_daily_pnl: number;
     remaining_daily_risk: number; status: "ACTIVE" | "DAILY LOSS LIMIT REACHED";
   } | null;
+  autonomous?: {
+    mode: string; status: "DISABLED" | "ARMED" | "RUNNING" | "HALTED" | "KILLED";
+    paper_equity: number | null; today_pnl: number | null; open_positions: number | null;
+    trades_today: number; risk_used: number | null; remaining_daily_loss: number | null;
+    max_daily_loss: number | null; live_execution: boolean; ibkr_orders: number;
+    decisions: { ts: string; instrument: string; action: string | null; quantity: number | null;
+      price: number | null; decision: string; reason: string }[];
+  } | null;
   agents?: Record<string, any>[];
   governance?: Record<string, any>[];
   system_health?: Record<string, string>;

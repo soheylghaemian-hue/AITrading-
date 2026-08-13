@@ -263,6 +263,58 @@ export function Exposure({ s }: { s: Snapshot | null }) {
   );
 }
 
+/* ---------------------------------------------------------------- autonomous paper trading */
+export function Autonomous({ s }: { s: Snapshot | null }) {
+  const a = s?.autonomous ?? null;
+  const status = a?.status ?? "DISABLED";
+  const statusCls = status === "RUNNING" ? "data_available" : status === "ARMED" ? "delayed"
+    : status === "HALTED" || status === "KILLED" ? "halted" : "disabled";
+  const cell = (label: string, value: string, cls = "") => (
+    <div className="h"><span className="n">{label}</span><span className={`mono ${cls}`}>{value}</span></div>
+  );
+  return (
+    <Section title="Autonomous trading" right={
+      <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <span className="pill p-delayed">PAPER</span><span className={`pill p-${statusCls}`}>{status}</span>
+      </span>}>
+      {!a ? <Empty label={s ? "PAPER AUTONOMOUS · DISABLED (not armed)" : NO_DATA} /> : (
+        <>
+          <div className="health">
+            {cell("Mode", a.mode)}
+            {cell("Status", a.status)}
+            {cell("Live execution", a.live_execution ? "ON" : "DISABLED", a.live_execution ? "neg" : "")}
+            {cell("Paper equity", money(a.paper_equity, 0))}
+            {cell("Today's P&L", money(a.today_pnl, 0), sign(a.today_pnl))}
+            {cell("Open positions", num(a.open_positions, 0))}
+            {cell("Trades today", num(a.trades_today, 0))}
+            {cell("Risk used", pct(a.risk_used))}
+            {cell("Remaining daily loss", money(a.remaining_daily_loss, 0))}
+            {cell("IBKR orders", num(a.ibkr_orders, 0), a.ibkr_orders ? "neg" : "")}
+          </div>
+          <div className="wrap">
+            <table>
+              <thead><tr><th>Time</th><th>Instrument</th><th>Action</th><th>Qty</th><th>Price</th><th>Decision</th><th>Reason</th></tr></thead>
+              <tbody>
+                {(a.decisions ?? []).length === 0
+                  ? <tr><td className="empty" colSpan={7}>No decisions yet</td></tr>
+                  : a.decisions.map((d, i) => (
+                    <tr key={i}>
+                      <td>{hhmmss(d.ts)}</td><td>{d.instrument}</td><td>{d.action ?? "—"}</td>
+                      <td>{d.quantity == null ? "—" : num(d.quantity, 0)}</td>
+                      <td>{price(d.price)}</td>
+                      <td><Pill text={d.decision} /></td>
+                      <td className="reason">{d.reason}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </Section>
+  );
+}
+
 /* ---------------------------------------------------------------- settings (read-only) */
 export function Settings({ s }: { s: Snapshot | null }) {
   const r: any = s?.risk ?? {};
