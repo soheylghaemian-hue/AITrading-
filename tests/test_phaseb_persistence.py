@@ -37,14 +37,34 @@ def _reopen(tmp_path, store):
 def test_migrations_apply_and_are_idempotent(tmp_path):
     s = _db(tmp_path)
     assert s.ping()
-    applied = s._all("SELECT version FROM schema_migrations")
-    assert [r[0] for r in applied] == [1]
+    applied = sorted(r[0] for r in s._all("SELECT version FROM schema_migrations"))
+    assert applied == [1, 2]
     # tables exist
     for t in ("runtime_state", "orders", "fills", "positions", "kill_switch", "daily_pnl",
               "audit_events", "service_heartbeats", "market_data_health"):
         s._one(f"SELECT COUNT(*) FROM {t}")
+    # migration 002 money columns exist
+    s._one("SELECT notional, stop, target, monetary_risk, risk_pct FROM orders")
+    s._one("SELECT slippage, fees FROM fills")
     s2 = _reopen(tmp_path, s)                     # re-open re-runs migrator → no-op
-    assert [r[0] for r in s2._all("SELECT version FROM schema_migrations")] == [1]
+    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == [1, 2]
+
+
+def test_postgres_ddl_declares_numeric_money():
+    """Static (no live PG): every authoritative money field is NUMERIC(20,8) in the PG schema —
+    never binary float. SQLite stores the same values as canonical decimal TEXT."""
+    from atp.store.schema import _migration_002, _statements
+    ddl = _statements("postgres") + _migration_002("postgres")
+    money_columns = ["capital", "cash", "equity", "notional", "stop", "target", "monetary_risk",
+                     "realized_pnl", "unrealized_pnl", "avg_price", "price", "commission",
+                     "slippage", "fees", "quantity", "day_start_equity", "entry_price", "exit_price"]
+    for col in money_columns:
+        assert any(col in s and "NUMERIC(20,8)" in s for s in ddl), f"{col} is not NUMERIC in PG DDL"
+    assert any("idempotency_key" in s and "UNIQUE" in s for s in ddl)   # idempotency constraint
+    # no authoritative money column uses a binary-float type (precise token check, not substring)
+    import re
+    for s in ddl:
+        assert not re.search(r"\b(FLOAT|DOUBLE\s+PRECISION|REAL)\b", s, re.IGNORECASE)
 
 
 def test_money_is_exact_decimal(tmp_path):

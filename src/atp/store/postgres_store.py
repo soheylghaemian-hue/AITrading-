@@ -11,6 +11,7 @@ from .schema import Migrator
 class PostgresStore(SqlStore):
     PLACEHOLDER = "%s"
     MONEY_AS_TEXT = False          # NUMERIC columns — psycopg adapts Decimal exactly
+    LOCK_CLAUSE = " FOR UPDATE"    # row-level lock for concurrent fill/position updates
 
     def __init__(self, dsn: str):
         import psycopg  # noqa: PLC0415 — lazy; only needed for a live connection

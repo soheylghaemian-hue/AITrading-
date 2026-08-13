@@ -62,9 +62,10 @@ class OrderManager:
                 fill_id="fl_" + new_id(), client_order_id=coid, instrument=instrument, side=side,
                 quantity=D(ack.get("filled_qty", quantity)), price=D(ack["price"]),
                 commission=D(ack.get("commission", 0)), ts=utcnow_iso())
-            new_pos = apply_fill_to_position(self._store.get_position(instrument), fillrow)
-            # ack + fill + position + FILLED committed atomically
-            self._store.apply_fill(fill=fillrow, position=new_pos, order_state="FILLED",
-                                   broker_order_id=ack["broker_order_id"])
+            # ack + fill + position + FILLED committed atomically, with the position row locked so
+            # concurrent fills on the same instrument cannot corrupt quantity/avg/realized.
+            self._store.apply_fill_atomic(
+                fill=fillrow, compute=lambda cur: apply_fill_to_position(cur, fillrow),
+                order_state="FILLED", broker_order_id=ack["broker_order_id"])
 
         return self._store.get_order(coid)

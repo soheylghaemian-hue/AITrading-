@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from .money import money_str, opt_money_str, to_decimal
+from .money import D, money_str, opt_money_str, to_decimal
 
 
 def utcnow_iso() -> str:
@@ -149,6 +149,7 @@ class SqlStore(Store):
 
     PLACEHOLDER = "?"          # SQLite; PostgresStore overrides with "%s"
     MONEY_AS_TEXT = True       # SQLite stores money as canonical TEXT; PG stores NUMERIC
+    LOCK_CLAUSE = ""           # SQLite serializes writers; PostgresStore uses " FOR UPDATE"
 
     def __init__(self, conn):
         self._conn = conn
@@ -295,6 +296,27 @@ class SqlStore(Store):
                 (trade_date, self._m(day_start_equity), self._m(realized_pnl),
                  self._m(unrealized_pnl), now))
 
+    def try_reserve_daily_risk(self, *, trade_date: str, amount, limit) -> bool:
+        """Concurrency-safe risk-budget reservation: lock today's daily_pnl row, and only if the
+        requested `amount` still fits the remaining budget (`limit` − loss-so-far) reserve it by
+        booking it as realized loss. Two racing authorizations cannot jointly exceed the budget:
+        the second waits on the row lock and then sees the reduced remaining. Fails closed if there
+        is no budget context."""
+        with self.tx() as cur:
+            self._exec(cur, "SELECT realized_pnl, unrealized_pnl FROM daily_pnl WHERE trade_date=?"
+                       + self.LOCK_CLAUSE, (trade_date,))
+            row = cur.fetchone()
+            if row is None:
+                return False
+            realized, unreal = to_decimal(row[0]), to_decimal(row[1])
+            loss_so_far = max(D(0), -(realized + unreal))
+            remaining = D(limit) - loss_so_far
+            if D(amount) > remaining:
+                return False
+            self._exec(cur, "UPDATE daily_pnl SET realized_pnl=?, updated_at=? WHERE trade_date=?",
+                       (self._m(realized - D(amount)), utcnow_iso(), trade_date))
+            return True
+
     def get_daily_loss_lock(self, trade_date: str) -> DailyLossLockRow:
         r = self._one("SELECT trade_date, engaged, reason, updated_at FROM daily_loss_lock WHERE trade_date=?",
                       (trade_date,))
@@ -414,6 +436,41 @@ class SqlStore(Store):
             else:
                 self._exec(cur, "UPDATE orders SET state=?, updated_at=? WHERE client_order_id=?",
                            (order_state, now, fill.client_order_id))
+
+    def apply_fill_atomic(self, *, fill: FillRow, compute, order_state: str = "FILLED",
+                          broker_order_id: str | None = None) -> PositionRow:
+        """Concurrency-safe fill application. Inside ONE transaction: lock the position row
+        (SELECT … FOR UPDATE on PostgreSQL; SQLite serializes writers), recompute the position from
+        the locked value via `compute(current_row_or_None) -> PositionRow`, then persist fill +
+        position + order together. Two concurrent fills on the same instrument cannot interleave."""
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur,
+                "SELECT instrument,quantity,avg_price,realized_pnl,updated_at FROM positions "
+                "WHERE instrument=?" + self.LOCK_CLAUSE, (fill.instrument,))
+            row = cur.fetchone()
+            current = (PositionRow(row[0], to_decimal(row[1]), to_decimal(row[2]),
+                                   to_decimal(row[3]), row[4]) if row else None)
+            new_pos: PositionRow = compute(current)
+            self._exec(cur,
+                "INSERT INTO fills (fill_id,client_order_id,instrument,side,quantity,price,commission,ts) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (fill.fill_id, fill.client_order_id, fill.instrument, fill.side,
+                 self._m(fill.quantity), self._m(fill.price), self._m(fill.commission), fill.ts))
+            self._exec(cur,
+                "INSERT INTO positions (instrument,quantity,avg_price,realized_pnl,updated_at) "
+                "VALUES (?,?,?,?,?) ON CONFLICT(instrument) DO UPDATE SET quantity=excluded.quantity, "
+                "avg_price=excluded.avg_price, realized_pnl=excluded.realized_pnl, updated_at=excluded.updated_at",
+                (new_pos.instrument, self._m(new_pos.quantity), self._m(new_pos.avg_price),
+                 self._m(new_pos.realized_pnl), now))
+            if broker_order_id is not None:
+                self._exec(cur, "UPDATE orders SET state=?, broker_order_id=?, updated_at=? "
+                                "WHERE client_order_id=?",
+                           (order_state, broker_order_id, now, fill.client_order_id))
+            else:
+                self._exec(cur, "UPDATE orders SET state=?, updated_at=? WHERE client_order_id=?",
+                           (order_state, now, fill.client_order_id))
+        return new_pos
 
     def get_position(self, instrument: str) -> PositionRow | None:
         r = self._one("SELECT instrument,quantity,avg_price,realized_pnl,updated_at FROM positions "

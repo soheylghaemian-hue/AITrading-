@@ -73,9 +73,26 @@ def _statements(dialect: str) -> list[str]:
     ]
 
 
+def _migration_002(dialect: str) -> list[str]:
+    """Full authoritative-money coverage: every monetary/risk field is NUMERIC (PG) / decimal TEXT
+    (SQLite) — never binary float. Additive, nullable columns."""
+    m = _types(dialect)["MONEY"]
+    return [
+        f"ALTER TABLE orders ADD COLUMN notional {m}",
+        f"ALTER TABLE orders ADD COLUMN stop {m}",
+        f"ALTER TABLE orders ADD COLUMN target {m}",
+        f"ALTER TABLE orders ADD COLUMN monetary_risk {m}",
+        f"ALTER TABLE orders ADD COLUMN risk_pct {m}",
+        f"ALTER TABLE fills ADD COLUMN slippage {m}",
+        f"ALTER TABLE fills ADD COLUMN fees {m}",
+        f"ALTER TABLE accounts ADD COLUMN unrealized_pnl {m}",
+    ]
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
+    (2, "money_columns_numeric", _migration_002),
 ]
 
 

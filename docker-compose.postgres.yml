@@ -1,0 +1,27 @@
+# Disposable PostgreSQL for the Phase B.5 integration contract tests (§ Phase B.5).
+# This is the SAME engine family the production Linux VM/container will run.
+#
+#   docker compose -f docker-compose.postgres.yml up -d
+#   export ATP_TEST_POSTGRES_DSN="postgresql://atp:atp@localhost:5432/atp_test"
+#   PYTHONPATH=src python3 -m pytest tests/integration -q
+#   docker compose -f docker-compose.postgres.yml down -v
+#
+# Not for production capital — this is an ephemeral test database (no persistent volume).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: atp_test_postgres
+    environment:
+      POSTGRES_USER: atp
+      POSTGRES_PASSWORD: atp
+      POSTGRES_DB: atp_test
+    ports:
+      - "5432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data      # ephemeral: destroyed on `down`
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atp -d atp_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
