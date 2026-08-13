@@ -11,6 +11,7 @@ import {
 } from "./sections";
 import {
   Watchlist, Opportunities, TradeJournal, PerformanceFull, LearningEngine, Exposure, Settings, TradeableUniverse,
+  GlobalMarketData,
 } from "./sections2";
 import { TradingRisk } from "./TradingRisk";
 import { AutonomousPanel } from "./AutonomousPanel";
@@ -108,6 +109,7 @@ export function Terminal({ view = "overview" }: { view?: string }) {
         {showAll && <AutonomousPanel s={s} />}
         {view === "autonomous" && <AutonomousPanel s={s} />}
         {(showAll || view === "market") && <Watchlist s={s} />}
+        {(showAll || view === "market") && <GlobalMarketData s={s} />}
         {(showAll || view === "market") && <TradeableUniverse s={s} />}
         {(showAll || view === "opportunities") && <Opportunities s={s} />}
 

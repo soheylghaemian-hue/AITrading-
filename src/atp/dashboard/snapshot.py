@@ -255,6 +255,7 @@ class DashboardSnapshot:
     trading_risk: dict | None          # the 3-parameter TRADING RISK config + derived limits/status
     autonomous: dict | None            # PAPER AUTONOMOUS mode/status + decision feed (§ Phase 8)
     tradeable_universe: list[dict]     # per-instrument TRADEABLE/BLOCKED gate (§ Phase 9)
+    global_market_data: list[dict]     # provider-independent GLOBAL market-data grid (§ Phase 10)
     agents: list[dict]
     governance: list[dict]
     system_health: dict
@@ -295,6 +296,7 @@ def build_snapshot(
     risk_config: TradingRiskConfig | None = None,
     risk_capital: float | None = None,
     autonomous: dict | None = None,
+    global_market_data: list[dict] | None = None,
 ) -> DashboardSnapshot:
     """Assemble the full Command Center state from live objects (§22). Real data only.
 
@@ -364,6 +366,7 @@ def build_snapshot(
         trading_risk=trading_risk,
         autonomous=autonomous,
         tradeable_universe=tradeable_universe(market_data),
+        global_market_data=global_market_data or [],
         agents=_agents(analytics, registry),
         governance=governance,
         system_health=_system_health(

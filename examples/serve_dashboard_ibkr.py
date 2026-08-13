@@ -25,6 +25,20 @@ from atp.dashboard.notifications import NotificationCenter
 from atp.dashboard.snapshot import build_snapshot
 from atp.live import build_paper_stack
 from atp.live.marketdata import DEFAULT_UNIVERSE, probe_market_data, subscription_report
+from atp.marketdata import GLOBAL_UNIVERSE, MarketDataManager
+
+# Provider-independent GLOBAL market-data grid (§ Phase 10). Classifies whatever the read-only IBKR
+# probe returns for the symbols we actually query, against the global universe specs (region/venue).
+_GLOBAL_SPECS = {s.symbol: s for s in GLOBAL_UNIVERSE}
+_MD_MANAGER = MarketDataManager()
+
+
+def _global_market_data(md_rows: list[dict]) -> list[dict]:
+    specs = [_GLOBAL_SPECS[r["symbol"]] for r in md_rows if r.get("symbol") in _GLOBAL_SPECS]
+    if not specs:
+        return []
+    raw = {r["symbol"]: r for r in md_rows}
+    return _MD_MANAGER.dashboard_rows(_MD_MANAGER.classify(raw, specs=specs))
 from atp.risk.engine import RiskEngine, RiskLimits, RiskState
 from atp.risk.store import RiskConfigStore
 
@@ -136,6 +150,7 @@ class IBKRContext:
             risk_config=self._base.risk_config,
             risk_capital=(self._base.risk_config.capital if self._base.risk_config else None),
             notifications=notes, data_ok=data_ok, autonomous=autonomous,
+            global_market_data=_global_market_data(md),
         )
         return snap.as_dict()
 

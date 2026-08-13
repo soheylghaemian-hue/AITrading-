@@ -300,6 +300,53 @@ export function TradeableUniverse({ s }: { s: Snapshot | null }) {
   );
 }
 
+/* ---------------------------------------------------------------- global market data grid (§ Phase 10) */
+export function GlobalMarketData({ s }: { s: Snapshot | null }) {
+  const g = s?.global_market_data ?? [];
+  const nReady = g.filter((x) => x.status === "READY").length;
+  return (
+    <Section title="Global market data · provider-independent grid" right={
+      <span className="mono" style={{ color: "var(--muted2)", fontSize: 11 }}>{nReady}/{g.length} realtime</span>}>
+      <div className="wrap">
+        {g.length === 0 ? <Empty label={s ? "MARKET DATA UNAVAILABLE" : NO_DATA} /> : (
+          <table>
+            <thead><tr>
+              <th>Region</th><th>Exchange</th><th>Symbol</th><th>Source</th><th>Status</th><th>RT</th>
+              <th>Bid</th><th>Ask</th><th>Last</th><th>Spread</th><th>Bid Sz</th><th>Ask Sz</th>
+              <th>Volume</th><th>Time</th><th>Subscription</th><th>Detail</th>
+            </tr></thead>
+            <tbody>
+              {g.map((x) => (
+                <tr key={`${x.region}-${x.symbol}`}>
+                  <td>{x.region}</td><td>{x.exchange ?? "—"}</td><td>{x.symbol}</td>
+                  <td>{x.source ?? "—"}</td>
+                  <td><Pill text={x.status} /></td>
+                  <td>{x.realtime ? "✓" : "—"}</td>
+                  <td>{price(x.bid)}</td><td>{price(x.ask)}</td><td>{price(x.last)}</td>
+                  <td>{spread(x.bid, x.ask)}</td>
+                  <td>{isPresent(x.bid_size) ? num(x.bid_size, 0) : "—"}</td>
+                  <td>{isPresent(x.ask_size) ? num(x.ask_size, 0) : "—"}</td>
+                  <td>{isPresent(x.volume) ? num(x.volume, 0) : "—"}</td>
+                  <td>{hhmmss(x.timestamp)}</td>
+                  <td><Pill text={x.subscription_state} /></td>
+                  <td className="reason">{x.error ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <div className="banner ok" style={{ borderTop: "1px solid var(--border)" }}>
+        Every quote is normalized and passed through the data-quality gate. Only <b>READY</b>
+        {" "}(realtime · two-sided · valid · fresh) instruments enter the autonomous pipeline. The AI
+        never touches IBKR directly and never sees delayed, stale, invalid or fabricated prices.
+        Instruments auto-transition SUBSCRIPTION_REQUIRED → READY when their subscription becomes
+        active — no code change.
+      </div>
+    </Section>
+  );
+}
+
 /* ---------------------------------------------------------------- autonomous paper trading */
 export function Autonomous({ s }: { s: Snapshot | null }) {
   const a = s?.autonomous ?? null;

@@ -45,6 +45,12 @@ export interface Snapshot {
     state: "TRADEABLE" | "BLOCKED"; data_type?: string | null; last_valid_timestamp?: string | null;
     ibkr_error?: number | null; reason: string;
   }[];
+  global_market_data?: {
+    region: string; exchange?: string | null; symbol: string; source?: string | null;
+    status: string; realtime: boolean; bid: number | null; ask: number | null; last: number | null;
+    spread: number | null; bid_size: number | null; ask_size: number | null; volume: number | null;
+    timestamp?: string | null; error?: string | null; subscription_state: string; currency?: string;
+  }[];
   trading_risk?: {
     capital: number; risk_per_trade_pct: number; max_risk_per_trade: number;
     max_daily_loss_pct: number; max_daily_loss: number; current_daily_pnl: number;

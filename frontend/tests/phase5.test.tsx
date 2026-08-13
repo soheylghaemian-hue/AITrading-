@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
-  Watchlist, Opportunities, TradeJournal, PerformanceFull, LearningEngine, Settings,
+  Watchlist, Opportunities, TradeJournal, PerformanceFull, LearningEngine, Settings, GlobalMarketData,
 } from "../components/sections2";
 import type { Snapshot } from "../lib/types";
 
@@ -27,6 +27,28 @@ describe("empty states — never mocks", () => {
     for (const C of [Watchlist, Opportunities, TradeJournal, PerformanceFull, LearningEngine, Settings]) {
       expect(r(<C s={null} />)).toContain("NO DATA");
     }
+  });
+});
+
+describe("global market data grid (Phase 10)", () => {
+  it("shows READY only for realtime and reflects subscription state honestly", () => {
+    const s: Snapshot = { global_market_data: [
+      { region: "FX", exchange: "IDEALPRO", symbol: "EUR.USD", source: "IDEALPRO", status: "READY",
+        realtime: true, bid: 1.152, ask: 1.1521, last: 1.1521, spread: 0.0001, bid_size: 1e6,
+        ask_size: 1e6, volume: null, timestamp: "2026-08-13T15:00:00Z", error: null, subscription_state: "ACTIVE" },
+      { region: "USA", exchange: "NASDAQ", symbol: "AAPL", source: null, status: "SUBSCRIPTION_REQUIRED",
+        realtime: false, bid: null, ask: null, last: null, spread: null, bid_size: null, ask_size: null,
+        volume: null, timestamp: null, error: "IBKR 10089 — subscription required", subscription_state: "REQUIRED" },
+    ] };
+    const html = r(<GlobalMarketData s={s} />);
+    expect(html).toContain("EUR.USD");
+    expect(html).toContain("READY");
+    expect(html).toContain("SUBSCRIPTION_REQUIRED");
+    expect(html).toContain("1/2 realtime");
+    expect(html).not.toContain("NaN");
+  });
+  it("null snapshot → NO DATA, never fabricated rows", () => {
+    expect(r(<GlobalMarketData s={null} />)).toContain("NO DATA");
   });
 });
 
