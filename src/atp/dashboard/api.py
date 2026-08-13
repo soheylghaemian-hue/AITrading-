@@ -74,7 +74,7 @@ class DashboardContext:
         if action == "arm":
             return {"status": eng.arm().value}
         if action == "dry_run":
-            return {"status": eng.dry_run().value}
+            return {"status": eng.dry_run(duration_minutes=float(payload.get("minutes", 60))).value}
         if action == "disarm":
             return {"status": eng.disarm().value}
         if action == "stop":

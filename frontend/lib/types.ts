@@ -50,8 +50,21 @@ export interface Snapshot {
     paper_equity: number | null; today_pnl: number | null; open_positions: number | null;
     trades_today: number; risk_used: number | null; remaining_daily_loss: number | null;
     max_daily_loss: number | null; live_execution: boolean; ibkr_orders: number;
-    decisions: { ts: string; instrument: string; action: string | null; quantity: number | null;
-      price: number | null; decision: string; reason: string }[];
+    engine?: string; data?: string; risk?: string; dry_run?: boolean; dry_run_until?: string | null;
+    metrics?: {
+      total_evaluations: number; opportunities_detected: number; potential_trades: number;
+      approved_decisions: number; rejected_decisions: number; no_data_decisions: number;
+      risk_vetoes: number; avg_confidence: number | null; avg_expected_risk: number | null;
+      avg_suggested_position: number | null; signals_by_instrument: Record<string, number>;
+      signals_by_agent: Record<string, number>;
+    };
+    audit?: { actor: string; ts: string; prev: string; new: string; reason: string }[];
+    decisions: { ts: string; instrument: string; agent?: string | null; action: string | null;
+      signal_strength?: number | null; confidence?: number | null; expected_risk?: number | null;
+      suggested_size?: number | null; approved_size?: number | null; entry?: number | null;
+      stop?: number | null; target?: number | null; risk_decision?: string | null;
+      quantity?: number | null; price?: number | null; execution_decision?: string; decision?: string;
+      reason: string }[];
   } | null;
   agents?: Record<string, any>[];
   governance?: Record<string, any>[];

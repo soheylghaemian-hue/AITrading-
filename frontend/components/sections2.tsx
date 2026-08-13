@@ -279,30 +279,51 @@ export function Autonomous({ s }: { s: Snapshot | null }) {
       </span>}>
       {!a ? <Empty label={s ? "PAPER AUTONOMOUS · DISABLED (not armed)" : NO_DATA} /> : (
         <>
+          {a.dry_run ? (
+            <div className="banner">● PAPER DRY RUN · NO ORDERS — full pipeline on real data, decisions logged, nothing executed.</div>
+          ) : null}
           <div className="health">
             {cell("Mode", a.mode)}
-            {cell("Status", a.status)}
+            {cell("State", a.status)}
+            {cell("Engine", a.engine ?? "—", a.engine === "ERROR" ? "neg" : "")}
+            {cell("Data", a.data ?? "—", a.data === "REALTIME" ? "pos" : "warn")}
+            {cell("Risk", a.risk ?? "—", a.risk === "ACTIVE" ? "pos" : "neg")}
             {cell("Live execution", a.live_execution ? "ON" : "DISABLED", a.live_execution ? "neg" : "")}
             {cell("Paper equity", money(a.paper_equity, 0))}
             {cell("Today's P&L", money(a.today_pnl, 0), sign(a.today_pnl))}
-            {cell("Open positions", num(a.open_positions, 0))}
             {cell("Trades today", num(a.trades_today, 0))}
-            {cell("Risk used", pct(a.risk_used))}
             {cell("Remaining daily loss", money(a.remaining_daily_loss, 0))}
             {cell("IBKR orders", num(a.ibkr_orders, 0), a.ibkr_orders ? "neg" : "")}
           </div>
+          {a.metrics ? (
+            <div className="health" style={{ borderTop: "1px solid var(--border)" }}>
+              {cell("Evaluations", num(a.metrics.total_evaluations, 0))}
+              {cell("Opportunities", num(a.metrics.opportunities_detected, 0))}
+              {cell("Approved", num(a.metrics.approved_decisions, 0))}
+              {cell("Rejected (risk veto)", num(a.metrics.rejected_decisions, 0))}
+              {cell("NO_DATA", num(a.metrics.no_data_decisions, 0))}
+              {cell("Avg confidence", a.metrics.avg_confidence == null ? "—" : pct(a.metrics.avg_confidence))}
+              {cell("Avg expected risk", money(a.metrics.avg_expected_risk))}
+              {cell("Avg suggested pos", money(a.metrics.avg_suggested_position, 0))}
+            </div>
+          ) : null}
           <div className="wrap">
             <table>
-              <thead><tr><th>Time</th><th>Instrument</th><th>Action</th><th>Qty</th><th>Price</th><th>Decision</th><th>Reason</th></tr></thead>
+              <thead><tr><th>Time</th><th>Instrument</th><th>Agent</th><th>Action</th><th>Conf</th>
+                <th>Exp. risk</th><th>Suggested</th><th>Stop</th><th>Target</th><th>Risk</th><th>Final</th><th>Reason</th></tr></thead>
               <tbody>
                 {(a.decisions ?? []).length === 0
-                  ? <tr><td className="empty" colSpan={7}>No decisions yet</td></tr>
+                  ? <tr><td className="empty" colSpan={12}>No decisions yet</td></tr>
                   : a.decisions.map((d, i) => (
                     <tr key={i}>
-                      <td>{hhmmss(d.ts)}</td><td>{d.instrument}</td><td>{d.action ?? "—"}</td>
-                      <td>{d.quantity == null ? "—" : num(d.quantity, 0)}</td>
-                      <td>{price(d.price)}</td>
-                      <td><Pill text={d.decision} /></td>
+                      <td>{hhmmss(d.ts)}</td><td>{d.instrument}</td><td>{d.agent ?? "—"}</td>
+                      <td>{d.action ?? "—"}</td>
+                      <td>{d.confidence == null ? "—" : pct(d.confidence)}</td>
+                      <td>{d.expected_risk == null ? "—" : money(d.expected_risk)}</td>
+                      <td>{d.suggested_size == null ? "—" : money(d.suggested_size, 0)}</td>
+                      <td>{price(d.stop)}</td><td>{price(d.target)}</td>
+                      <td>{d.risk_decision ? <Pill text={d.risk_decision} /> : "—"}</td>
+                      <td><Pill text={d.execution_decision ?? d.decision ?? "—"} /></td>
                       <td className="reason">{d.reason}</td>
                     </tr>
                   ))}

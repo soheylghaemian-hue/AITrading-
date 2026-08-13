@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 
 from ..core.events import QuoteEvent
@@ -93,6 +93,8 @@ class PaperAutonomousEngine:
         self._day: date | None = None
         self._error: str | None = None
         self._last_start_reasons: list[str] = []
+        self._dry_run_until: datetime | None = None   # controlled observation window (auto-stop)
+        self._eval_count = 0                           # total evaluation cycles run
 
     # ------------------------------------------------------------- status
     @property
@@ -120,11 +122,16 @@ class PaperAutonomousEngine:
             self._intent = AutonomousStatus.ARMED
         return self.status
 
-    def dry_run(self, actor: str = "user") -> AutonomousStatus:
+    def dry_run(self, actor: str = "user", duration_minutes: float = 60.0) -> AutonomousStatus:
+        """Enter PAPER DRY RUN — full pipeline on real data, decisions logged, NO orders. Runs for
+        a controlled window (default 60 min) then auto-stops back to DISABLED (no infinite process)."""
         if self._risk.state.killed:
             raise RuntimeError("kill switch engaged — reset first")
-        if self._intent in (AutonomousStatus.DISABLED, AutonomousStatus.ARMED):
-            self._log_audit(actor, AutonomousStatus.DRY_RUN, "dry-run (no orders)")
+        if self._intent in (AutonomousStatus.DISABLED, AutonomousStatus.ARMED, AutonomousStatus.DRY_RUN):
+            self._dry_run_until = (datetime.now(timezone.utc)
+                                   + timedelta(minutes=max(1.0, duration_minutes)))
+            self._log_audit(actor, AutonomousStatus.DRY_RUN,
+                            f"dry-run (no orders) for {duration_minutes:.0f} min")
             self._intent = AutonomousStatus.DRY_RUN
         return self.status
 
@@ -232,9 +239,16 @@ class PaperAutonomousEngine:
 
     # ------------------------------------------------------------- step
     async def step(self, *, now: datetime, bars: list, market_data: list[dict]) -> None:
+        # Controlled observation window: auto-stop the dry run back to DISABLED when it elapses.
+        if (self._intent is AutonomousStatus.DRY_RUN and self._dry_run_until is not None
+                and datetime.now(timezone.utc) >= self._dry_run_until):
+            self._log_audit("system", AutonomousStatus.DISABLED, "dry-run observation period elapsed")
+            self._intent = AutonomousStatus.DISABLED
+            self._dry_run_until = None
         st = self.status
         if st is AutonomousStatus.DISABLED:
             return
+        self._eval_count += 1
         if st is AutonomousStatus.RUNNING:
             await self._execute_step(now, bars, market_data)
         else:
@@ -310,6 +324,35 @@ class PaperAutonomousEngine:
         action = getattr(t, "signal_action", None) or getattr(t, "direction", "?")
         return f"{agent} {action}"
 
+    # ------------------------------------------------------------- metrics
+    def metrics(self) -> dict:
+        """Observation metrics computed from the decision log. No fabricated P&L (no trades)."""
+        ds = list(self._decisions)
+        conf = [d.confidence for d in ds if d.confidence is not None]
+        risk = [d.expected_risk for d in ds if d.expected_risk is not None]
+        size = [d.suggested_size for d in ds if d.suggested_size is not None]
+        by_instrument: dict[str, int] = {}
+        by_agent: dict[str, int] = {}
+        for d in ds:
+            if d.agent:
+                by_instrument[d.instrument] = by_instrument.get(d.instrument, 0) + 1
+                by_agent[d.agent] = by_agent.get(d.agent, 0) + 1
+        mean = lambda xs: (sum(xs) / len(xs)) if xs else None  # noqa: E731
+        return {
+            "total_evaluations": self._eval_count,
+            "opportunities_detected": sum(1 for d in ds if d.agent),
+            "potential_trades": sum(1 for d in ds if d.suggested_size),
+            "approved_decisions": sum(1 for d in ds if d.risk_decision == "APPROVED"),
+            "rejected_decisions": sum(1 for d in ds if d.risk_decision == "REJECTED"),
+            "no_data_decisions": sum(1 for d in ds if d.execution_decision == "NO_TRADE"),
+            "risk_vetoes": sum(1 for d in ds if d.risk_decision == "REJECTED"),
+            "avg_confidence": mean(conf),
+            "avg_expected_risk": mean(risk),
+            "avg_suggested_position": mean(size),
+            "signals_by_instrument": by_instrument,
+            "signals_by_agent": by_agent,
+        }
+
     # ------------------------------------------------------------- read-model
     def snapshot(self, *, account, risk_config=None, market_data: list[dict] | None = None) -> dict:
         r = self._risk.state
@@ -339,6 +382,8 @@ class PaperAutonomousEngine:
             "remaining_daily_loss": remaining,
             "max_daily_loss": max_daily,
             "dry_run": st is AutonomousStatus.DRY_RUN,
+            "dry_run_until": (self._dry_run_until.isoformat() if self._dry_run_until else None),
+            "metrics": self.metrics(),
             "start_rejected_reasons": list(self._last_start_reasons),
             "confirm_phrase": self.CONFIRM_PHRASE,
             "decisions": [d.as_dict() for d in list(self._decisions)[-60:][::-1]],
