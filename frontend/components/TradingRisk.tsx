@@ -47,12 +47,13 @@ export function TradingRisk({ s }: { s: Snapshot | null }) {
     setMsg(res.ok ? "Saved — applied to the Risk Engine." : `Not applied: ${res.detail}`);
   }
 
-  const statusReached = tr?.status === "DAILY LIMIT REACHED";
+  const statusReached = tr?.status === "DAILY LOSS LIMIT REACHED";
+  const statusLabel = tr ? (statusReached ? `🔴 ${tr.status}` : tr.status) : NO_DATA;
   return (
     <section className="card">
       <h2>
         <span>Trading risk · live configuration</span>
-        {tr ? <span className={`pill p-${statusReached ? "halted" : "armed"}`}>{tr.status}</span>
+        {tr ? <span className={`pill p-${statusReached ? "halted" : "armed"}`}>{statusLabel}</span>
             : <span className="pill p-no_data">NO DATA</span>}
       </h2>
 
@@ -63,10 +64,10 @@ export function TradingRisk({ s }: { s: Snapshot | null }) {
         <div className="h"><span className="n">Max risk / trade ($)</span><span className="mono">{money(tr?.max_risk_per_trade, 0)}</span></div>
         <div className="h"><span className="n">Daily loss limit</span><span className="mono">{tr ? pct(tr.max_daily_loss_pct) : NO_DATA}</span></div>
         <div className="h"><span className="n">Max daily loss ($)</span><span className="mono">{money(tr?.max_daily_loss, 0)}</span></div>
-        <div className="h"><span className="n">Current daily P&L</span><span className={`mono ${sign(tr?.current_daily_pnl)}`}>{money(tr?.current_daily_pnl, 0)}</span></div>
-        <div className="h"><span className="n">Remaining daily risk</span><span className="mono">{money(tr?.remaining_daily_risk, 0)}</span></div>
+        <div className="h"><span className="n">Today's P&L</span><span className={`mono ${sign(tr?.current_daily_pnl)}`}>{money(tr?.current_daily_pnl, 0)}</span></div>
+        <div className="h"><span className="n">Remaining daily loss</span><span className="mono">{money(tr?.remaining_daily_risk, 0)}</span></div>
         <div className="h"><span className="n">Trading status</span>
-          <span className={`pill p-${statusReached ? "halted" : tr ? "armed" : "no_data"}`}>{tr?.status ?? NO_DATA}</span></div>
+          <span className={`pill p-${statusReached ? "halted" : tr ? "armed" : "no_data"}`}>{statusLabel}</span></div>
       </div>
 
       {/* The only three controls. Position size / leverage / exposure are computed automatically. */}

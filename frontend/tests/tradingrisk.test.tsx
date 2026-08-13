@@ -34,9 +34,9 @@ describe("TRADING RISK panel", () => {
     expect(html.toLowerCase()).not.toContain("leverage (");
   });
 
-  it("DAILY LIMIT REACHED status renders as a halt state", () => {
-    const reached: Snapshot = { trading_risk: { ...active.trading_risk!, status: "DAILY LIMIT REACHED", remaining_daily_risk: 0 } };
-    expect(r(<TradingRisk s={reached} />)).toContain("DAILY LIMIT REACHED");
+  it("DAILY LOSS LIMIT REACHED status renders as a halt state", () => {
+    const reached: Snapshot = { trading_risk: { ...active.trading_risk!, status: "DAILY LOSS LIMIT REACHED", remaining_daily_risk: 0 } };
+    expect(r(<TradingRisk s={reached} />)).toContain("DAILY LOSS LIMIT REACHED");
   });
 
   it("with no backend data shows NO DATA, never fabricated numbers", () => {

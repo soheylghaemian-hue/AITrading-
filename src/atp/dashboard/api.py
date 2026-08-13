@@ -25,6 +25,7 @@ from ..governance.registry import StrategyRegistry
 from ..journal.store import TradeJournal
 from ..risk.config import TradingRiskConfig
 from ..risk.engine import RiskEngine
+from ..risk.store import RiskConfigStore
 from .notifications import Kind, NotificationCenter, Severity
 from .snapshot import build_snapshot
 
@@ -53,6 +54,7 @@ class DashboardContext:
     # authoritative Risk Engine (and, via on_risk_config_change, to the Position Sizer/policy).
     risk_config: TradingRiskConfig | None = None
     on_risk_config_change: Callable[[TradingRiskConfig], None] | None = None
+    config_store: "RiskConfigStore | None" = None   # persistence (survives restart, §15)
 
     async def snapshot_dict(self) -> dict:
         account = await self.broker.get_account()
@@ -78,6 +80,23 @@ class DashboardContext:
         )
         return snap.as_dict()
 
+    def load_persisted_risk_config(self) -> TradingRiskConfig | None:
+        """On startup, re-apply the persisted TRADING RISK config to the authoritative Risk Engine
+        so the user's three settings survive a restart (§15). Returns the loaded config or None."""
+        if self.config_store is None:
+            return None
+        cfg = self.config_store.load()
+        if cfg is None:
+            return None
+        self.risk.update_limits(
+            max_trade_risk_pct=cfg.risk_per_trade_pct,
+            max_daily_loss_pct=cfg.max_daily_loss_pct,
+        )
+        self.risk_config = cfg
+        if self.on_risk_config_change is not None:
+            self.on_risk_config_change(cfg)
+        return cfg
+
     def set_risk_config(self, capital: float, risk_per_trade_pct: float,
                         max_daily_loss_pct: float) -> dict:
         """Apply the 3-parameter TRADING RISK config to the authoritative Risk Engine (and the
@@ -94,6 +113,8 @@ class DashboardContext:
             max_daily_loss_pct=cfg.max_daily_loss_pct,
         )
         self.risk_config = cfg
+        if self.config_store is not None:
+            self.config_store.save(cfg)       # persist — survives a restart (§15)
         if self.on_risk_config_change is not None:
             self.on_risk_config_change(cfg)   # let the runner update the sizer/policy + capital
         if self.notifications is not None:

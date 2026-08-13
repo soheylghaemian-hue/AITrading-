@@ -58,5 +58,5 @@ def trading_risk_view(config: TradingRiskConfig, *, daily_pnl: float, halted: bo
         **config.as_dict(),
         "current_daily_pnl": daily_pnl,
         "remaining_daily_risk": remaining,
-        "status": "DAILY LIMIT REACHED" if limit_reached else "ACTIVE",
+        "status": "DAILY LOSS LIMIT REACHED" if limit_reached else "ACTIVE",
     }

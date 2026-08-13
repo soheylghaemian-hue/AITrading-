@@ -203,6 +203,19 @@ class RiskEngine:
                 f"trade risk {trade_risk / equity:.2%} > max {self._limits.max_trade_risk_pct:.2%}",
             )
 
+        # Remaining daily-loss budget (§15): a new trade may not risk more than what is left of
+        # today's max-daily-loss budget. This keeps a single trade from being able to blow through
+        # the day's loss cap in one go, and complements the post-loss halt latched in mark_equity.
+        if stop_distance > 0 and self._state.day_start_equity > 0:
+            daily_budget = self._limits.max_daily_loss_pct * self._state.day_start_equity
+            daily_loss_so_far = max(0.0, self._state.day_start_equity - equity)
+            remaining_budget = daily_budget - daily_loss_so_far
+            if trade_risk > remaining_budget + 1e-9:
+                return RiskDecision(
+                    False,
+                    f"trade risk {trade_risk:.0f} exceeds remaining daily-loss budget {remaining_budget:.0f}",
+                )
+
         # Correlation exposure (§14): the new position plus its correlated cluster in the
         # existing book must not exceed the correlated-exposure limit.
         if correlation_fn is not None:

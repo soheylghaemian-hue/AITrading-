@@ -54,10 +54,10 @@ def test_status_active_and_daily_limit_reached():
     assert active["status"] == "ACTIVE"
     assert active["remaining_daily_risk"] == 15_000.0
     reached = trading_risk_view(c, daily_pnl=-20_000.0, halted=False)
-    assert reached["status"] == "DAILY LIMIT REACHED"
+    assert reached["status"] == "DAILY LOSS LIMIT REACHED"
     assert reached["remaining_daily_risk"] == 0.0
     halted = trading_risk_view(c, daily_pnl=0.0, halted=True)  # engine latch
-    assert halted["status"] == "DAILY LIMIT REACHED"
+    assert halted["status"] == "DAILY LOSS LIMIT REACHED"
 
 
 # --------------------------------------------------------------------------- engine wiring
