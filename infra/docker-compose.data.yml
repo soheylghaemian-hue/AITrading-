@@ -1,0 +1,72 @@
+# Phase D0 — production DATA layer only (PostgreSQL 16 + Redis). NO trading services.
+# PostgreSQL is the durable source of truth; Redis is bus/cache ONLY (never authoritative).
+# Both bind to loopback (127.0.0.1) so they are NOT publicly exposed; the host firewall (ufw)
+# additionally blocks 5432/6379 from the outside. Credentials come from an env file, never hardcoded.
+#
+#   docker compose --env-file /opt/atp/atp.env -f docker-compose.data.yml up -d
+
+name: atp-data
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: atp_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PG_SUPERUSER:-postgres}
+      POSTGRES_PASSWORD: ${PG_SUPERUSER_PASSWORD:?set in env file}
+      POSTGRES_DB: postgres
+      TZ: UTC
+      PGTZ: UTC
+      # consumed by the init script (010-databases.sh)
+      ATP_PROD_DB: ${ATP_PROD_DB:-atp_prod}
+      ATP_TEST_DB: ${ATP_TEST_DB:-atp_test}
+      ATP_APP_USER: ${ATP_APP_USER:-atp_app}
+      ATP_APP_PASSWORD: ${ATP_APP_PASSWORD:?set in env file}
+      ATP_TEST_USER: ${ATP_TEST_USER:-atp_test}
+      ATP_TEST_PASSWORD: ${ATP_TEST_PASSWORD:?set in env file}
+    command:
+      - "postgres"
+      - "-c"
+      - "timezone=UTC"
+      - "-c"
+      - "log_timezone=UTC"
+    ports:
+      - "127.0.0.1:5432:5432"          # loopback only — never 0.0.0.0
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_SUPERUSER:-postgres} -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  redis:
+    image: redis:7-alpine
+    container_name: atp_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set in env file}"]
+    ports:
+      - "127.0.0.1:6379:6379"          # loopback only
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+volumes:
+  pgdata:
+    name: atp_pgdata
+  redisdata:
+    name: atp_redisdata

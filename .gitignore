@@ -28,3 +28,7 @@ node_modules/
 *.pem
 credentials*.json
 credentials/
+
+# Phase D0 server-side secrets (real env lives on the VM, never here)
+infra/atp.env
+atp.env
