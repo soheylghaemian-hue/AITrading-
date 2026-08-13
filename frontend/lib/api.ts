@@ -8,10 +8,12 @@
 
 import type { Snapshot } from "./types";
 
-// Public base URL of the read-only backend Dashboard API. NEXT_PUBLIC_API_URL is the canonical
-// name (spec §19); NEXT_PUBLIC_API_BASE_URL kept as a backward-compatible fallback.
+// Where the browser sends dashboard calls. Default: the SAME-ORIGIN server proxy ("/api"), which
+// forwards to the private backend and injects the read token server-side — so no token ever
+// reaches the browser (spec §Auth). NEXT_PUBLIC_API_URL may override it for local dev (direct
+// backend). It must only ever be an API address — never a secret.
 export const API_BASE = (
-  process.env.NEXT_PUBLIC_API_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? ""
+  process.env.NEXT_PUBLIC_API_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api"
 ).replace(/\/+$/, "");
 
 // Reserved for a future backend push channel (WebSocket/SSE). The backend is REST-only today,

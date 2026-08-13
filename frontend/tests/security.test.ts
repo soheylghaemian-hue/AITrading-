@@ -33,11 +33,24 @@ describe("frontend holds no broker credentials or secrets", () => {
   });
   it("no non-public secret env var is read in the browser bundle", () => {
     for (const { f, text } of sources) {
-      // Only NEXT_PUBLIC_* env vars may be referenced in frontend code.
+      // Server-only route handlers (app/api/**) run on the server and MAY read server env; they
+      // are never shipped to the browser. Client code may only read NEXT_PUBLIC_* vars.
+      if (f.includes("/app/api/")) continue;
       const envRefs = [...text.matchAll(/process\.env\.([A-Z0-9_]+)/g)].map((m) => m[1]);
       for (const v of envRefs) {
         expect(v.startsWith("NEXT_PUBLIC_"), `${f} reads non-public env ${v}`).toBe(true);
       }
+    }
+  });
+
+  it("the server proxy only forwards whitelisted read-model / control paths (no broker/order paths)", () => {
+    const route = sources.find((s) => s.f.includes("/app/api/dashboard/"));
+    expect(route, "proxy route handler exists").toBeTruthy();
+    const text = route!.text;
+    // must reference the read whitelist and never any broker/execution path
+    expect(text).toContain("summary");
+    for (const forbidden of ["placeOrder", "cancelOrder", "orders", "execute", ":4002", "ib_insync"]) {
+      expect(text.includes(forbidden), `proxy must not reference ${forbidden}`).toBe(false);
     }
   });
 });

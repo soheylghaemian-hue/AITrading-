@@ -153,6 +153,40 @@ def create_app(context: DashboardContext) -> Any:
     app = FastAPI(title="atp command center", docs_url="/api/docs")
     token = os.environ.get("ATP_DASHBOARD_TOKEN")
 
+    # --- security: CORS (locked to the production origin), rate limiting, read-token auth ------
+    from collections import deque as _deque  # noqa: PLC0415
+    from time import monotonic as _monotonic  # noqa: PLC0415
+
+    from fastapi.middleware.cors import CORSMiddleware  # noqa: PLC0415
+
+    origins = [o.strip() for o in os.environ.get(
+        "ATP_DASHBOARD_CORS_ORIGINS", "https://www.gigbay.de").split(",") if o.strip()]
+    app.add_middleware(
+        CORSMiddleware, allow_origins=origins, allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"], allow_headers=["Authorization", "Content-Type"],
+    )
+
+    read_token = os.environ.get("ATP_DASHBOARD_READ_TOKEN")        # required on reads when set
+    rate_limit = int(os.environ.get("ATP_DASHBOARD_RATE_LIMIT", "60"))   # requests / 60s / IP
+    _hits: dict[str, "deque"] = {}
+
+    @app.middleware("http")
+    async def _guard(request, call_next):
+        # per-IP sliding-window rate limit — a read-only dashboard needs no burst traffic.
+        ip = request.client.host if request.client else "?"
+        now = _monotonic()
+        dq = _hits.setdefault(ip, _deque())
+        while dq and now - dq[0] > 60.0:
+            dq.popleft()
+        if len(dq) >= rate_limit:
+            return JSONResponse({"detail": "rate limit exceeded"}, status_code=429)
+        dq.append(now)
+        # authenticate public reads (the Vercel proxy sends this token server-side, never the browser)
+        if read_token and request.method == "GET" and request.url.path.startswith("/dashboard/"):
+            if request.headers.get("authorization") != f"Bearer {read_token}":
+                return JSONResponse({"detail": "unauthorized"}, status_code=401)
+        return await call_next(request)
+
     async def _snapshot() -> dict:
         return await context.snapshot_dict()
 

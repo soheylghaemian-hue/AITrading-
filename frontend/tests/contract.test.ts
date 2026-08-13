@@ -25,12 +25,14 @@ describe("dashboard API contract", () => {
     for (const k of REQUIRED_KEYS) expect(k in sample).toBe(true);
   });
 
-  it("fetchSnapshot signals NO_BACKEND when no API URL is configured", async () => {
-    // With no NEXT_PUBLIC_API_URL set in the test env, API_BASE is empty → NO_BACKEND.
+  it("defaults to the same-origin server proxy (/api) and never embeds a secret", async () => {
+    // With no NEXT_PUBLIC_API_URL, the browser talks to the same-origin proxy; the token lives
+    // only in the Vercel server env, never in the client bundle.
     const { fetchSnapshot, API_BASE, POLL_MS } = await import("../lib/api");
-    expect(API_BASE).toBe("");
+    expect(API_BASE).toBe("/api");
     expect(POLL_MS).toBeGreaterThanOrEqual(1000);
-    await expect(fetchSnapshot()).rejects.toThrow("NO_BACKEND");
+    // In the node test env a relative fetch has no origin → it rejects (no fabricated data).
+    await expect(fetchSnapshot()).rejects.toBeTruthy();
   });
 
   it("the frontend only ever reads /dashboard/summary and posts /dashboard/emergency-stop|resume", async () => {

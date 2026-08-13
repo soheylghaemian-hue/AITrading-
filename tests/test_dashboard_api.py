@@ -34,8 +34,16 @@ class _FakeBroker:
         return True
 
 
-def _client():
+def _client(*, read_token=None, rate_limit=None, cors=None):
+    for k in ("ATP_DASHBOARD_READ_TOKEN", "ATP_DASHBOARD_RATE_LIMIT", "ATP_DASHBOARD_CORS_ORIGINS"):
+        os.environ.pop(k, None)
     os.environ["ATP_DASHBOARD_TOKEN"] = TOKEN
+    if read_token:
+        os.environ["ATP_DASHBOARD_READ_TOKEN"] = read_token
+    if rate_limit:
+        os.environ["ATP_DASHBOARD_RATE_LIMIT"] = str(rate_limit)
+    if cors:
+        os.environ["ATP_DASHBOARD_CORS_ORIGINS"] = cors
     risk = RiskEngine(limits=RiskLimits(), state=RiskState(day_start_equity=1_000_000.0, peak_equity=1_000_000.0))
     store = RiskConfigStore(str(Path(tempfile.mkdtemp()) / "risk.json"))
     ctx = DashboardContext(broker=_FakeBroker(), risk=risk, mode="paper",
@@ -89,3 +97,40 @@ def test_riskconfig_invalid_is_400():
     bad = {"capital": 500000, "risk_per_trade_pct": 0.05, "max_daily_loss_pct": 0.02}  # risk > daily
     r = client.post("/dashboard/risk-config", json=bad, headers={"Authorization": f"Bearer {TOKEN}"})
     assert r.status_code == 400
+
+
+# --------------------------------------------------------------------------- Phase 6: secure public API
+def test_read_endpoints_require_read_token_when_configured():
+    if not _HAS_FASTAPI:
+        return
+    client, _ = _client(read_token="read-secret")
+    assert client.get("/dashboard/summary").status_code == 401                     # no token → blocked
+    assert client.get("/dashboard/summary",
+                      headers={"Authorization": "Bearer WRONG"}).status_code == 401  # bad token
+    ok = client.get("/dashboard/summary", headers={"Authorization": "Bearer read-secret"})
+    assert ok.status_code == 200 and ok.json()["mode"] == "paper"
+
+
+def test_reads_open_when_no_read_token_set():
+    if not _HAS_FASTAPI:
+        return
+    client, _ = _client()   # no read token → reads open (local dev)
+    assert client.get("/dashboard/summary").status_code == 200
+
+
+def test_cors_locked_to_production_origin():
+    if not _HAS_FASTAPI:
+        return
+    client, _ = _client(cors="https://www.gigbay.de")
+    good = client.get("/dashboard/summary", headers={"Origin": "https://www.gigbay.de"})
+    assert good.headers.get("access-control-allow-origin") == "https://www.gigbay.de"
+    bad = client.get("/dashboard/summary", headers={"Origin": "https://evil.example.com"})
+    assert bad.headers.get("access-control-allow-origin") != "https://evil.example.com"
+
+
+def test_rate_limit_returns_429():
+    if not _HAS_FASTAPI:
+        return
+    client, _ = _client(rate_limit=3)
+    codes = [client.get("/api/health").status_code for _ in range(5)]
+    assert 429 in codes and codes.count(200) == 3   # first 3 ok, then throttled
