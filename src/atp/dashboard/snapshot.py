@@ -234,7 +234,7 @@ class DashboardSnapshot:
 
 def build_snapshot(
     *,
-    account: Account,
+    account: Account | None = None,
     risk: RiskEngine,
     journal: TradeJournal | None = None,
     registry: StrategyRegistry | None = None,
@@ -255,10 +255,17 @@ def build_snapshot(
     risk_config: TradingRiskConfig | None = None,
     risk_capital: float | None = None,
 ) -> DashboardSnapshot:
-    """Assemble the full Command Center state from live objects (§22). Real data only."""
+    """Assemble the full Command Center state from live objects (§22). Real data only.
+
+    `account=None` means the broker/account is unavailable (e.g. IBKR not connected): every
+    account field is null (NO DATA / IBKR DATA UNAVAILABLE) — never a fabricated 0."""
+    has_account = account is not None
+    _acct = account if has_account else Account(
+        cash=0.0, equity=0.0, realized_pnl=0.0, unrealized_pnl=0.0,
+        gross_exposure=0.0, net_exposure=0.0, positions={})
     trades = journal.all() if journal is not None else []
     analytics = TradeAnalytics(trades)
-    risk_view = _risk_view(risk, account)
+    risk_view = _risk_view(risk, _acct)
 
     governance: list[dict] = []
     if registry is not None:
@@ -275,7 +282,7 @@ def build_snapshot(
     # what the engine actually enforces. Never fabricated — omitted if it can't be formed.
     cfg = risk_config
     if cfg is None:
-        cap = risk_capital if (risk_capital and risk_capital > 0) else account.equity
+        cap = risk_capital if (risk_capital and risk_capital > 0) else (_acct.equity if has_account else 0.0)
         try:
             cfg = TradingRiskConfig(
                 capital=cap, risk_per_trade_pct=risk.limits.max_trade_risk_pct,
@@ -298,14 +305,17 @@ def build_snapshot(
         execution_enabled=execution_enabled,
         orders=orders,
         account={
-            "equity": account.equity, "cash": account.cash,
+            "equity": _acct.equity if has_account else None,
+            "cash": _acct.cash if has_account else None,
             "buying_power": buying_power,
-            "realized_pnl": account.realized_pnl, "unrealized_pnl": account.unrealized_pnl,
-            "gross_exposure": account.gross_exposure, "net_exposure": account.net_exposure,
-            "gross_leverage": account.gross_leverage,
+            "realized_pnl": _acct.realized_pnl if has_account else None,
+            "unrealized_pnl": _acct.unrealized_pnl if has_account else None,
+            "gross_exposure": _acct.gross_exposure if has_account else None,
+            "net_exposure": _acct.net_exposure if has_account else None,
+            "gross_leverage": _acct.gross_leverage if has_account else None,
         },
         risk=risk_view,
-        positions=_positions(account),
+        positions=_positions(_acct),
         market=market or {},
         market_data=market_data or [],
         subscriptions=subscriptions or [],
