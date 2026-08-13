@@ -395,11 +395,12 @@ export function Autonomous({ s }: { s: Snapshot | null }) {
           <div className="wrap">
             <table>
               <thead><tr><th>Time</th><th>Instrument</th><th>Source</th><th>Data</th><th>Regime</th>
-                <th>Consensus</th><th>Opp.</th><th>Dir</th><th>Entry</th><th>Size</th><th>Est. risk</th>
+                <th>Consensus</th><th>Dir</th><th>Entry</th><th>Qty</th><th>Notional</th>
+                <th>Stop dist</th><th>Monetary risk</th><th>Risk % cap</th>
                 <th>Risk Engine</th><th>Final decision</th><th>Reason</th></tr></thead>
               <tbody>
                 {(a.decisions ?? []).length === 0
-                  ? <tr><td className="empty" colSpan={14}>No decisions yet</td></tr>
+                  ? <tr><td className="empty" colSpan={16}>No decisions yet</td></tr>
                   : a.decisions.map((d, i) => (
                     <tr key={i}>
                       <td>{hhmmss(d.ts)}</td><td>{d.instrument}</td>
@@ -407,11 +408,13 @@ export function Autonomous({ s }: { s: Snapshot | null }) {
                       <td>{d.data_status ? <Pill text={d.data_status} /> : "—"}</td>
                       <td>{d.regime ?? "—"}</td>
                       <td>{d.consensus ?? "—"}</td>
-                      <td>{d.opportunity_score == null ? "—" : num(d.opportunity_score, 2)}</td>
                       <td>{d.action ?? "—"}</td>
                       <td>{price(d.entry)}</td>
-                      <td>{d.suggested_size == null ? "—" : money(d.suggested_size, 0)}</td>
-                      <td>{d.expected_risk == null ? "—" : money(d.expected_risk)}</td>
+                      <td>{d.suggested_size == null ? "—" : num(d.suggested_size, 0)}</td>
+                      <td>{d.position_notional == null ? "—" : money(d.position_notional, 0)}</td>
+                      <td>{d.stop_distance == null ? "—" : money(d.stop_distance)}</td>
+                      <td>{d.monetary_risk == null ? "—" : money(d.monetary_risk, 0)}</td>
+                      <td>{d.risk_pct_capital == null ? "—" : pct(d.risk_pct_capital)}</td>
                       <td>{d.risk_decision ? <Pill text={d.risk_decision} /> : "—"}</td>
                       <td><Pill text={d.final_decision ?? d.execution_decision ?? "—"} /></td>
                       <td className="reason">{d.reason}</td>

@@ -78,6 +78,8 @@ export interface Snapshot {
       quantity?: number | null; price?: number | null; execution_decision?: string; decision?: string;
       source?: string | null; data_status?: string | null; regime?: string | null;
       consensus?: string | null; opportunity_score?: number | null; final_decision?: string | null;
+      position_notional?: number | null; stop_distance?: number | null; monetary_risk?: number | null;
+      risk_pct_capital?: number | null; max_allowed_risk?: number | null; remaining_daily_budget?: number | null;
       reason: string }[];
   } | null;
   agents?: Record<string, any>[];

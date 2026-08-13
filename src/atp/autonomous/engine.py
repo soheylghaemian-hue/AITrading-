@@ -62,6 +62,13 @@ class Decision:
     consensus: str | None = None         # AI agent consensus, e.g. "7/9 BUY"
     opportunity_score: float | None = None
     final_decision: str | None = None    # NO_DATA / NO_TRADE / REJECTED_BY_RISK / PAPER_TRADE_WOULD_BE_EXECUTED
+    # § Phase 11.5 — explicit monetary risk (never conflate stop distance with dollar risk)
+    position_notional: float | None = None
+    stop_distance: float | None = None       # per-unit distance in account currency
+    monetary_risk: float | None = None       # qty × stop_distance × multiplier
+    risk_pct_capital: float | None = None     # monetary_risk / equity
+    max_allowed_risk: float | None = None     # risk_per_trade × equity (hard cap)
+    remaining_daily_budget: float | None = None
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -166,7 +173,11 @@ class PaperAutonomousEngine:
             execution_decision=exec_note, reason=d.get("reason", ""),
             source=src, data_status=dstatus, regime=d.get("regime"),
             consensus=d.get("consensus"), opportunity_score=d.get("opportunity_score"),
-            final_decision=self._final_from(d))
+            final_decision=self._final_from(d),
+            position_notional=d.get("position_notional"), stop_distance=d.get("stop_distance"),
+            monetary_risk=d.get("monetary_risk"), risk_pct_capital=d.get("risk_pct_capital"),
+            max_allowed_risk=d.get("max_allowed_risk"),
+            remaining_daily_budget=d.get("remaining_daily_budget"))
 
     # ------------------------------------------------------------- transitions
     def arm(self, actor: str = "user") -> AutonomousStatus:

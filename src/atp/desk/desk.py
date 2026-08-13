@@ -360,7 +360,26 @@ class AutonomousTradingDesk:
             decision = self._risk.check_order(order, account, price=price, current_qty=current_qty,
                                               stop_distance=opp.signal.stop_distance)
             sig = opp.signal
+            # Explicit monetary risk (§ Phase 11.5): distinguish per-unit stop distance from the
+            # dollar risk and its % of capital. Works for equities and FX where the quote currency
+            # equals the account currency (EUR.USD: stop distance is already in USD).
+            mult = opp.instrument.multiplier
+            qty = abs(delta)
+            stop_dist = sig.stop_distance or 0.0
+            monetary_risk = qty * stop_dist * mult
+            notional = qty * price * mult
+            equity = account.equity
+            max_allowed_risk = self._risk.limits.max_trade_risk_pct * equity
+            daily_budget = self._risk.limits.max_daily_loss_pct * self._risk.state.day_start_equity
+            daily_loss_so_far = max(0.0, self._risk.state.day_start_equity - equity)
+            remaining_daily = max(0.0, daily_budget - daily_loss_so_far)
             decisions.append({
+                "position_notional": notional,
+                "stop_distance": stop_dist * mult,       # per-unit distance in account currency
+                "monetary_risk": monetary_risk,
+                "risk_pct_capital": (monetary_risk / equity) if equity > 0 else None,
+                "max_allowed_risk": max_allowed_risk,
+                "remaining_daily_budget": remaining_daily,
                 "instrument": opp.instrument.symbol, "agent": sig.strategy,
                 "action": sig.action.value, "signal_strength": sig.confidence,
                 "confidence": sig.confidence, "expected_risk": sig.stop_distance,
