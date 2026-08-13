@@ -20,10 +20,11 @@ const READ_PATHS = new Set([
 const WRITE_PATHS = new Set(["emergency-stop", "resume", "risk-config"]);
 
 async function forward(req: NextRequest, path: string[], method: "GET" | "POST") {
-  if (!BACKEND) return NextResponse.json({ detail: "backend not configured" }, { status: 502 });
+  // Enforce the path whitelist FIRST — a non-allowed path is 404 regardless of configuration.
   const top = path[0] ?? "";
   const allowed = method === "GET" ? READ_PATHS : WRITE_PATHS;
   if (!allowed.has(top)) return NextResponse.json({ detail: "not found" }, { status: 404 });
+  if (!BACKEND) return NextResponse.json({ detail: "backend not configured" }, { status: 502 });
 
   const headers: Record<string, string> = {};
   if (method === "GET" && READ_TOKEN) headers["Authorization"] = `Bearer ${READ_TOKEN}`;
