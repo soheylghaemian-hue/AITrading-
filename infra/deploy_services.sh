@@ -16,7 +16,8 @@ git -C "$APP" log -1 --oneline
 echo "[deploy] 2/6 python deps into venv"
 [ -x "$APP/.venv/bin/python" ] || python3 -m venv "$APP/.venv"
 "$APP/.venv/bin/pip" install -q --disable-pip-version-check \
-    "psycopg[binary]>=3.1" "redis>=5.0" "fastapi>=0.110" "uvicorn>=0.29" "pytest>=8"
+    "psycopg[binary]>=3.1" "redis>=5.0" "fastapi>=0.110" "uvicorn>=0.29" "pytest>=8" \
+    "websockets>=12" "certifi"
 
 echo "[deploy] 3/6 control token"
 if ! grep -q '^ATP_CONTROL_TOKEN=' "$ENVF"; then

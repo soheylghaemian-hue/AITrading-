@@ -20,9 +20,10 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
+from ..persistence.state import RedisStateStore
 from ..runtime.lifecycle import LifecycleManager, RuntimeStatus
 from ..store import open_store
-from .base import build_dsn
+from .base import build_dsn, redis_url
 from .recovery import age_seconds, build_recovery_checks
 
 SERVICE = "control"
@@ -33,6 +34,7 @@ HEALTH_STALE_S = float(os.environ.get("ATP_HEALTH_STALE_S", "20"))
 class _Ctx:
     store = None
     life: LifecycleManager | None = None
+    snap = None                      # Redis read-model for live quotes (best-effort; never authoritative)
     lock = threading.Lock()          # psycopg connection is not thread-safe across the uvicorn pool
     ready = False
     hb_task = None
@@ -72,6 +74,10 @@ async def _heartbeat_loop() -> None:
 async def lifespan(_app: FastAPI):
     ctx.store = open_store(build_dsn(), migrate=False)
     ctx.life = LifecycleManager(ctx.store)
+    try:
+        ctx.snap = RedisStateStore(redis_url()) if redis_url() else None
+    except Exception:
+        ctx.snap = None
     with ctx.lock:
         ctx.life.recover()                       # never auto-RUNNING
     ctx.ready = True
@@ -127,6 +133,42 @@ def status() -> dict:
                     "fresh": age_seconds(m[4], now) <= HEALTH_STALE_S} for m in md]
     return {"runtime_state": rs.status if rs else None, "kill_switch": kill.engaged,
             "db": db, "services": services, "market_data": market_data, "ts": now.isoformat()}
+
+
+@app.get("/market")
+def market() -> dict:
+    """Read-only market-data read-model: authoritative status/freshness from Postgres merged with the
+    live quote snapshot (bid/ask/last/latency) from the Redis cache. No secret, no WS auth payload."""
+    now = datetime.now(timezone.utc)
+    with ctx.lock:
+        md = ctx.store.list_md_health()
+    health = {m[0]: {"source": m[1], "status": m[2], "latency_ms": m[3], "updated_at": str(m[4]),
+                     "fresh": age_seconds(m[4], now) <= HEALTH_STALE_S} for m in md}
+    snap_syms: dict = {}
+    feed = None
+    if ctx.snap is not None:
+        try:
+            snap = ctx.snap.get("md:snapshot") or {}
+            feed = snap.get("feed")
+            snap_syms = snap.get("symbols", {}) or {}
+        except Exception:
+            snap_syms = {}
+    out = []
+    for sym in sorted(set(health) | set(snap_syms)):
+        h = health.get(sym, {})
+        s = snap_syms.get(sym, {})
+        out.append({
+            "symbol": sym,
+            "source": s.get("source") or h.get("source"),
+            "status": h.get("status") or s.get("status"),
+            "realtime": s.get("realtime"),
+            "bid": s.get("bid"), "ask": s.get("ask"), "last": s.get("last"),
+            "bid_size": s.get("bid_size"), "ask_size": s.get("ask_size"), "volume": s.get("volume"),
+            "latency_ms": s.get("latency_ms") if s.get("latency_ms") is not None else h.get("latency_ms"),
+            "last_update": h.get("updated_at") or s.get("updated_at"),
+            "fresh": h.get("fresh"), "error": s.get("error"),
+        })
+    return {"feed": feed, "market_data": out, "ts": now.isoformat()}
 
 
 # ---------------------------------------------------------------- control commands (authenticated)
