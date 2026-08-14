@@ -25,13 +25,15 @@ def age_seconds(iso_ts, now: datetime | None = None) -> float:
 
 
 def market_data_fresh(store, *, max_age_s: float = 15.0, now: datetime | None = None) -> bool:
-    """True only if there is at least one market_data_health row and EVERY row is fresh. A dead
-    Market Data process stops refreshing the rows → they age out → False → new inputs are blocked."""
+    """True only if there is at least one market_data_health row and EVERY row is BOTH fresh (age)
+    AND tradable (status READY). A dead feed either stops refreshing rows (they age out) or writes
+    fresh DATA_NOT_AVAILABLE rows — both make this False, so new inputs are blocked (fail-closed).
+    A freshly-written 'unavailable' row must NEVER count as tradable-fresh."""
     now = now or datetime.now(timezone.utc)
     rows = store.list_md_health()
     if not rows:
         return False
-    return all(age_seconds(r[4], now) <= max_age_s for r in rows)
+    return all(str(r[2]) == "READY" and age_seconds(r[4], now) <= max_age_s for r in rows)
 
 
 def build_recovery_checks(store, *, broker_positions: dict | None = None,

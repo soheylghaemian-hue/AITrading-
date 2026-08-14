@@ -57,6 +57,20 @@ case "$FEED" in
   *)                  fail "MASSIVE feed did not reach STREAMING (feed=$FEED)";;
 esac
 
+echo "--- allow up to 25s for live ticks to populate all symbols ---"
+for i in $(seq 1 25); do
+  RCNT=$("$PY" - <<'PY'
+from atp.services.base import redis_url
+from atp.persistence.state import RedisStateStore
+try: d=RedisStateStore(redis_url()).get("md:snapshot") or {}
+except Exception: d={}
+s=d.get("symbols",{})
+print(sum(1 for k in ("AAPL","NVDA","SPY") if (s.get(k,{}) or {}).get("status")=="READY"))
+PY
+)
+  [ "$RCNT" = 3 ] && break; sleep 1
+done
+
 echo "--- per-symbol snapshot (bid/ask/last/latency; source/status/realtime — no secret) ---"
 "$PY" - > /tmp/e_syms <<'PY'
 from atp.services.base import redis_url
