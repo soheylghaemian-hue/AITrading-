@@ -439,12 +439,22 @@ class SqlStore(Store):
 
     def apply_fill_atomic(self, *, fill: FillRow, compute, order_state: str = "FILLED",
                           broker_order_id: str | None = None) -> PositionRow:
-        """Concurrency-safe fill application. Inside ONE transaction: lock the position row
+        """Concurrency-safe fill application. Inside ONE transaction: ensure the position row exists
+        (a zero row is inserted if absent — semantically identical to "no position"), lock it
         (SELECT … FOR UPDATE on PostgreSQL; SQLite serializes writers), recompute the position from
         the locked value via `compute(current_row_or_None) -> PositionRow`, then persist fill +
-        position + order together. Two concurrent fills on the same instrument cannot interleave."""
+        position + order together. Two concurrent fills on the same instrument cannot interleave —
+        including the FIRST fill on a brand-new instrument, since FOR UPDATE cannot lock a row that
+        does not yet exist."""
         now = utcnow_iso()
         with self.tx() as cur:
+            # Guarantee a lockable row BEFORE FOR UPDATE. Without this, two concurrent first fills on a
+            # new instrument both see "no row", both compute from zero, and one update is lost. A zero
+            # row folds identically to None in compute() (qty/avg/realized = 0), so this is safe.
+            self._exec(cur,
+                "INSERT INTO positions (instrument,quantity,avg_price,realized_pnl,updated_at) "
+                "VALUES (?,?,?,?,?) ON CONFLICT(instrument) DO NOTHING",
+                (fill.instrument, self._m(D(0)), self._m(D(0)), self._m(D(0)), now))
             self._exec(cur,
                 "SELECT instrument,quantity,avg_price,realized_pnl,updated_at FROM positions "
                 "WHERE instrument=?" + self.LOCK_CLAUSE, (fill.instrument,))
