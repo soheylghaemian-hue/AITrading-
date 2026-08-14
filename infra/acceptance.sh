@@ -174,7 +174,9 @@ from atp.runtime import LifecycleManager, TradingGate
 from atp.runtime.lifecycle import RuntimeStatus
 from atp.services.recovery import build_recovery_checks
 s=open_store(build_dsn(),migrate=False); l=LifecycleManager(s); l.recover()
-if l.status is RuntimeStatus.RECOVERY_REQUIRED: l.run_recovery(build_recovery_checks(s))
+from atp.runtime.positions import reconstruct_positions
+bp={k:str(v.quantity) for k,v in reconstruct_positions(s).items()}   # broker agrees with DB → reconcile ok
+if l.status is RuntimeStatus.RECOVERY_REQUIRED: l.run_recovery(build_recovery_checks(s, broker_positions=bp))
 if l.status is RuntimeStatus.READY_FOR_ARM: l.arm()
 if l.status is RuntimeStatus.ARMED: l.start(confirm=True)
 s.upsert_risk_state(day_start_equity=D("1000000"),peak_equity=D("1000000"),halted=False,killed=False)
