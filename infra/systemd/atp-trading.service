@@ -1,0 +1,25 @@
+[Unit]
+Description=ATP Trading Core + Execution Service (Phase C)
+Documentation=https://github.com/soheylghaemian-hue/AITrading-
+After=network-online.target docker.service atp-marketdata.service
+Wants=network-online.target
+# Starts alongside Market Data; if MD is down the Trading Core fails closed on stale market-data.
+
+[Service]
+Type=simple
+User=atp
+Group=atp
+WorkingDirectory=/opt/atp/app
+EnvironmentFile=/opt/atp/atp.env
+ExecStart=/opt/atp/app/.venv/bin/python -m atp.services.trading
+Restart=on-failure
+RestartSec=2
+# A restart NEVER auto-resumes RUNNING — recover() lands in RECOVERY_REQUIRED; human ARM required.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/atp
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,26 @@
+[Unit]
+Description=ATP Market Data Service (Phase C)
+Documentation=https://github.com/soheylghaemian-hue/AITrading-
+After=network-online.target docker.service
+Wants=network-online.target
+# The data stack (PostgreSQL + Redis) runs in Docker; the app connects over loopback.
+
+[Service]
+Type=simple
+User=atp
+Group=atp
+WorkingDirectory=/opt/atp/app
+EnvironmentFile=/opt/atp/atp.env
+ExecStart=/opt/atp/app/.venv/bin/python -m atp.services.marketdata
+Restart=on-failure
+RestartSec=2
+# Crash recovery is enforced in the app: a restart NEVER auto-resumes RUNNING. systemd only
+# restarts the process; the durable lifecycle lands in RECOVERY_REQUIRED.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/atp
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -529,3 +529,7 @@ class SqlStore(Store):
                 "VALUES (?,?,?,?,?) ON CONFLICT(symbol) DO UPDATE SET source=excluded.source, "
                 "status=excluded.status, latency_ms=excluded.latency_ms, updated_at=excluded.updated_at",
                 (symbol, source, status, latency_ms, ts))
+
+    def list_md_health(self) -> list[tuple]:
+        return self._all("SELECT symbol,source,status,latency_ms,updated_at FROM market_data_health "
+                         "ORDER BY symbol")

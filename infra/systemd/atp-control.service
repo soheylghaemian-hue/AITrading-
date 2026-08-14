@@ -1,0 +1,26 @@
+[Unit]
+Description=ATP Control / Observability Service (Phase C)
+Documentation=https://github.com/soheylghaemian-hue/AITrading-
+After=network-online.target docker.service
+Wants=network-online.target
+# Deliberately NOT ordered against the trading services: a Control outage must not affect them, and
+# they must not depend on Control. Control reads/writes only PostgreSQL.
+
+[Service]
+Type=simple
+User=atp
+Group=atp
+WorkingDirectory=/opt/atp/app
+EnvironmentFile=/opt/atp/atp.env
+ExecStart=/opt/atp/app/.venv/bin/python -m atp.services.control
+Restart=on-failure
+RestartSec=2
+# Control never trades; after its own restart it calls recover() too (never auto-RUNNING).
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/atp
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
