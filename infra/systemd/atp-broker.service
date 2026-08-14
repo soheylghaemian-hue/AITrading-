@@ -1,0 +1,31 @@
+[Unit]
+Description=ATP Broker Connector (IBKR, READ-ONLY, Phase F1)
+Documentation=https://github.com/soheylghaemian-hue/AITrading-
+After=network-online.target atp-ibgateway.service
+Wants=network-online.target
+# Connects READ-ONLY to the local IB Gateway (paper). Isolated from Market Data / Trading Core /
+# Control. Never requests US-equity market data from IBKR (that stays on Massive).
+
+[Service]
+Type=simple
+User=atp
+Group=atp
+WorkingDirectory=/opt/atp/app
+Environment=PYTHONPATH=/opt/atp/app/src
+Environment=BROKER_EXECUTION_ENABLED=false
+Environment=IB_GATEWAY_HOST=127.0.0.1
+Environment=IB_GATEWAY_PORT=4002
+Environment=ATP_BROKER_CLIENT_ID=7
+EnvironmentFile=/opt/atp/atp.env
+ExecStart=/opt/atp/app/.venv/bin/python -m atp.services.broker
+Restart=on-failure
+RestartSec=5
+# READ-ONLY: no code path calls placeOrder/cancelOrder/modifyOrder; a restart never auto-resumes RUNNING.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/atp
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

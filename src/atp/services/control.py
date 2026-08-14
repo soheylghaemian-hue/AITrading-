@@ -171,6 +171,24 @@ def market() -> dict:
     return {"feed": feed, "market_data": out, "ts": now.isoformat()}
 
 
+@app.get("/broker")
+def broker() -> dict:
+    """Read-only broker read-model (Phase F1) from the Broker Connector's Redis snapshot. Reports
+    broker/mode/connection/reconciliation/heartbeat/equity/cash/buying-power/counts. Carries NO
+    credentials, account secrets, or session tokens."""
+    snap: dict = {}
+    if ctx.snap is not None:
+        try:
+            snap = ctx.snap.get("broker:snapshot") or {}
+        except Exception:
+            snap = {}
+    for k in ("password", "token", "session", "username"):     # belt-and-suspenders: never leak secrets
+        snap.pop(k, None)
+    if not snap:
+        return {"broker": "IBKR", "connection": "UNKNOWN", "note": "no broker snapshot yet"}
+    return snap
+
+
 # ---------------------------------------------------------------- control commands (authenticated)
 @app.post("/control/recover")
 def ctl_recover(authorization: str | None = Header(default=None)) -> dict:

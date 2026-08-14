@@ -17,7 +17,7 @@ echo "[deploy] 2/6 python deps into venv"
 [ -x "$APP/.venv/bin/python" ] || python3 -m venv "$APP/.venv"
 "$APP/.venv/bin/pip" install -q --disable-pip-version-check \
     "psycopg[binary]>=3.1" "redis>=5.0" "fastapi>=0.110" "uvicorn>=0.29" "pytest>=8" \
-    "websockets>=12" "certifi"
+    "websockets>=12" "certifi" "ib_async>=2.0"
 
 echo "[deploy] 3/6 control token"
 if ! grep -q '^ATP_CONTROL_TOKEN=' "$ENVF"; then
@@ -44,9 +44,10 @@ echo "[deploy] 6/6 install + start systemd units"
 install -m 644 "$APP/infra/systemd/atp-marketdata.service" /etc/systemd/system/
 install -m 644 "$APP/infra/systemd/atp-trading.service"    /etc/systemd/system/
 install -m 644 "$APP/infra/systemd/atp-control.service"    /etc/systemd/system/
+install -m 644 "$APP/infra/systemd/atp-broker.service"     /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable atp-marketdata atp-trading atp-control
-systemctl restart atp-marketdata atp-trading atp-control   # restart to load new code (enable --now won't)
+systemctl enable atp-marketdata atp-trading atp-control atp-broker
+systemctl restart atp-marketdata atp-trading atp-control atp-broker   # restart to load new code (enable --now won't)
 sleep 5
-systemctl is-active atp-marketdata atp-trading atp-control
+systemctl is-active atp-marketdata atp-trading atp-control atp-broker
 echo "[deploy] DONE"
