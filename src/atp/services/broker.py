@@ -107,17 +107,42 @@ class BrokerConnector:
             return False
         self._connected = self.ib.isConnected()
         if self._connected:
-            self.ib.sleep(3)                          # let account/position/order feeds populate
             accts = self.ib.managedAccounts()
             self._account = accts[0] if accts else None
+            if self._account:
+                try:
+                    self.ib.reqAccountUpdates(account=self._account)
+                except Exception:
+                    pass
+                try:
+                    self.ib.reqAccountSummary()
+                except Exception:
+                    pass
+            self.ib.sleep(4)                          # let account/position/order feeds populate
         return self._connected
 
     # -- read-only broker state ------------------------------------------
     def _broker_state(self) -> dict:
         acct = self._account or ""
         want = ("NetLiquidation", "TotalCashValue", "BuyingPower", "AvailableFunds")
-        vals = {v.tag: v.value for v in self.ib.accountValues(acct)
-                if v.tag in want and v.currency in ("USD", "BASE")}
+        vals: dict = {}
+        ccy = None
+        # accountSummary reports consolidated base-currency values; accept whatever currency the
+        # account is denominated in (EUR/USD/…), never hard-filter it out.
+        for v in self.ib.accountSummary(acct):
+            if v.tag in want and v.value not in (None, ""):
+                vals[v.tag] = v.value
+                ccy = v.currency or ccy
+        if not vals:                                  # fallback to the streaming account values
+            base, anyv = {}, {}
+            for v in self.ib.accountValues(acct):
+                if v.tag in want and v.value not in (None, ""):
+                    (base if v.currency == "BASE" else anyv).setdefault(v.tag, (v.value, v.currency))
+            for t in want:
+                src = base.get(t) or anyv.get(t)
+                if src:
+                    vals[t] = src[0]
+                    ccy = ccy or src[1]
         positions = {}
         for p in self.ib.positions(acct):
             sym = p.contract.symbol
@@ -131,6 +156,7 @@ class BrokerConnector:
             "cash": vals.get("TotalCashValue"),
             "buying_power": vals.get("BuyingPower"),
             "available_funds": vals.get("AvailableFunds"),
+            "currency": ccy,
             "positions": positions,
             "open_order_count": len(open_orders),
             "fill_count": len(fills),
@@ -187,6 +213,7 @@ class BrokerConnector:
             "equity": (bstate or {}).get("equity"),
             "cash": (bstate or {}).get("cash"),
             "buying_power": (bstate or {}).get("buying_power"),
+            "currency": (bstate or {}).get("currency"),
             "position_count": len((bstate or {}).get("positions", {})),
             "open_order_count": (bstate or {}).get("open_order_count"),
             "execution_enabled": execution_enabled(),
