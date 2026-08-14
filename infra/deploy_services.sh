@@ -45,7 +45,8 @@ install -m 644 "$APP/infra/systemd/atp-marketdata.service" /etc/systemd/system/
 install -m 644 "$APP/infra/systemd/atp-trading.service"    /etc/systemd/system/
 install -m 644 "$APP/infra/systemd/atp-control.service"    /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now atp-marketdata atp-trading atp-control
-sleep 4
+systemctl enable atp-marketdata atp-trading atp-control
+systemctl restart atp-marketdata atp-trading atp-control   # restart to load new code (enable --now won't)
+sleep 5
 systemctl is-active atp-marketdata atp-trading atp-control
 echo "[deploy] DONE"
