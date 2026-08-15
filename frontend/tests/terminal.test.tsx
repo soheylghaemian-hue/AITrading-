@@ -1,11 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MarketTerminal } from "@/components/terminal/MarketTerminal";
+import { MarketChart } from "@/components/terminal/MarketChart";
 import { TerminalHeader } from "@/components/terminal/TerminalHeader";
 import { AiAnalysisPanel } from "@/components/terminal/AiAnalysisPanel";
 import { EventTimeline } from "@/components/terminal/EventTimeline";
 import { DataQuality } from "@/components/terminal/DataQuality";
+import { fetchOhlc } from "@/lib/api";
 import { ema, vwap, macd, rsi } from "@/lib/indicators";
 import type { OhlcBar } from "@/lib/ohlc";
 
@@ -41,36 +43,84 @@ describe("indicators — computed from real closes, never fabricated", () => {
   });
 });
 
-describe("MarketTerminal /markets/[symbol]", () => {
-  it("renders the terminal + chart when OHLC exists, with AI overlays from real decision fields", () => {
-    const h = r(<MarketTerminal s={base} symbol="NVDA" connected />);
-    expect(h).toContain("NVIDIA Corporation");
+// The chart is now presentational: MarketTerminal fetches OHLC and hands it {bars, loading, error}.
+// These cover the required states — bars → candles, empty → not connected, error → unavailable —
+// with no fabricated candles in any non-data state.
+describe("MarketChart — presentational, never fabricates candles", () => {
+  const ai = { action: "BUY", entry: 100.5, stop: 98, target: 104 };
+  it("renders candles + indicators + AI overlay when real bars are supplied", () => {
+    const h = r(<MarketChart bars={bars} loading={false} error={null} interval="1m" onInterval={() => {}} ai={ai} />);
     expect(h).toContain('data-layer="price"');
     expect(h).toContain("MACD 12/26/9");
-    expect(h).toContain("ENTRY 100.50");
-    expect(h).toContain("AI Market Analysis");
+    expect(h).toContain("ENTRY 100.50");         // AI overlay from real decision fields
     expect(h).not.toContain("HISTORICAL DATA NOT CONNECTED");
   });
-
-  it("shows HISTORICAL DATA NOT CONNECTED when OHLC is missing (no fabricated candles)", () => {
-    const h = r(<MarketTerminal s={{ ...base, ohlc: undefined }} symbol="NVDA" connected />);
+  it("shows the loading state while history is being fetched (no candles yet)", () => {
+    const h = r(<MarketChart bars={null} loading error={null} interval="1m" onInterval={() => {}} />);
+    expect(h).toContain("Loading market history");
+    expect(h).not.toContain('data-layer="price"');
+  });
+  it("shows 'Market history unavailable' on a fetch error (no crash, no candles)", () => {
+    const h = r(<MarketChart bars={null} loading={false} error="unavailable" interval="1m" onInterval={() => {}} />);
+    expect(h).toContain("Market history unavailable");
+    expect(h).not.toContain('data-layer="price"');
+  });
+  it("shows HISTORICAL DATA NOT CONNECTED for an empty series (no fabricated candles)", () => {
+    const h = r(<MarketChart bars={[]} loading={false} error={null} interval="1m" onInterval={() => {}} />);
     expect(h).toContain("HISTORICAL DATA NOT CONNECTED");
     expect(h).not.toContain('data-layer="price"');
   });
-
-  it("AI overlays only render when the decision has entry/stop/target", () => {
-    const h = r(<MarketTerminal s={{ ...base, autonomous: { status: "ARMED", decisions: [] } }} symbol="NVDA" connected />);
-    expect(h).not.toContain("ENTRY 100.50");
-    expect(h).toContain("NO DATA");
+  it("renders a tab per interval", () => {
+    const h = r(<MarketChart bars={bars} loading={false} error={null} interval="5m" onInterval={() => {}} />);
+    for (const iv of ["1m", "5m", "15m", "1h", "1D"]) expect(h).toContain(`>${iv}</button>`);
   });
+});
 
-  it("disconnected backend → unreachable banner + NO DATA + chart not connected", () => {
+describe("fetchOhlc — reads OHLC only through the same-origin proxy", () => {
+  let calls: string[] = [];
+  const okFetch = (body: any) =>
+    vi.fn(async (url: string) => { calls.push(String(url)); return { ok: true, status: 200, json: async () => body } as any; });
+  beforeEach(() => { calls = []; });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("hits /api/dashboard/ohlc/{symbol} with interval+limit and parses the bars", async () => {
+    vi.stubGlobal("fetch", okFetch({ symbol: "NVDA", interval: "1m", bars }));
+    const res = await fetchOhlc("NVDA", "1m", 500);
+    expect(calls[0]).toBe("/api/dashboard/ohlc/NVDA?interval=1m&limit=500");
+    expect(res.bars.length).toBe(bars.length);
+  });
+  it("symbol switching NVDA → AAPL → SPY fetches each distinct proxy URL", async () => {
+    vi.stubGlobal("fetch", okFetch({ symbol: "X", interval: "1m", bars: [] }));
+    for (const s of ["NVDA", "AAPL", "SPY"]) await fetchOhlc(s, "1m", 500);
+    expect(calls).toEqual([
+      "/api/dashboard/ohlc/NVDA?interval=1m&limit=500",
+      "/api/dashboard/ohlc/AAPL?interval=1m&limit=500",
+      "/api/dashboard/ohlc/SPY?interval=1m&limit=500",
+    ]);
+  });
+  it("rejects on a non-OK backend response (caller shows NO DATA, never fabricates)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 502, json: async () => ({}) } as any)));
+    await expect(fetchOhlc("NVDA", "1m", 500)).rejects.toBeTruthy();
+  });
+  it("returns an empty series (not an error) when the backend has no bars yet", async () => {
+    vi.stubGlobal("fetch", okFetch({ symbol: "NVDA", interval: "1m", bars: [] }));
+    expect((await fetchOhlc("NVDA", "1m", 500)).bars).toEqual([]);
+  });
+});
+
+describe("MarketTerminal /markets/[symbol]", () => {
+  it("renders header + AI panel + tabs, chart loading on first paint (fetch effect not run under SSR)", () => {
+    const h = r(<MarketTerminal s={base} symbol="NVDA" connected />);
+    expect(h).toContain("NVIDIA Corporation");
+    expect(h).toContain("AI Market Analysis");
+    expect(h).toContain("Loading market history");   // OHLC arrives via effect on the client, not SSR
+    expect(h).not.toContain('data-layer="price"');   // nothing fabricated before data lands
+  });
+  it("disconnected backend → unreachable banner + NO DATA", () => {
     const h = r(<MarketTerminal s={null} symbol="NVDA" connected={false} />);
     expect(h.toLowerCase()).toContain("not reachable");
     expect(h).toContain("NO DATA");
-    expect(h).toContain("HISTORICAL DATA NOT CONNECTED");
   });
-
   it("Paper/Live mode is visible in the header", () => {
     expect(r(<TerminalHeader symbol="NVDA" refData={null} quote={null} mode="paper" change={null} connected />)).toContain("PAPER");
     expect(r(<TerminalHeader symbol="NVDA" refData={null} quote={null} mode="LIVE" change={null} connected />)).toContain("LIVE");

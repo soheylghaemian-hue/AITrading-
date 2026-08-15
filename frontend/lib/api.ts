@@ -7,6 +7,7 @@
 // token-authenticated request — it cannot touch the broker itself.
 
 import type { Snapshot } from "./types";
+import type { OhlcBar } from "./ohlc";
 
 // Where the browser sends dashboard calls. Default: the SAME-ORIGIN server proxy ("/api"), which
 // forwards to the private backend and injects the read token server-side — so no token ever
@@ -35,6 +36,32 @@ export async function fetchSnapshot(signal?: AbortSignal): Promise<Snapshot> {
   });
   if (!res.ok) throw new Error(`backend ${res.status}`);
   return (await res.json()) as Snapshot;
+}
+
+export interface OhlcResponse {
+  symbol: string;
+  interval: string;
+  bars: OhlcBar[];
+}
+
+// Durable OHLC candles for the Market Intelligence Terminal. Read-only, via the SAME same-origin server
+// proxy (no token in the browser); the proxy forwards to the Control API's /market/{symbol}/ohlc. On no
+// backend / non-OK, it throws — the caller renders NO DATA (never fabricates candles).
+export async function fetchOhlc(
+  symbol: string, interval: string, limit = 500, signal?: AbortSignal,
+): Promise<OhlcResponse> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(
+    `${API_BASE}/dashboard/ohlc/${encodeURIComponent(symbol)}?interval=${encodeURIComponent(interval)}&limit=${limit}`,
+    { signal, cache: "no-store", headers: { Accept: "application/json" } },
+  );
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const body = (await res.json()) as Partial<OhlcResponse>;
+  return {
+    symbol: body.symbol ?? symbol,
+    interval: body.interval ?? interval,
+    bars: Array.isArray(body.bars) ? body.bars : [],
+  };
 }
 
 // Mutations are authorized by the SERVER proxy (it injects the owner token from a server env var),
