@@ -29,6 +29,7 @@ from .recovery import age_seconds, build_recovery_checks
 SERVICE = "control"
 HEARTBEAT_INTERVAL = 5.0
 HEALTH_STALE_S = float(os.environ.get("ATP_HEALTH_STALE_S", "20"))
+BROKER_STALE_S = float(os.environ.get("ATP_BROKER_STALE_S", "20"))   # broker heartbeat expiry -> STALE
 
 
 class _Ctx:
@@ -173,9 +174,19 @@ def market() -> dict:
 
 @app.get("/broker")
 def broker() -> dict:
-    """Read-only broker read-model (Phase F1) from the Broker Connector's Redis snapshot. Reports
-    broker/mode/connection/reconciliation/heartbeat/equity/cash/buying-power/counts. Carries NO
-    credentials, account secrets, or session tokens."""
+    """Read-only broker read-model (Phase F1) merged from the Broker Connector's Redis snapshot and its
+    PostgreSQL heartbeat. The heartbeat is the authoritative LIVENESS signal (refreshed every ~5s on
+    every broker code path); the Redis snapshot only carries the last observed values. If the heartbeat
+    expires the connection is reported STALE — never a frozen CONNECTED — so a dead or hung broker can
+    never display as connected (fail-closed). Carries NO credentials, account secrets, or tokens.
+
+    connection ∈ {CONNECTED, STALE, DISCONNECTED, UNKNOWN}:
+      UNKNOWN      broker never reported (no heartbeat and no snapshot)
+      STALE        heartbeat expired -> broker dead/hung; its last snapshot is not trusted
+      CONNECTED    broker live AND snapshot reports connected to the Gateway
+      DISCONNECTED broker live but not connected to the Gateway
+    """
+    now = datetime.now(timezone.utc)
     snap: dict = {}
     if ctx.snap is not None:
         try:
@@ -184,9 +195,36 @@ def broker() -> dict:
             snap = {}
     for k in ("password", "token", "session", "username"):     # belt-and-suspenders: never leak secrets
         snap.pop(k, None)
-    if not snap:
-        return {"broker": "IBKR", "connection": "UNKNOWN", "note": "no broker snapshot yet"}
-    return snap
+    hb_age = None                                              # seconds since broker's last PG heartbeat
+    try:
+        with ctx.lock:
+            hbs = ctx.store.list_heartbeats()
+        for (s, _st, _d, u) in hbs:
+            if s == "broker":
+                hb_age = age_seconds(u, now)
+                break
+    except Exception:
+        hb_age = None
+    raw = snap.get("connection")
+    if hb_age is None and not snap:
+        state = "UNKNOWN"
+    elif hb_age is None:                                       # snapshot but no heartbeat row -> use snap age
+        snap_age = age_seconds(snap.get("ts"), now) if snap.get("ts") else float("inf")
+        state = "STALE" if snap_age > BROKER_STALE_S else (raw if raw in ("CONNECTED", "DISCONNECTED") else "UNKNOWN")
+    elif hb_age > BROKER_STALE_S:                              # heartbeat expired -> broker dead/hung
+        state = "STALE"
+    else:
+        state = raw if raw in ("CONNECTED", "DISCONNECTED") else "UNKNOWN"
+    out = dict(snap) if snap else {"broker": "IBKR"}
+    out["connection"] = state
+    out["connection_raw"] = raw
+    out["heartbeat_age"] = round(hb_age, 1) if hb_age is not None else None
+    out["stale_threshold_s"] = BROKER_STALE_S
+    if state in ("STALE", "UNKNOWN"):                          # never trust values from a non-live broker
+        out["reconciliation"] = "UNAVAILABLE"
+    if not snap and hb_age is None:
+        out["note"] = "no broker snapshot yet"
+    return out
 
 
 # ---------------------------------------------------------------- control commands (authenticated)

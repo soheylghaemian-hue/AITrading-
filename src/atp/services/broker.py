@@ -256,7 +256,10 @@ class BrokerConnector:
                 self._detail_hb("DEGRADED", "connecting to IB Gateway...")
                 if not self.connect():
                     self._write_readmodel(None)
-                    self._sleep(min(backoff, 30.0)); backoff = min(30.0, backoff * 2); continue
+                    # cap the reconnect sleep at 10s so the PG heartbeat stays fresh while disconnected:
+                    # an alive-but-disconnected broker then reports DISCONNECTED (not falsely STALE); only
+                    # a dead/hung broker (no heartbeat) crosses the control STALE threshold.
+                    self._sleep(min(backoff, 10.0)); backoff = min(10.0, backoff * 2); continue
                 backoff = 2.0
                 self._cycle(); last_recon = time.monotonic()      # startup reconciliation
             else:
