@@ -89,10 +89,27 @@ def _migration_002(dialect: str) -> list[str]:
     ]
 
 
+def _migration_003(dialect: str) -> list[str]:
+    """OHLC bars (§ Phase G1). Durable candle store — the authoritative history the Market Intelligence
+    Terminal reads. Composite PK (symbol, interval, ts) is UNIQUE and indexed; a duplicate bar timestamp
+    is rejected by the constraint. Money fields are NUMERIC (PG) / decimal TEXT (SQLite)."""
+    t = _types(dialect)
+    m, ts, txt = t["MONEY"], t["TS"], t["TXT"]
+    return [
+        f"""CREATE TABLE IF NOT EXISTS ohlc_bars (
+            symbol {txt} NOT NULL, interval {txt} NOT NULL, ts {ts} NOT NULL,
+            open {m} NOT NULL, high {m} NOT NULL, low {m} NOT NULL, close {m} NOT NULL,
+            volume {m} NOT NULL, source {txt} NOT NULL, created_at {ts} NOT NULL,
+            PRIMARY KEY (symbol, interval, ts))""",
+        "CREATE INDEX IF NOT EXISTS ix_ohlc_sym_int_ts ON ohlc_bars(symbol, interval, ts)",
+    ]
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
     (2, "money_columns_numeric", _migration_002),
+    (3, "ohlc_bars", _migration_003),
 ]
 
 

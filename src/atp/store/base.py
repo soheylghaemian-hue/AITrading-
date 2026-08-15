@@ -132,6 +132,20 @@ class AuditEventRow:
     correlation_id: str | None
 
 
+@dataclass(slots=True)
+class OhlcBarRow:
+    symbol: str
+    interval: str
+    ts: str                    # ISO-8601 UTC bar-open, interval-aligned
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: Decimal
+    source: str
+    created_at: str
+
+
 # --------------------------------------------------------------------------- interface
 class Store(abc.ABC):
     """Abstract durable store. Concrete backends: SqliteStore, PostgresStore."""
@@ -500,6 +514,59 @@ class SqlStore(Store):
                              "FROM fills ORDER BY ts")
         return [FillRow(r[0], r[1], r[2], r[3], to_decimal(r[4]), to_decimal(r[5]), to_decimal(r[6]), r[7])
                 for r in rows]
+
+    # -- OHLC bars (§ Phase G1) -------------------------------------------
+    def upsert_ohlc_bar(self, *, symbol: str, interval: str, ts: str, open: float, high: float,
+                        low: float, close: float, volume: float, source: str) -> None:
+        """Insert or update the (forming) bar for (symbol, interval, ts). Idempotent: re-writing the same
+        bucket updates high/low/close/volume; a duplicate never creates a second row."""
+        now = utcnow_iso()
+        def m(v):  # float -> exact decimal in the shared money encoding
+            return self._m(D(str(v)))
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO ohlc_bars (symbol,interval,ts,open,high,low,close,volume,source,created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(symbol,interval,ts) DO UPDATE SET open=excluded.open, high=excluded.high, "
+                "low=excluded.low, close=excluded.close, volume=excluded.volume, source=excluded.source",
+                (symbol, interval, ts, m(open), m(high), m(low), m(close), m(volume), source, now))
+
+    def insert_ohlc_bar(self, *, symbol: str, interval: str, ts: str, open: float, high: float,
+                        low: float, close: float, volume: float, source: str) -> None:
+        """Strict insert — RAISES on a duplicate (symbol, interval, ts) via the PK/unique constraint."""
+        now = utcnow_iso()
+        def m(v):
+            return self._m(D(str(v)))
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO ohlc_bars (symbol,interval,ts,open,high,low,close,volume,source,created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (symbol, interval, ts, m(open), m(high), m(low), m(close), m(volume), source, now))
+
+    def list_ohlc_bars(self, symbol: str, interval: str, limit: int = 500) -> list[OhlcBarRow]:
+        """Most-recent `limit` bars for (symbol, interval), returned oldest→newest (chart order)."""
+        n = max(1, min(5000, int(limit)))
+        rows = self._all(
+            "SELECT symbol,interval,ts,open,high,low,close,volume,source,created_at FROM ohlc_bars "
+            "WHERE symbol=? AND interval=? ORDER BY ts DESC LIMIT ?", (symbol, interval, n))
+        out = [OhlcBarRow(r[0], r[1], r[2], to_decimal(r[3]), to_decimal(r[4]), to_decimal(r[5]),
+                          to_decimal(r[6]), to_decimal(r[7]), r[8], r[9]) for r in rows]
+        out.reverse()
+        return out
+
+    def count_ohlc_bars(self, symbol: str, interval: str) -> int:
+        r = self._one("SELECT COUNT(*) FROM ohlc_bars WHERE symbol=? AND interval=?", (symbol, interval))
+        return int(r[0]) if r else 0
+
+    def latest_ohlc_bars(self) -> list[OhlcBarRow]:
+        """The most-recent bar for every (symbol, interval) — used to resume forming bars after a
+        service restart, so an in-progress bar is never reset/corrupted by a restart."""
+        rows = self._all(
+            "SELECT o.symbol,o.interval,o.ts,o.open,o.high,o.low,o.close,o.volume,o.source,o.created_at "
+            "FROM ohlc_bars o JOIN (SELECT symbol,interval,MAX(ts) AS mx FROM ohlc_bars "
+            "GROUP BY symbol,interval) g ON o.symbol=g.symbol AND o.interval=g.interval AND o.ts=g.mx")
+        return [OhlcBarRow(r[0], r[1], r[2], to_decimal(r[3]), to_decimal(r[4]), to_decimal(r[5]),
+                           to_decimal(r[6]), to_decimal(r[7]), r[8], r[9]) for r in rows]
 
     # -- decisions / heartbeats / market-data health ----------------------
     def insert_decision(self, *, decision_id: str, ts: str, instrument: str, payload_json: str,

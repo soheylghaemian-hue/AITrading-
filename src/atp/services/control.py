@@ -172,6 +172,24 @@ def market() -> dict:
     return {"feed": feed, "market_data": out, "ts": now.isoformat()}
 
 
+@app.get("/market/{symbol}/ohlc")
+def market_ohlc(symbol: str, interval: str = "1m", limit: int = 500) -> dict:
+    """Read-only OHLC bars (§ Phase G1) for the Market Intelligence Terminal — the durable, Massive-
+    aggregated candles from PostgreSQL. Bar shape matches the frontend OhlcBar. Carries NO secrets.
+    Example: /market/NVDA/ohlc?interval=1m&limit=500 . No bars -> empty list (NO DATA), never fabricated."""
+    iv = interval if interval in ("1m", "5m", "15m", "1h", "1D") else "1m"
+    try:
+        n = max(1, min(2000, int(limit)))
+    except (TypeError, ValueError):
+        n = 500
+    with ctx.lock:
+        rows = ctx.store.list_ohlc_bars(symbol.upper(), iv, n)
+    bars = [{"timestamp": r.ts, "open": float(r.open), "high": float(r.high), "low": float(r.low),
+             "close": float(r.close), "volume": float(r.volume)} for r in rows]
+    return {"symbol": symbol.upper(), "interval": iv, "count": len(bars), "bars": bars,
+            "ts": datetime.now(timezone.utc).isoformat()}
+
+
 @app.get("/broker")
 def broker() -> dict:
     """Read-only broker read-model (Phase F1) merged from the Broker Connector's Redis snapshot and its

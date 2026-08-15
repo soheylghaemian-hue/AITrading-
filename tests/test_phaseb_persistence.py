@@ -38,16 +38,18 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
     s = _db(tmp_path)
     assert s.ping()
     applied = sorted(r[0] for r in s._all("SELECT version FROM schema_migrations"))
-    assert applied == [1, 2]
+    assert applied == [1, 2, 3]
     # tables exist
     for t in ("runtime_state", "orders", "fills", "positions", "kill_switch", "daily_pnl",
-              "audit_events", "service_heartbeats", "market_data_health"):
+              "audit_events", "service_heartbeats", "market_data_health", "ohlc_bars"):
         s._one(f"SELECT COUNT(*) FROM {t}")
     # migration 002 money columns exist
     s._one("SELECT notional, stop, target, monetary_risk, risk_pct FROM orders")
+    # migration 003 ohlc_bars columns exist
+    s._one("SELECT symbol, interval, ts, open, high, low, close, volume, source, created_at FROM ohlc_bars")
     s._one("SELECT slippage, fees FROM fills")
     s2 = _reopen(tmp_path, s)                     # re-open re-runs migrator → no-op
-    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == [1, 2]
+    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == [1, 2, 3]
 
 
 def test_postgres_ddl_declares_numeric_money():

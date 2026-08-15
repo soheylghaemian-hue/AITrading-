@@ -114,6 +114,7 @@ class MassiveProvider:
         self._lat_sum = 0.0
         self._lat_n = 0
         self._lat_max = 0.0
+        self._trades: list[dict] = []          # §G1: per-trade prints buffered for the OHLC aggregator
 
     # never leak the key through repr/str
     def __repr__(self) -> str:
@@ -196,6 +197,11 @@ class MassiveProvider:
         elif kind == "T":
             if ev.get("p") is not None:
                 b.last = float(ev["p"])
+                if isinstance(t, (int, float)):        # §G1: capture the real print for candle aggregation
+                    self._trades.append({"symbol": sym, "price": float(ev["p"]),
+                                         "size": float(ev.get("s") or 0.0), "ts": int(t)})
+                    if len(self._trades) > 20000:      # bound memory; service drains every ~1s
+                        del self._trades[:10000]
         elif kind == "A":
             if ev.get("av") is not None:
                 b.volume = float(ev["av"])               # accumulated daily volume (honest)
@@ -251,6 +257,12 @@ class MassiveProvider:
                 await asyncio.wait_for(self._read_once(), timeout=max(0.1, end - time.monotonic()))
             except asyncio.TimeoutError:
                 break
+
+    def drain_trades(self) -> list[dict]:
+        """§G1: return and clear the trade prints buffered since the last call (the OHLC service drains
+        these to aggregate candles). Non-blocking; never touches the quote path."""
+        out, self._trades = self._trades, []
+        return out
 
     def stop(self) -> None:
         self._stop.set()

@@ -28,6 +28,7 @@ from ..persistence.state import RedisStateStore
 from .base import Service, redis_url
 
 QUOTES_CHANNEL = "md.quotes"
+TRADES_CHANNEL = "md.trades"                 # §G1: real per-trade prints for the OHLC candle aggregator
 SNAPSHOT_KEY = "md:snapshot"                 # read-model for Control (cache; never authoritative, no secret)
 FIXTURE_SYMBOLS = ("AAPL", "MSFT", "SPY")
 
@@ -174,6 +175,15 @@ class MarketDataService(Service):
                     self._snap.set(SNAPSHOT_KEY, {"feed": self._feed, "ts": ts, "symbols": snapshot})
                 except Exception:
                     pass
+            # §G1: forward real trade prints for the OHLC aggregator — only from the live Massive feed.
+            prov = self._provider
+            if self.kind == "massive" and self._feed == "STREAMING" and prov is not None:
+                for tr in prov.drain_trades():
+                    tr["source"], tr["status"], tr["realtime"] = "MASSIVE", "READY", True
+                    try:
+                        await self.bus.publish(TRADES_CHANNEL, tr)
+                    except Exception:
+                        pass
             self._detail = f"feed={self._feed} symbols={len(quotes)} ready={ready}"
             seq += 1
             await self._sleep(self.interval)

@@ -1,0 +1,28 @@
+[Unit]
+Description=ATP OHLC Market Data Service (Phase G1 — durable candle aggregation)
+Documentation=https://github.com/soheylghaemian-hue/AITrading-
+After=network-online.target docker.service atp-marketdata.service
+Wants=network-online.target
+# Consumes the real Massive trade prints published by atp-marketdata on the bus (md.trades),
+# aggregates 1m/5m/15m/1h/1D OHLC bars and persists them to PostgreSQL (ohlc_bars). Never trades.
+
+[Service]
+Type=simple
+User=atp
+Group=atp
+WorkingDirectory=/opt/atp/app
+Environment=PYTHONPATH=/opt/atp/app/src
+EnvironmentFile=/opt/atp/atp.env
+ExecStart=/opt/atp/app/.venv/bin/python -m atp.services.marketdata_ohlc
+Restart=always
+RestartSec=3
+# Fail-closed: if PostgreSQL is unavailable the service persists nothing (never a fabricated bar) and
+# reports DEGRADED; systemd restarts the process, but no candle history is ever invented.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/atp
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
