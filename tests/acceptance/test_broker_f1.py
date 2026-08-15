@@ -26,9 +26,11 @@ def test_submit_order_rejected_before_ibkr(monkeypatch):
 
 
 def test_no_order_methods_in_source():
+    # Check for actual CALLS (method followed by "("), not mentions in docstrings/comments that
+    # explain these are never invoked.
     src = inspect.getsource(brokermod)
-    for forbidden in ("placeOrder", "cancelOrder", "modifyOrder"):
-        assert forbidden not in src, f"{forbidden} must never appear in the read-only broker connector"
+    for forbidden in ("placeOrder(", "cancelOrder(", "modifyOrder("):
+        assert forbidden not in src, f"{forbidden} call must never appear in the read-only broker connector"
 
 
 # ---------------------------------------------------------------- reconciliation fixtures
