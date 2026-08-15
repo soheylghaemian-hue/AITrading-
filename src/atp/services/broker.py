@@ -110,15 +110,16 @@ class BrokerConnector:
             accts = self.ib.managedAccounts()
             self._account = accts[0] if accts else None
             if self._account:
-                try:
-                    self.ib.reqAccountUpdates(account=self._account)
-                except Exception:
-                    pass
+                # Do NOT call reqAccountUpdates() here: on this paper account it blocks
+                # indefinitely waiting for accountDownloadEnd, which never arrives and stalls
+                # the whole connect() (service hangs in ep_poll, connect() never returns).
+                # It is unnecessary — accountSummary() below delivers equity/cash/buying_power,
+                # and positions()/reqAllOpenOrders()/fills() are independent of it.
                 try:
                     self.ib.reqAccountSummary()
                 except Exception:
                     pass
-            self.ib.sleep(4)                          # let account/position/order feeds populate
+            self.ib.sleep(4)                          # let account summary / position / order feeds populate
         return self._connected
 
     # -- read-only broker state ------------------------------------------
