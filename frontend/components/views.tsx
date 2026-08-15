@@ -8,6 +8,8 @@ import { dailyRiskUsed, engineState, riskHealth } from "@/lib/select";
 import {
   Dot, Tag, NoData, ErrorDetail, Sparkline, Meter, GaugeArc, PositionCard, DecisionCard, DecisionTimeline,
 } from "./ui";
+import { CandleChart } from "./CandleChart";
+import { ohlcForSymbol, INTERVALS } from "@/lib/ohlc";
 
 function n(obj: Record<string, any> | undefined | null, key: string): number | null {
   const v = obj?.[key];
@@ -177,6 +179,7 @@ export function MarketDetailView({ s, symbol, connected }: { s: Snapshot | null;
   const r = instruments(s).find((x) => x.symbol.toUpperCase() === symbol.toUpperCase());
   const dec = (s?.autonomous?.decisions || []).find((d: any) => (d.instrument || d.symbol || "").toUpperCase() === symbol.toUpperCase());
   const avail = r && (r.status === "DATA_AVAILABLE" || r.status === "DELAYED");
+  const series = ohlcForSymbol(s, symbol);   // optional OHLC — absent → NO DATA, never fabricated
   return (
     <>
       {!connected ? <Disconnected /> : null}
@@ -207,15 +210,31 @@ export function MarketDetailView({ s, symbol, connected }: { s: Snapshot | null;
         </div>
       </div>
       <div className="card">
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-          <h3 style={{ border: 0, padding: 0 }}>Price History</h3>
-          <div className="strip">{["Candles", "Volume", "EMA20", "EMA50", "RSI"].map((x) => <span className="pill" key={x}>{x}</span>)}</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+          <h3 style={{ border: 0, padding: 0 }}>Price History{series ? <> <span className="label" style={{ letterSpacing: 1 }}>{series.interval} bars</span></> : null}</h3>
+          <div className="strip">{INTERVALS.map((iv) => <span className={`pill${series && iv === series.interval ? " ivon" : ""}`} key={iv}>{iv}</span>)}</div>
         </div>
-        <div className="chartempty">
-          <svg className="ic" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true"><path d="M3 3v18h18" /><rect x="7" y="10" width="2.4" height="6" /><rect x="12" y="6" width="2.4" height="10" /><rect x="17" y="12" width="2.4" height="4" /></svg>
-          <div className="t">Historical chart unavailable</div>
-          <p>The read-only backend streams top-of-book quotes only. Candlesticks, EMA and RSI appear here once an OHLC bar feed is connected — no candles are ever fabricated.</p>
-        </div>
+        {series ? (
+          <>
+            <div className="chart-legend">
+              <span><span className="swb" style={{ background: "var(--pos)" }} />Up</span>
+              <span><span className="swb" style={{ background: "var(--neg)" }} />Down</span>
+              <span><span className="sw" style={{ background: "var(--accent)" }} />EMA20</span>
+              <span><span className="sw" style={{ background: "var(--ema50)" }} />EMA50</span>
+              <span><span className="sw" style={{ background: "var(--rsi)" }} />RSI 14</span>
+            </div>
+            <div className="chartbox">
+              <CandleChart bars={series.bars} interval={series.interval}
+                ai={dec ? { action: dec.action, entry: dec.entry, stop: dec.stop, target: dec.target } : null} />
+            </div>
+          </>
+        ) : (
+          <div className="chartempty">
+            <svg className="ic" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true"><path d="M3 3v18h18" /><rect x="7" y="10" width="2.4" height="6" /><rect x="12" y="6" width="2.4" height="10" /><rect x="17" y="12" width="2.4" height="4" /></svg>
+            <div className="t">Historical chart unavailable</div>
+            <p>The read-only backend streams top-of-book quotes only. Candlesticks, EMA and RSI appear here once an OHLC bar feed is connected — no candles are ever fabricated.</p>
+          </div>
+        )}
       </div>
     </>
   );

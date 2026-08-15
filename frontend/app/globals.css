@@ -6,7 +6,7 @@
   --line:#1E2A3A; --line-soft:#161F2C;
   --ink:#E8EEF6; --dim:#8A9AB0; --faint:#55647A;
   --accent:#35D0BA; --accent-deep:#0E8C7E; --accent-glow:rgba(53,208,186,.14);
-  --pos:#34D399; --warn:#F59E0B; --neg:#F87171;
+  --pos:#34D399; --warn:#F59E0B; --neg:#F87171; --ema50:#E0A458; --rsi:#6FB1E0;
   --pos-bg:rgba(52,211,153,.12); --warn-bg:rgba(245,158,11,.12); --neg-bg:rgba(248,113,113,.12);
   --ui:"SF Pro Display","Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   --mono:"SF Mono","JetBrains Mono",ui-monospace,"Menlo",monospace;
@@ -163,6 +163,12 @@ details[open] summary .chev{transform:rotate(90deg)}
 .chartempty .ic{color:var(--faint)}
 .chartempty .t{font-weight:600;font-size:15px}
 .chartempty p{color:var(--dim);font-size:12.5px;max-width:400px;text-align:center}
+.pill.ivon{color:var(--accent);background:var(--accent-glow);border-color:var(--line)}
+.chart-legend{display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px;color:var(--dim);margin-bottom:10px}
+.chart-legend span{display:inline-flex;align-items:center;gap:6px}
+.chart-legend .sw{width:14px;height:3px;border-radius:2px;display:inline-block}
+.chart-legend .swb{width:10px;height:10px;border-radius:2px;display:inline-block}
+.chartbox{border:1px solid var(--line-soft);border-radius:var(--r-sm);background:var(--panel-2);padding:8px;overflow-x:auto}
 
 .riskgauge{display:flex;flex-direction:column;align-items:center;gap:6px}
 .riskhealth{display:flex;align-items:center;gap:16px;padding:18px;border-radius:var(--r);border:1px solid var(--line)}
