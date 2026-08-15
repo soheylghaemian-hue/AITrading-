@@ -1,8 +1,8 @@
 "use client";
 import { useDashboard } from "@/components/shell";
-import { OverviewView } from "@/components/views";
+import { RiskView } from "@/components/views";
 
 export default function Page() {
   const { data, connected } = useDashboard();
-  return <OverviewView s={data} connected={connected} />;
+  return <RiskView s={data} connected={connected} />;
 }

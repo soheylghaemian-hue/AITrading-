@@ -1,8 +1,8 @@
 "use client";
 import { useDashboard } from "@/components/shell";
-import { OverviewView } from "@/components/views";
+import { PortfolioView } from "@/components/views";
 
 export default function Page() {
   const { data, connected } = useDashboard();
-  return <OverviewView s={data} connected={connected} />;
+  return <PortfolioView s={data} connected={connected} />;
 }

@@ -1,15 +1,20 @@
-import type { Metadata } from "next";
 import "./globals.css";
+import type { Metadata } from "next";
+import { DashboardProvider, AppShell } from "@/components/shell";
 
 export const metadata: Metadata = {
-  title: "AI Trading Command Center",
-  description: "Read-only operations center for the autonomous multi-asset trading desk. No fabricated data.",
+  title: "GIGBAY AI — Command Center",
+  description: "Institutional AI trading command center — read-only, no fabricated data.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <DashboardProvider>
+          <AppShell>{children}</AppShell>
+        </DashboardProvider>
+      </body>
     </html>
   );
 }

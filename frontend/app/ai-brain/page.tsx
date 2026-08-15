@@ -1,8 +1,8 @@
 "use client";
 import { useDashboard } from "@/components/shell";
-import { OverviewView } from "@/components/views";
+import { AiBrainView } from "@/components/views";
 
 export default function Page() {
   const { data, connected } = useDashboard();
-  return <OverviewView s={data} connected={connected} />;
+  return <AiBrainView s={data} connected={connected} />;
 }
