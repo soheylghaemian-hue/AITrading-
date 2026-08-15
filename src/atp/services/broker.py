@@ -207,7 +207,8 @@ class BrokerConnector:
             "mode": "PAPER" if (bstate and bstate.get("paper")) else ("PAPER" if self._account and self._account[:2] in ("DU","DF","DI") else "UNKNOWN"),
             "connection": "CONNECTED" if self._connected else "DISCONNECTED",
             "account": (bstate or {}).get("account") or self._account,
-            "reconciliation": "RECONCILED" if self._reconciled else "MISMATCH",
+            "reconciliation": (("RECONCILED" if self._reconciled else "MISMATCH")
+                               if self._connected else "UNAVAILABLE"),
             "last_reconcile": self._last_reconcile,
             "last_break": self._last_break,
             "equity": (bstate or {}).get("equity"),
