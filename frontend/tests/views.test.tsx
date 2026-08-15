@@ -3,7 +3,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { Snapshot } from "@/lib/types";
 import {
-  OverviewView, MarketsView, MarketDetailView, PortfolioView, AiBrainView, RiskView, SystemView,
+  OverviewView, MarketsView, PortfolioView, AiBrainView, RiskView, SystemView,
 } from "@/components/views";
 
 const r = (el: React.ReactElement) => renderToStaticMarkup(el);
@@ -65,12 +65,6 @@ describe("every route renders (with data)", () => {
     expect(h).toContain("Live");        // humanStatus(DATA_AVAILABLE)
     expect(h).toContain("101ms");
   });
-  it("Market detail shows the quote, AI context and the candle empty-state", () => {
-    const h = r(<MarketDetailView s={rich} symbol="NVDA" connected />);
-    expect(h).toContain("226.40");
-    expect(h).toContain("225.30");                       // AI context entry
-    expect(h).toContain("Historical chart unavailable"); // never fake candles
-  });
   it("Portfolio shows capital, exposure and positions", () => {
     const h = r(<PortfolioView s={rich} connected />);
     expect(h).toContain("$1,024,500");
@@ -109,7 +103,6 @@ describe("NO DATA discipline (null snapshot) — no fabricated values", () => {
   const cases: [string, React.ReactElement][] = [
     ["Overview", <OverviewView s={null} connected={false} />],
     ["Markets", <MarketsView s={null} connected={false} />],
-    ["MarketDetail", <MarketDetailView s={null} symbol="NVDA" connected={false} />],
     ["Portfolio", <PortfolioView s={null} connected={false} />],
     ["AiBrain", <AiBrainView s={null} connected={false} />],
     ["Risk", <RiskView s={null} connected={false} />],
@@ -123,9 +116,6 @@ describe("NO DATA discipline (null snapshot) — no fabricated values", () => {
       expect(h).not.toMatch(/>0<\/(td|div|span)>/); // no invented zero cells
     });
   }
-  it("MarketDetail never fabricates candles even with no data", () => {
-    expect(r(<MarketDetailView s={null} symbol="NVDA" connected={false} />)).toContain("Historical chart unavailable");
-  });
 });
 
 describe("disconnected backend state", () => {

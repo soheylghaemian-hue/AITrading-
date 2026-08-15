@@ -8,8 +8,6 @@ import { dailyRiskUsed, engineState, riskHealth } from "@/lib/select";
 import {
   Dot, Tag, NoData, ErrorDetail, Sparkline, Meter, GaugeArc, PositionCard, DecisionCard, DecisionTimeline,
 } from "./ui";
-import { CandleChart } from "./CandleChart";
-import { ohlcForSymbol, INTERVALS } from "@/lib/ohlc";
 
 function n(obj: Record<string, any> | undefined | null, key: string): number | null {
   const v = obj?.[key];
@@ -174,71 +172,6 @@ export function MarketsView({ s, connected }: { s: Snapshot | null; connected: b
   );
 }
 
-// ---------------------------------------------------------------- MARKET DETAIL
-export function MarketDetailView({ s, symbol, connected }: { s: Snapshot | null; symbol: string; connected: boolean }) {
-  const r = instruments(s).find((x) => x.symbol.toUpperCase() === symbol.toUpperCase());
-  const dec = (s?.autonomous?.decisions || []).find((d: any) => (d.instrument || d.symbol || "").toUpperCase() === symbol.toUpperCase());
-  const avail = r && (r.status === "DATA_AVAILABLE" || r.status === "DELAYED");
-  const series = ohlcForSymbol(s, symbol);   // optional OHLC — absent → NO DATA, never fabricated
-  return (
-    <>
-      {!connected ? <Disconnected /> : null}
-      <div className="grid k2">
-        <div className="card">
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <h3 style={{ border: 0, padding: 0 }}>{symbol} <span className="label" style={{ letterSpacing: 1 }}>Market Intelligence</span></h3>
-            {r ? <Tag kind={avail ? "ok" : "warnt"}>{avail ? (r.realtime ? "LIVE · REALTIME" : "DELAYED") : humanStatus(r.status)}</Tag> : <Tag kind="muted">NO DATA</Tag>}
-          </div>
-          <div className="quotebig" style={{ marginTop: 16 }}><span className="p num">{price(r?.last ?? null)}</span></div>
-          <div className="bidask">
-            <div className="ba"><div className="label">Bid</div><div className="v num up">{price(r?.bid ?? null)}</div></div>
-            <div className="ba"><div className="label">Ask</div><div className="v num down">{price(r?.ask ?? null)}</div></div>
-            <div className="ba"><div className="label">Spread</div><div className="v num">{fmtSpread(r?.bid ?? null, r?.ask ?? null)}</div></div>
-            <div className="ba"><div className="label">Latency · Source</div><div className="v num">{isPresent(r?.latency) ? Math.round(r!.latency!) + "ms" : NO_DATA} <span style={{ fontSize: 12, color: "var(--accent)" }}>{r?.source || ""}</span></div></div>
-          </div>
-        </div>
-        <div className="card">
-          <h3 style={{ marginBottom: 14 }}>AI Context</h3>
-          {dec ? (
-            <div className="deccard" style={{ border: 0, padding: 0, background: "none", gap: 10 }}>
-              <div className="decrow"><span className="decsym" style={{ fontSize: 15 }}>{dec.agent || "Signal"}</span>
-                <Tag kind={(dec.action || "").toString().toUpperCase() === "BUY" ? "buy" : "sell"}>{(dec.action || "").toString().toUpperCase()} {isPresent(dec.confidence) ? Math.round(dec.confidence * 100) + "%" : ""}</Tag></div>
-              <div className="reason">Entry <b className="num" style={{ color: "var(--ink)" }}>{price(dec.entry)}</b> · Stop <b className="num" style={{ color: "var(--neg)" }}>{price(dec.stop)}</b> · Target <b className="num" style={{ color: "var(--pos)" }}>{price(dec.target)}</b> · Risk <b className="num" style={{ color: "var(--ink)" }}>{money(dec.monetary_risk)}</b></div>
-              <div className="metrics"><span>Overlays render on the chart once historical bars are available.</span></div>
-            </div>
-          ) : <NoData note="No AI decision for this instrument yet." />}
-        </div>
-      </div>
-      <div className="card">
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
-          <h3 style={{ border: 0, padding: 0 }}>Price History{series ? <> <span className="label" style={{ letterSpacing: 1 }}>{series.interval} bars</span></> : null}</h3>
-          <div className="strip">{INTERVALS.map((iv) => <span className={`pill${series && iv === series.interval ? " ivon" : ""}`} key={iv}>{iv}</span>)}</div>
-        </div>
-        {series ? (
-          <>
-            <div className="chart-legend">
-              <span><span className="swb" style={{ background: "var(--pos)" }} />Up</span>
-              <span><span className="swb" style={{ background: "var(--neg)" }} />Down</span>
-              <span><span className="sw" style={{ background: "var(--accent)" }} />EMA20</span>
-              <span><span className="sw" style={{ background: "var(--ema50)" }} />EMA50</span>
-              <span><span className="sw" style={{ background: "var(--rsi)" }} />RSI 14</span>
-            </div>
-            <div className="chartbox">
-              <CandleChart bars={series.bars} interval={series.interval}
-                ai={dec ? { action: dec.action, entry: dec.entry, stop: dec.stop, target: dec.target } : null} />
-            </div>
-          </>
-        ) : (
-          <div className="chartempty">
-            <svg className="ic" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true"><path d="M3 3v18h18" /><rect x="7" y="10" width="2.4" height="6" /><rect x="12" y="6" width="2.4" height="10" /><rect x="17" y="12" width="2.4" height="4" /></svg>
-            <div className="t">Historical chart unavailable</div>
-            <p>The read-only backend streams top-of-book quotes only. Candlesticks, EMA and RSI appear here once an OHLC bar feed is connected — no candles are ever fabricated.</p>
-          </div>
-        )}
-      </div>
-    </>
-  );
-}
 
 // ---------------------------------------------------------------- PORTFOLIO
 export function PortfolioView({ s, connected }: { s: Snapshot | null; connected: boolean }) {

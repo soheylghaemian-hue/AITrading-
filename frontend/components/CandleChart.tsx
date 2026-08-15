@@ -1,16 +1,16 @@
-// Professional TradingView-style chart — PURE (no hooks), so it renders via renderToStaticMarkup in
-// tests and on the server. Inline SVG, no new dependencies.
+// Professional multi-panel chart — PURE (no hooks); renders via renderToStaticMarkup in tests and on
+// the server. Inline SVG, no dependencies. All indicators are COMPUTED from real closes (never invented).
 //
-// Layered architecture (future-ready; only the first three are implemented today):
-//   • price layer      — candlesticks + volume            (from REAL bars; never fabricated)
-//   • indicator layer  — EMA20, EMA50, RSI-14             (COMPUTED from real closes, not invented)
+// Layered architecture (future-ready):
+//   • price layer      — candlesticks + volume            (REAL bars; never fabricated)
+//   • indicator layer  — EMA20/50/200, VWAP, RSI-14, MACD (computed from real closes)
 //   • AI signal layer  — entry / stop / target + marker   (ONLY when the decision fields exist)
-//   • event layer      — reserved (crosshair / news / fills) — NOT implemented yet
+//   • event layer      — reserved (news / earnings / signals) — NOT implemented yet
 //
-// If there are fewer than two real bars the component renders nothing and the caller shows the honest
-// "Historical chart unavailable" state.
+// Fewer than two real bars → renders nothing; the caller shows "HISTORICAL DATA NOT CONNECTED".
 import React from "react";
 import { isValidBar, type OhlcBar } from "@/lib/ohlc";
+import { ema, rsi, vwap, macd, isNum } from "@/lib/indicators";
 
 export interface AiOverlay {
   action?: string | null;
@@ -19,57 +19,35 @@ export interface AiOverlay {
   target?: number | null;
 }
 
-const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
-
-function ema(period: number, closes: number[]): number[] {
-  const k = 2 / (period + 1);
-  let e = closes[0];
-  return closes.map((c, i) => (e = i === 0 ? c : c * k + e * (1 - k)));
-}
-
-function rsi(period: number, closes: number[]): (number | null)[] {
-  const out: (number | null)[] = new Array(closes.length).fill(null);
-  if (closes.length <= period) return out;
-  let avgGain = 0, avgLoss = 0;
-  for (let i = 1; i <= period; i++) {
-    const ch = closes[i] - closes[i - 1];
-    avgGain += Math.max(ch, 0);
-    avgLoss += Math.max(-ch, 0);
-  }
-  avgGain /= period; avgLoss /= period;
-  out[period] = 100 - 100 / (1 + avgGain / (avgLoss || 1e-9));
-  for (let i = period + 1; i < closes.length; i++) {
-    const ch = closes[i] - closes[i - 1];
-    avgGain = (avgGain * (period - 1) + Math.max(ch, 0)) / period;
-    avgLoss = (avgLoss * (period - 1) + Math.max(-ch, 0)) / period;
-    out[i] = 100 - 100 / (1 + avgGain / (avgLoss || 1e-9));
-  }
-  return out;
-}
+/** Chart geometry, shared with the interactive crosshair layer (MarketChart). */
+export const CHART_GEO = { W: 1040, PL: 8, PR: 54 };
 
 export function CandleChart({ bars, ai }: { bars: OhlcBar[]; interval?: string; ai?: AiOverlay | null }) {
   const data = (bars || []).filter(isValidBar);       // real bars only — never fabricate/patch
-  if (data.length < 2) return null;                    // caller renders "Historical chart unavailable"
+  if (data.length < 2) return null;
 
-  const W = 1040, PL = 8, PR = 54, PW = W - PL - PR;
-  const P = { t: 12, h: 318 }, V = { t: 344, h: 64 }, R = { t: 430, h: 120 };
+  const { W, PL, PR } = CHART_GEO, PW = W - PL - PR;
+  const P = { t: 10, h: 280 }, V = { t: 304, h: 40 }, R = { t: 356, h: 64 }, M = { t: 436, h: 96 };
   const closes = data.map((b) => b.close);
-  const e20 = ema(20, closes), e50 = ema(50, closes), r14 = rsi(14, closes);
+  const e20 = ema(20, closes), e50 = ema(50, closes), e200 = ema(200, closes);
+  const vw = vwap(data), r14 = rsi(14, closes), mac = macd(closes);
 
   const levels = [ai?.entry, ai?.stop, ai?.target].filter(isNum) as number[];
   const pMin = Math.min(...data.map((b) => b.low), ...levels) - 1.2;
   const pMax = Math.max(...data.map((b) => b.high), ...levels) + 1.2;
   const vMax = Math.max(...data.map((b) => (isNum(b.volume) ? (b.volume as number) : 0)), 1);
+  const mMax = Math.max(...mac.hist.map(Math.abs), ...mac.line.map(Math.abs), 1e-6);
   const slot = PW / data.length, bw = Math.max(2.5, slot * 0.62);
   const x = (i: number) => PL + i * slot + slot / 2;
   const yP = (v: number) => P.t + ((pMax - v) / (pMax - pMin)) * P.h;
   const yR = (v: number) => R.t + ((100 - v) / 100) * R.h;
+  const yM = (v: number) => M.t + M.h / 2 - (v / mMax) * (M.h / 2 - 4);
   const line = (vals: number[]) => vals.map((v, i) => `${x(i).toFixed(1)},${yP(v).toFixed(1)}`).join(" ");
 
   return (
-    <svg viewBox={`0 0 ${W} 580`} preserveAspectRatio="xMidYMid meet" role="img"
-      aria-label={`Candlestick chart with EMA20, EMA50, volume and RSI-14 (${data.length} bars)`}
-      style={{ width: "100%", height: "auto", display: "block", minWidth: 640 }}>
+    <svg viewBox={`0 0 ${W} 560`} preserveAspectRatio="xMidYMid meet" role="img"
+      aria-label={`Candlestick chart with EMA20/50/200, VWAP, RSI-14 and MACD (${data.length} bars)`}
+      style={{ width: "100%", height: "auto", display: "block", minWidth: 680 }}>
 
       {/* price grid + right axis */}
       {[0, 1, 2, 3, 4].map((g) => {
@@ -81,8 +59,10 @@ export function CandleChart({ bars, ai }: { bars: OhlcBar[]; interval?: string; 
           </g>
         );
       })}
-      <line x1={PL} y1={V.t - 8} x2={PL + PW} y2={V.t - 8} stroke="var(--line-soft)" strokeWidth="1" />
-      <line x1={PL} y1={R.t - 8} x2={PL + PW} y2={R.t - 8} stroke="var(--line-soft)" strokeWidth="1" />
+      {[V.t - 6, R.t - 6, M.t - 6].map((y, i) => <line key={i} x1={PL} y1={y} x2={PL + PW} y2={y} stroke="var(--line-soft)" strokeWidth="1" />)}
+      {["VOL", "RSI 14", "MACD 12/26/9"].map((t, i) => (
+        <text key={t} x={PL + 3} y={[V.t + 12, R.t + 13, M.t + 13][i]} fill="var(--faint)" fontFamily="var(--mono)" fontSize="10" fontWeight="600">{t}</text>
+      ))}
 
       {/* ---------------- price layer: volume + candlesticks ---------------- */}
       <g data-layer="price">
@@ -92,20 +72,23 @@ export function CandleChart({ bars, ai }: { bars: OhlcBar[]; interval?: string; 
         })}
         {data.map((b, i) => {
           const up = b.close >= b.open, col = up ? "var(--pos)" : "var(--neg)";
-          const yo = yP(b.open), yc = yP(b.close), top = Math.min(yo, yc), hgt = Math.max(1, Math.abs(yc - yo));
+          const yo = yP(b.open), yc = yP(b.close);
           return (
             <g key={"c" + i}>
               <line x1={x(i)} y1={yP(b.high)} x2={x(i)} y2={yP(b.low)} stroke={col} strokeWidth="1" />
-              <rect x={x(i) - bw / 2} y={top} width={bw} height={hgt} rx="1" fill={col} />
+              <rect x={x(i) - bw / 2} y={Math.min(yo, yc)} width={bw} height={Math.max(1, Math.abs(yc - yo))} rx="1" fill={col} />
             </g>
           );
         })}
       </g>
 
-      {/* ---------------- indicator layer: EMA20, EMA50, RSI-14 ---------------- */}
+      {/* ---------------- indicator layer: EMA20/50/200, VWAP, RSI-14, MACD ---------------- */}
       <g data-layer="indicator">
-        <polyline points={line(e20)} fill="none" stroke="var(--accent)" strokeWidth="1.6" opacity="0.95" />
-        <polyline points={line(e50)} fill="none" stroke="var(--ema50)" strokeWidth="1.6" opacity="0.95" />
+        <polyline points={line(e200)} fill="none" stroke="var(--ema200)" strokeWidth="1.4" opacity="0.9" />
+        <polyline points={line(e50)} fill="none" stroke="var(--ema50)" strokeWidth="1.5" opacity="0.95" />
+        <polyline points={line(e20)} fill="none" stroke="var(--accent)" strokeWidth="1.5" opacity="0.95" />
+        <polyline points={line(vw)} fill="none" stroke="var(--vwap)" strokeWidth="1.4" strokeDasharray="4 3" opacity="0.9" />
+        {/* RSI panel */}
         {[30, 50, 70].map((l) => {
           const y = yR(l);
           return (
@@ -117,7 +100,14 @@ export function CandleChart({ bars, ai }: { bars: OhlcBar[]; interval?: string; 
         })}
         <polyline points={r14.map((v, i) => (v == null ? "" : `${x(i).toFixed(1)},${yR(v).toFixed(1)}`)).filter(Boolean).join(" ")}
           fill="none" stroke="var(--rsi)" strokeWidth="1.5" />
-        <text x={PL + 3} y={R.t + 13} fill="var(--rsi)" fontFamily="var(--mono)" fontSize="10" fontWeight="600">RSI 14</text>
+        {/* MACD panel */}
+        <line x1={PL} y1={M.t + M.h / 2} x2={PL + PW} y2={M.t + M.h / 2} stroke="var(--line-soft)" strokeWidth="1" />
+        {mac.hist.map((v, i) => {
+          const y0 = M.t + M.h / 2, y1 = yM(v);
+          return <rect key={"m" + i} x={x(i) - bw / 2} y={Math.min(y0, y1)} width={bw} height={Math.max(1, Math.abs(y1 - y0))} rx="1" fill={v >= 0 ? "var(--pos)" : "var(--neg)"} opacity="0.5" />;
+        })}
+        <polyline points={mac.line.map((v, i) => `${x(i).toFixed(1)},${yM(v).toFixed(1)}`).join(" ")} fill="none" stroke="var(--accent)" strokeWidth="1.3" />
+        <polyline points={mac.signal.map((v, i) => `${x(i).toFixed(1)},${yM(v).toFixed(1)}`).join(" ")} fill="none" stroke="var(--ema50)" strokeWidth="1.3" />
       </g>
 
       {/* ---------------- AI signal layer: only when the decision fields exist ---------------- */}
@@ -144,7 +134,7 @@ export function CandleChart({ bars, ai }: { bars: OhlcBar[]; interval?: string; 
         )}
       </g>
 
-      {/* ---------------- event layer: reserved for future (crosshair / news / fills) — not implemented ---------------- */}
+      {/* ---------------- event layer: reserved (news / earnings / signals) — not implemented ---------------- */}
       <g data-layer="event" />
     </svg>
   );

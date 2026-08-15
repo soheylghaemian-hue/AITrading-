@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CandleChart } from "@/components/CandleChart";
-import { MarketDetailView } from "@/components/views";
 import { ohlcForSymbol, type OhlcBar } from "@/lib/ohlc";
 
 const r = (el: React.ReactElement) => renderToStaticMarkup(el);
@@ -21,20 +20,21 @@ function mkBars(n: number): OhlcBar[] {
 describe("CandleChart — real bars only, computed indicators, guarded overlays", () => {
   const bars = mkBars(30);
 
-  it("renders candlesticks, volume and indicators when OHLC is present", () => {
+  it("renders candlesticks, volume and all indicators (EMA20/50/200, VWAP, RSI, MACD)", () => {
     const h = r(<CandleChart bars={bars} />);
     expect(h).toContain('data-layer="price"');
     expect(h).toContain('data-layer="indicator"');
     expect(h).toContain("RSI 14");
-    expect((h.match(/<rect/g) || []).length).toBeGreaterThan(bars.length); // volume + candle bodies
-    expect((h.match(/<polyline/g) || []).length).toBeGreaterThanOrEqual(3); // EMA20 + EMA50 + RSI
+    expect(h).toContain("MACD 12/26/9");
+    expect((h.match(/<rect/g) || []).length).toBeGreaterThan(bars.length);          // volume + candle bodies + MACD hist
+    expect((h.match(/<polyline/g) || []).length).toBeGreaterThanOrEqual(7);          // EMA20/50/200 + VWAP + RSI + MACD line + signal
   });
 
   it("NEVER fabricates candles: empty / too-few / malformed bars render nothing", () => {
     expect(r(<CandleChart bars={[]} />)).toBe("");
     expect(r(<CandleChart bars={[bars[0]]} />)).toBe("");
     const malformed = [{ timestamp: "t", open: NaN, high: 1, low: 0, close: 0.5, volume: 1 } as any, { ...bars[0] }];
-    expect(r(<CandleChart bars={malformed} />)).toBe(""); // one bad + one good → <2 valid → nothing
+    expect(r(<CandleChart bars={malformed} />)).toBe("");
   });
 
   it("draws AI overlays ONLY when the decision fields exist (never calculated)", () => {
@@ -42,48 +42,14 @@ describe("CandleChart — real bars only, computed indicators, guarded overlays"
     expect(all).toContain("ENTRY 100.50");
     expect(all).toContain("STOP 98.00");
     expect(all).toContain("TARGET 104.00");
-
     const none = r(<CandleChart bars={bars} ai={null} />);
     expect(none).not.toContain("ENTRY");
     expect(none).not.toContain("STOP");
     expect(none).not.toContain("TARGET");
-
     const partial = r(<CandleChart bars={bars} ai={{ entry: 100.5 }} />);
     expect(partial).toContain("ENTRY");
     expect(partial).not.toContain("STOP");
     expect(partial).not.toContain("TARGET");
-  });
-});
-
-describe("/markets/[symbol] wiring — chart vs honest NO DATA", () => {
-  const bars = mkBars(30);
-  const withOhlc: any = {
-    mode: "paper", connected: true, execution_enabled: false,
-    global_market_data: [{ region: "USA", symbol: "NVDA", source: "MASSIVE", status: "DATA_AVAILABLE", realtime: true, bid: 100.4, ask: 100.6, last: 100.5, spread: 0.2, bid_size: 1, ask_size: 1, volume: 1, latency_ms: 100, subscription_state: "OK" }],
-    autonomous: { status: "ARMED", decisions: [{ ts: "t", instrument: "NVDA", action: "BUY", entry: 100.5, stop: 98, target: 104, reason: "momentum" }] },
-    ohlc: { NVDA: { interval: "15m", bars } },
-  };
-
-  it("renders the chart when OHLC exists, with AI overlays from real decision fields", () => {
-    const h = r(<MarketDetailView s={withOhlc} symbol="NVDA" connected />);
-    expect(h).toContain("RSI 14");
-    expect(h).toContain('data-layer="price"');
-    expect(h).toContain("ENTRY 100.50");
-    expect(h).not.toContain("Historical chart unavailable");
-  });
-
-  it("shows 'Historical chart unavailable' (NO DATA) when OHLC is missing", () => {
-    const noOhlc: any = { ...withOhlc, ohlc: undefined };
-    const h = r(<MarketDetailView s={noOhlc} symbol="NVDA" connected />);
-    expect(h).toContain("Historical chart unavailable");
-    expect(h).not.toContain('data-layer="price"');
-  });
-
-  it("disconnected backend → unreachable banner + NO DATA + chart unavailable", () => {
-    const h = r(<MarketDetailView s={null} symbol="NVDA" connected={false} />);
-    expect(h.toLowerCase()).toContain("not reachable");
-    expect(h).toContain("NO DATA");
-    expect(h).toContain("Historical chart unavailable");
   });
 });
 
