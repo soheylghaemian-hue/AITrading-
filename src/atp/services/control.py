@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from ..consensus.engine import build_ai_consensus
 from ..dashboard.readmodel import build_dashboard_read_model
-from ..evaluation.metrics import build_ai_history, compute_performance
+from ..evaluation.metrics import build_ai_history, compute_outcomes_summary, compute_performance
 from ..fundamentals.readmodel import build_fundamentals
 from ..news.analysis import sentiment_label
 from ..optflow.readmodel import build_options
@@ -217,6 +217,16 @@ def market_news(symbol: str, limit: int = 30) -> dict:
     } for r in rows]
     return {"symbol": symbol.upper(), "count": len(items), "items": items,
             "ts": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/ai/outcomes")
+def ai_outcomes() -> dict:
+    """Read-only Outcome Lifecycle status (§ Phase G3.2): prediction / evaluated / pending counts, overall
+    directional accuracy, and the confusion matrix (TRUE/FALSE POSITIVE/NEGATIVE) at the 5-day horizon —
+    from the immutable history. Pending = not yet measured against real OHLC (never fabricated). No
+    secrets, no execution."""
+    with ctx.lock:
+        return compute_outcomes_summary(ctx.store)
 
 
 @app.get("/ai/performance")

@@ -10,7 +10,63 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 
+from .tracker import HORIZONS
+
 CONF_BUCKETS = [("high", 80, 101), ("medium", 60, 80), ("low", 0, 60)]
+
+
+def classify_outcome(pred, outcome) -> str:
+    """Confusion-matrix classification (§ G3.2): TRUE/FALSE POSITIVE/NEGATIVE, or INSUFFICIENT DATA."""
+    if pred.status in ("PARTIAL", "NO DATA") or outcome is None or outcome.return_percentage is None:
+        return "INSUFFICIENT DATA"
+    up = outcome.return_percentage > 0
+    if pred.direction == "BULLISH":
+        return "TRUE POSITIVE" if up else "FALSE POSITIVE"
+    if pred.direction == "BEARISH":
+        return "TRUE NEGATIVE" if not up else "FALSE NEGATIVE"
+    return "NEUTRAL"
+
+
+def _aligned_return(pred, outcome) -> float:
+    r = outcome.return_percentage or 0.0
+    return r if pred.direction == "BULLISH" else -r if pred.direction == "BEARISH" else 0.0
+
+
+def accuracy_by_horizon(store) -> dict:
+    """Directional accuracy + average aligned return at each of the 1/3/5/20-trading-day horizons."""
+    preds = {p.id: p for p in store.list_ai_predictions(None, 5000)}
+    outcomes = store.list_ai_prediction_outcomes()
+    out: dict = {}
+    for h in HORIZONS:
+        pairs = [(preds[o.prediction_id], o) for o in outcomes
+                 if o.time_horizon == h and o.prediction_id in preds and o.direction_correct is not None]
+        if not pairs:
+            out[str(h)] = {"accuracy": None, "average_return": None, "sample_size": 0}
+            continue
+        correct = sum(1 for _, o in pairs if o.direction_correct)
+        out[str(h)] = {"accuracy": round(correct / len(pairs) * 100, 1),
+                       "average_return": round(sum(_aligned_return(p, o) for p, o in pairs) / len(pairs), 2),
+                       "sample_size": len(pairs)}
+    return out
+
+
+def compute_outcomes_summary(store) -> dict:
+    """OLC status (§ G3.2): prediction/evaluated/pending counts, overall accuracy, and a confusion matrix
+    at the 5-day horizon. Nothing fabricated — pending = not yet measured against real OHLC."""
+    preds = {p.id: p for p in store.list_ai_predictions(None, 5000)}
+    prediction_count = len(preds)
+    outcomes = store.list_ai_prediction_outcomes()
+    evaluated_count = len(outcomes)
+    pending_count = max(0, prediction_count * len(HORIZONS) - evaluated_count)
+    evaluable = [o for o in outcomes if o.direction_correct is not None]
+    accuracy = round(sum(1 for o in evaluable if o.direction_correct) / len(evaluable) * 100, 1) if evaluable else None
+    classification: dict[str, int] = defaultdict(int)
+    for o in outcomes:
+        if o.time_horizon == 5 and o.prediction_id in preds:
+            classification[classify_outcome(preds[o.prediction_id], o)] += 1
+    return {"prediction_count": prediction_count, "evaluated_count": evaluated_count,
+            "pending_count": pending_count, "accuracy": accuracy, "horizons": HORIZONS,
+            "classification": dict(classification)}
 
 
 def _snapshot(pred) -> dict:
@@ -91,7 +147,7 @@ def compute_performance(store, horizon: int = 5) -> dict:
              if o.time_horizon == horizon and o.prediction_id in preds and o.direction_correct is not None]
     n = len(pairs)
     if n == 0:
-        return _empty(horizon)
+        return {**_empty(horizon), "by_horizon": accuracy_by_horizon(store)}
     correct = sum(1 for _, o in pairs if o.direction_correct)
     dir_acc = round(correct / n * 100, 1)
     bulls = [(p, o) for p, o in pairs if p.direction == "BULLISH"]
@@ -112,7 +168,8 @@ def compute_performance(store, horizon: int = 5) -> dict:
     return {"sample_size": n, "overall_accuracy": dir_acc, "direction_accuracy": dir_acc,
             "bullish_accuracy": acc(bulls), "bearish_accuracy": acc(bears), "average_return": avg_return,
             "confidence_calibration": _calibration(pairs), "score_reliability": _score_reliability(pairs),
-            "horizon_days": horizon, "errors": dict(errors), "best_inputs": best, "weakest_inputs": weakest}
+            "horizon_days": horizon, "errors": dict(errors), "best_inputs": best, "weakest_inputs": weakest,
+            "by_horizon": accuracy_by_horizon(store)}     # §G3.2: 1/3/5/20-day accuracy + avg return
 
 
 def build_ai_history(store, symbol: str, limit: int = 50) -> dict:
@@ -123,8 +180,11 @@ def build_ai_history(store, symbol: str, limit: int = 50) -> dict:
             "id": p.id, "symbol": p.symbol, "timestamp": p.timestamp, "score": p.score,
             "direction": p.direction, "confidence": p.confidence, "status": p.status,
             "price_at_prediction": p.price_at_prediction,
-            "outcomes": [{"time_horizon": o.time_horizon, "future_price": o.future_price,
-                          "return_percentage": o.return_percentage, "direction_correct": o.direction_correct}
+            "outcomes": [{"time_horizon": o.time_horizon, "prediction_price": o.price_at_prediction,
+                          "future_price": o.future_price, "return_percentage": o.return_percentage,
+                          "direction_expected": o.direction_expected, "direction_actual": o.direction_actual,
+                          "direction_correct": o.direction_correct,
+                          "result": classify_outcome(p, o), "status": o.status or "EVALUATED"}
                          for o in outs],
         })
     return {"symbol": symbol.upper(), "count": len(out), "assessments": out}

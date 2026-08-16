@@ -13,7 +13,7 @@ import type { TraderConsensus } from "./traders";
 import type { FundamentalsData } from "./fundamentals";
 import type { OptionsData } from "./options";
 import type { AiConsensus } from "./consensus";
-import type { AiPerformance, AiHistory } from "./performance";
+import type { AiPerformance, AiHistory, AiOutcomes } from "./performance";
 
 // Where the browser sends dashboard calls. Default: the SAME-ORIGIN server proxy ("/api"), which
 // forwards to the private backend and injects the read token server-side — so no token ever
@@ -214,6 +214,21 @@ export async function fetchPerformance(horizon = 5, signal?: AbortSignal): Promi
     errors: b.errors ?? {},
     best_inputs: Array.isArray(b.best_inputs) ? b.best_inputs : [],
     weakest_inputs: Array.isArray(b.weakest_inputs) ? b.weakest_inputs : [],
+  };
+}
+
+// Outcome Lifecycle status (§ Phase G3.2) → Control API /ai/outcomes.
+export async function fetchOutcomes(signal?: AbortSignal): Promise<AiOutcomes> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/ai-outcomes`,
+    { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = (await res.json()) as Partial<AiOutcomes>;
+  return {
+    prediction_count: b.prediction_count ?? 0, evaluated_count: b.evaluated_count ?? 0,
+    pending_count: b.pending_count ?? 0, accuracy: b.accuracy ?? null,
+    horizons: Array.isArray(b.horizons) ? b.horizons : [1, 3, 5, 20],
+    classification: b.classification ?? {},
   };
 }
 

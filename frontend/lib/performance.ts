@@ -4,6 +4,7 @@
 
 export interface CalibrationBucket { count: number; success_rate: number | null; avg_confidence: number | null }
 export interface Calibration { high: CalibrationBucket; medium: CalibrationBucket; low: CalibrationBucket; verdict: string | null }
+export interface HorizonMetric { accuracy: number | null; average_return: number | null; sample_size: number }
 
 export interface AiPerformance {
   sample_size: number;
@@ -18,9 +19,30 @@ export interface AiPerformance {
   errors: Record<string, number>;
   best_inputs: string[];
   weakest_inputs: string[];
+  by_horizon?: Record<string, HorizonMetric>;      // §G3.2: 1/3/5/20-day accuracy + avg return
 }
 
-export interface AiHistoryOutcome { time_horizon: number; future_price: number | null; return_percentage: number | null; direction_correct: boolean | null }
+// §G3.2 Outcome Lifecycle status.
+export interface AiOutcomes {
+  prediction_count: number;
+  evaluated_count: number;
+  pending_count: number;
+  accuracy: number | null;
+  horizons: number[];
+  classification: Record<string, number>;
+}
+
+export interface AiHistoryOutcome {
+  time_horizon: number;
+  prediction_price?: number | null;
+  future_price: number | null;
+  return_percentage: number | null;
+  direction_expected?: string | null;
+  direction_actual?: string | null;
+  direction_correct: boolean | null;
+  result?: string | null;
+  status?: string | null;
+}
 export interface AiHistoryItem {
   id: string; symbol: string; timestamp: string | null; score: number | null;
   direction: string | null; confidence: number | null; status: string | null;

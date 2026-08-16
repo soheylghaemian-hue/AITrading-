@@ -39,6 +39,17 @@ export function PerformanceView({ data, loading, error }: { data: AiPerformance 
         <Stat label="Bearish Accuracy" value={pctv(d.bearish_accuracy)} tone={accTone(d.bearish_accuracy)} />
       </div>
 
+      {d.by_horizon ? (
+        <div className="fgrid" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
+          {[1, 3, 5, 20].map((h) => {
+            const m = d.by_horizon![String(h)];
+            const a = m ? m.accuracy : null;
+            return <Stat key={h} label={`${h}-Day Accuracy`}
+              value={a == null ? NO_DATA : `${a}%`} tone={accTone(a)} />;
+          })}
+        </div>
+      ) : null}
+
       <div className="fanalyst">
         <div className="label">Confidence Calibration</div>
         <div className="fameta">

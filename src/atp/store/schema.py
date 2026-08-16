@@ -233,6 +233,19 @@ def _migration_009(dialect: str) -> list[str]:
     ]
 
 
+def _migration_010(dialect: str) -> list[str]:
+    """Outcome Lifecycle Controller (§ Phase G3.2). Additive columns on ai_prediction_outcomes: the
+    expected vs actual direction and a per-outcome status — so each evaluated outcome carries a full
+    confusion-matrix classification (TRUE/FALSE POSITIVE/NEGATIVE). Outcomes stay immutable (evaluated
+    once, never overwritten). Evaluation only — no Trading Core / Risk / Broker / IBKR / Execution."""
+    txt = _types(dialect)["TXT"]
+    return [
+        f"ALTER TABLE ai_prediction_outcomes ADD COLUMN direction_expected {txt}",
+        f"ALTER TABLE ai_prediction_outcomes ADD COLUMN direction_actual {txt}",
+        f"ALTER TABLE ai_prediction_outcomes ADD COLUMN status {txt}",
+    ]
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -244,6 +257,7 @@ MIGRATIONS = [
     (7, "options_intelligence", _migration_007),
     (8, "ai_consensus", _migration_008),
     (9, "ai_evaluation", _migration_009),
+    (10, "outcome_lifecycle", _migration_010),
 ]
 
 

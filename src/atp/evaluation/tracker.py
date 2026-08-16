@@ -8,7 +8,7 @@ once a horizon has elapsed and records it once (never overwritten, never removed
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 HORIZONS = [1, 3, 5, 20]     # trading-intelligence evaluation windows, in days
 
@@ -34,14 +34,6 @@ def snapshot_prediction(store, symbol: str, assessment: dict, now: datetime | No
     return True
 
 
-def _price_on_or_after(store, symbol: str, target_date_iso: str) -> float | None:
-    """Close of the first daily bar on/after a target date (ISO-8601 prefix compare). None if not there yet."""
-    for b in store.list_ohlc_bars(symbol, "1D", 500):   # oldest → newest
-        if b.ts >= target_date_iso:
-            return float(b.close)
-    return None
-
-
 def direction_correct(direction: str | None, ret_pct: float) -> bool | None:
     """A BULLISH call is right if the market rose, BEARISH if it fell, NEUTRAL if it stayed within ±2%."""
     if direction == "BULLISH":
@@ -53,32 +45,47 @@ def direction_correct(direction: str | None, ret_pct: float) -> bool | None:
     return None
 
 
+def direction_actual(ret_pct: float) -> str:
+    """The market's realised direction over the horizon (by sign of the forward return)."""
+    return "BULLISH" if ret_pct > 0 else "BEARISH" if ret_pct < 0 else "NEUTRAL"
+
+
+def _pred_bar_index(bars, prediction_ts: str) -> int | None:
+    """Index of the first daily bar on/after the prediction date (ISO-8601 prefix compare)."""
+    pdate = prediction_ts[:10]
+    for i, b in enumerate(bars):
+        if b.ts >= pdate:
+            return i
+    return None
+
+
 def evaluate_outcomes(store, now: datetime | None = None) -> int:
-    """Measure + record every not-yet-evaluated (prediction, horizon) whose window has elapsed and whose
-    forward price exists. Returns the number newly recorded. Immutable: never re-measures."""
-    now = now or datetime.now(timezone.utc)
+    """Measure + record every not-yet-evaluated (prediction, horizon). The horizon is counted in TRADING
+    DAYS (daily OHLC bars): the forward price is the close N bars after the prediction's bar. If that bar
+    does not exist yet the outcome stays PENDING (no row). Returns the number newly recorded. Immutable:
+    never re-measures. Uses ONLY OHLC — never broker/simulated/manual prices."""
     done = {(o.prediction_id, o.time_horizon) for o in store.list_ai_prediction_outcomes()}
+    bars_cache: dict[str, list] = {}
     recorded = 0
     for p in store.list_ai_predictions(None, 3000):
         if p.price_at_prediction in (None, 0) or not p.timestamp:
             continue
-        try:
-            t0 = datetime.fromisoformat(p.timestamp)
-        except ValueError:
+        sym = p.symbol
+        if sym not in bars_cache:
+            bars_cache[sym] = store.list_ohlc_bars(sym, "1D", 800)   # oldest → newest (trading days)
+        bars = bars_cache[sym]
+        idx = _pred_bar_index(bars, p.timestamp)
+        if idx is None:
             continue
         for h in HORIZONS:
-            if (p.id, h) in done:
-                continue
-            target = t0 + timedelta(days=h)
-            if now < target:
-                continue                                # window not elapsed yet
-            fut = _price_on_or_after(store, p.symbol, target.date().isoformat())
-            if fut is None:
-                continue                                # no forward price yet → not evaluable (NO DATA)
+            if (p.id, h) in done or idx + h >= len(bars):
+                continue                                # not enough trading days elapsed → PENDING
+            fut = float(bars[idx + h].close)
             ret = (fut - p.price_at_prediction) / p.price_at_prediction * 100.0
             store.insert_ai_prediction_outcome(
                 prediction_id=p.id, time_horizon=h, price_at_prediction=p.price_at_prediction,
                 future_price=fut, return_percentage=round(ret, 3),
-                direction_correct=direction_correct(p.direction, ret))
+                direction_correct=direction_correct(p.direction, ret),
+                direction_expected=p.direction, direction_actual=direction_actual(ret), status="EVALUATED")
             recorded += 1
     return recorded

@@ -3,7 +3,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { PerformanceView } from "@/components/AiPerformance";
 import { AiHistoryList } from "@/components/terminal/AiHistoryFeed";
-import { fetchPerformance, fetchAiHistory } from "@/lib/api";
+import { fetchPerformance, fetchAiHistory, fetchOutcomes } from "@/lib/api";
 import { accTone, hasHistory, hasPerformance, type AiHistory, type AiPerformance } from "@/lib/performance";
 
 const r = (el: React.ReactElement) => renderToStaticMarkup(el);
@@ -16,6 +16,12 @@ const PERF: AiPerformance = {
     verdict: "Overconfident" },
   score_reliability: { high_score_accuracy: 72, low_score_accuracy: 55 }, horizon_days: 5,
   errors: { "FALSE BULLISH": 8, "CONFLICT FAILURE": 3 }, best_inputs: ["Fundamentals", "Options"], weakest_inputs: ["News"],
+  by_horizon: {
+    "1": { accuracy: 58, average_return: 0.6, sample_size: 100 },
+    "3": { accuracy: 63, average_return: 1.1, sample_size: 98 },
+    "5": { accuracy: 67, average_return: 1.8, sample_size: 95 },
+    "20": { accuracy: 71, average_return: 4.2, sample_size: 80 },
+  },
 };
 const EMPTY_PERF: AiPerformance = {
   sample_size: 0, overall_accuracy: null, direction_accuracy: null, bullish_accuracy: null, bearish_accuracy: null,
@@ -55,6 +61,11 @@ describe("PerformanceView — honest evaluation, never fabricated", () => {
     expect(h).toContain("Overconfident");            // calibration verdict
     expect(h).toContain("Fundamentals");             // best input
     expect(h).toContain("FALSE BULLISH: 8");         // error breakdown
+    // §G3.2 per-horizon accuracy (1/3/5/20-day)
+    expect(h).toContain("1-Day Accuracy");
+    expect(h).toContain("20-Day Accuracy");
+    expect(h).toContain("58%");                       // 1-day accuracy
+    expect(h).toContain("71%");                       // 20-day accuracy
   });
   it("shows NO DATA with too few evaluated predictions (no fabricated metrics)", () => {
     const h = r(<PerformanceView data={EMPTY_PERF} loading={false} error={null} />);
@@ -102,6 +113,13 @@ describe("fetch endpoints — via the same-origin proxy only", () => {
     const res = await fetchAiHistory("NVDA");
     expect(calls[0]).toBe("/api/dashboard/ai-history/NVDA");
     expect(res.assessments.length).toBe(2);
+  });
+  it("fetchOutcomes hits /api/dashboard/ai-outcomes (OLC status)", async () => {
+    vi.stubGlobal("fetch", okFetch({ prediction_count: 12, evaluated_count: 40, pending_count: 8, accuracy: 75,
+      horizons: [1, 3, 5, 20], classification: { "TRUE POSITIVE": 6, "FALSE POSITIVE": 2 } }));
+    const res = await fetchOutcomes();
+    expect(calls[0]).toBe("/api/dashboard/ai-outcomes");
+    expect(res.pending_count).toBe(8) && expect(res.accuracy).toBe(75);
   });
   it("rejects on a non-OK response (caller shows NO DATA)", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 502, json: async () => ({}) } as any)));

@@ -38,7 +38,7 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
     s = _db(tmp_path)
     assert s.ping()
     applied = sorted(r[0] for r in s._all("SELECT version FROM schema_migrations"))
-    assert applied == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    assert applied == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     # tables exist
     for t in ("runtime_state", "orders", "fills", "positions", "kill_switch", "daily_pnl",
               "audit_events", "service_heartbeats", "market_data_health", "ohlc_bars", "news_items",
@@ -71,9 +71,10 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
     s._one("SELECT assessment_id, component_name, score, weight, direction, reason, risk_flags FROM ai_assessment_components")
     # migration 009 ai-evaluation columns exist
     s._one("SELECT id, symbol, timestamp, score, direction, confidence, status, price_at_prediction, components_snapshot, created_at FROM ai_predictions")
-    s._one("SELECT prediction_id, time_horizon, price_at_prediction, future_price, return_percentage, direction_correct, evaluated_at FROM ai_prediction_outcomes")
+    # migration 010 outcome-lifecycle columns exist
+    s._one("SELECT prediction_id, time_horizon, price_at_prediction, future_price, return_percentage, direction_correct, evaluated_at, direction_expected, direction_actual, status FROM ai_prediction_outcomes")
     s2 = _reopen(tmp_path, s)                     # re-open re-runs migrator → no-op
-    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 
 def test_postgres_ddl_declares_numeric_money():

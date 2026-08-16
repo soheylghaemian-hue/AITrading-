@@ -320,6 +320,9 @@ class AiPredictionOutcomeRow:
     return_percentage: float | None
     direction_correct: bool | None
     evaluated_at: str
+    direction_expected: str | None = None
+    direction_actual: str | None = None
+    status: str | None = None
 
 
 @dataclass(slots=True)
@@ -818,7 +821,9 @@ class SqlStore(Store):
                  f(price_at_prediction), components_snapshot, now))
 
     def insert_ai_prediction_outcome(self, *, prediction_id: str, time_horizon: int, price_at_prediction,
-                                     future_price, return_percentage, direction_correct: bool | None) -> None:
+                                     future_price, return_percentage, direction_correct: bool | None,
+                                     direction_expected: str | None = None, direction_actual: str | None = None,
+                                     status: str | None = "EVALUATED") -> None:
         """Record a measured outcome once. ON CONFLICT DO NOTHING → outcomes are never overwritten or
         removed (failed predictions stay on the record)."""
         now = utcnow_iso()
@@ -827,10 +832,11 @@ class SqlStore(Store):
         with self.tx() as cur:
             self._exec(cur,
                 "INSERT INTO ai_prediction_outcomes (prediction_id,time_horizon,price_at_prediction,"
-                "future_price,return_percentage,direction_correct,evaluated_at) VALUES (?,?,?,?,?,?,?) "
+                "future_price,return_percentage,direction_correct,evaluated_at,direction_expected,"
+                "direction_actual,status) VALUES (?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(prediction_id,time_horizon) DO NOTHING",
                 (prediction_id, int(time_horizon), f(price_at_prediction), f(future_price),
-                 f(return_percentage), dc, now))
+                 f(return_percentage), dc, now, direction_expected, direction_actual, status))
 
     def get_ai_prediction(self, prediction_id: str) -> AiPredictionRow | None:
         r = self._one("SELECT id,symbol,timestamp,score,direction,confidence,status,price_at_prediction,"
@@ -853,16 +859,18 @@ class SqlStore(Store):
         return [self._pred_row(r) for r in rows]
 
     def list_ai_prediction_outcomes(self, prediction_id: str | None = None) -> list[AiPredictionOutcomeRow]:
-        if prediction_id:
-            rows = self._all("SELECT prediction_id,time_horizon,price_at_prediction,future_price,"
-                             "return_percentage,direction_correct,evaluated_at FROM ai_prediction_outcomes "
-                             "WHERE prediction_id=?", (prediction_id,))
-        else:
-            rows = self._all("SELECT prediction_id,time_horizon,price_at_prediction,future_price,"
-                             "return_percentage,direction_correct,evaluated_at FROM ai_prediction_outcomes")
+        cols = ("SELECT prediction_id,time_horizon,price_at_prediction,future_price,return_percentage,"
+                "direction_correct,evaluated_at,direction_expected,direction_actual,status "
+                "FROM ai_prediction_outcomes")
+        rows = (self._all(cols + " WHERE prediction_id=?", (prediction_id,)) if prediction_id
+                else self._all(cols))
         g = lambda v: None if v is None else float(v)  # noqa: E731
         return [AiPredictionOutcomeRow(x[0], int(x[1]), g(x[2]), g(x[3]), g(x[4]),
-                                       (None if x[5] is None else bool(x[5])), x[6]) for x in rows]
+                                       (None if x[5] is None else bool(x[5])), x[6], x[7], x[8], x[9]) for x in rows]
+
+    def count_ai_prediction_outcomes(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM ai_prediction_outcomes")
+        return int(r[0]) if r else 0
 
     def count_ai_predictions(self) -> int:
         r = self._one("SELECT COUNT(*) FROM ai_predictions")

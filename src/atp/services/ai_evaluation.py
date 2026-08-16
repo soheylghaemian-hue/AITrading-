@@ -13,7 +13,7 @@ import asyncio
 import os
 
 from ..consensus.engine import build_ai_consensus
-from ..evaluation.tracker import evaluate_outcomes, snapshot_prediction
+from ..evaluation.tracker import snapshot_prediction
 from .base import Service
 
 DEFAULT_SYMBOLS = ["AAPL", "NVDA", "SPY"]
@@ -35,10 +35,11 @@ class AiEvaluationService(Service):
         self.symbols = evaluation_symbols()
         self.poll_interval = float(os.environ.get("ATP_EVALUATION_POLL_S", "900"))  # 15 min
         self._snapshots = 0
-        self._outcomes = 0
         self._degraded = False
 
     async def main(self) -> None:
+        # Snapshots the current AI consensus into the immutable prediction history. Outcome measurement
+        # is owned by the dedicated Outcome Lifecycle Controller (atp-ai-outcome-tracker, § G3.2).
         while not self._stop.is_set():
             snaps = 0
             errors = 0
@@ -49,15 +50,10 @@ class AiEvaluationService(Service):
                         snaps += 1
                 except Exception:
                     errors += 1
-            try:
-                self._outcomes = await asyncio.to_thread(evaluate_outcomes, self.store)
-            except Exception:
-                errors += 1
             self._snapshots = snaps
             self._degraded = errors > 0
-            self._detail = (f"DEGRADED: {errors} error(s) (fail-closed); snapshots={snaps} outcomes={self._outcomes}"
-                            if self._degraded
-                            else f"snapshots={snaps} outcomes_evaluated={self._outcomes}")
+            self._detail = (f"DEGRADED: {errors} error(s) (fail-closed); snapshots={snaps}"
+                            if self._degraded else f"snapshots={snaps}")
             await self._sleep(self.poll_interval)
 
     async def _sleep(self, secs: float) -> None:
