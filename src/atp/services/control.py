@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
+from ..dashboard.readmodel import build_dashboard_read_model
 from ..persistence.state import RedisStateStore
 from ..runtime.lifecycle import LifecycleManager, RuntimeStatus
 from ..store import open_store
@@ -243,6 +244,22 @@ def broker() -> dict:
     if not snap and hb_age is None:
         out["note"] = "no broker snapshot yet"
     return out
+
+
+# ---------------------------------------------------------------- dashboard read-model (authenticated)
+@app.get("/dashboard")
+def dashboard(authorization: str | None = Header(default=None)) -> dict:
+    """Read-only Dashboard read-model (§ Phase G1.8): account / positions / risk / system / AI,
+    assembled from AUTHORITATIVE PostgreSQL state (+ the broker read-model for live equity/cash). It
+    reads only — it never touches execution, broker orders, the risk-engine logic, IBKR, or the
+    autonomous flags. Missing state renders as null/empty (NO DATA), never fabricated. Carries NO
+    credentials or secrets. Authenticated with the control token (richer financial view than the
+    public observability endpoints)."""
+    _auth(authorization)
+    bk = broker()                                  # exact broker read-model (fail-closed liveness, no secrets)
+    now = datetime.now(timezone.utc)
+    with ctx.lock:
+        return build_dashboard_read_model(ctx.store, bk, now=now)
 
 
 # ---------------------------------------------------------------- control commands (authenticated)

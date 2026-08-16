@@ -10,6 +10,7 @@ from .base import (
     AuditEventRow,
     DailyLossLockRow,
     DailyPnlRow,
+    DecisionRow,
     FillRow,
     KillSwitchRow,
     OrderRow,
@@ -31,6 +32,7 @@ __all__ = [
     "D", "money_str", "to_decimal", "new_id", "utcnow_iso",
     "RuntimeStateRow", "KillSwitchRow", "DailyPnlRow", "DailyLossLockRow",
     "RiskConfigRow", "RiskStateRow", "OrderRow", "FillRow", "PositionRow", "AuditEventRow",
+    "DecisionRow",
 ]
 
 

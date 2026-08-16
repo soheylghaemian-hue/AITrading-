@@ -21,7 +21,7 @@ function mapEngine(runtime?: string): "DISABLED" | "ARMED" | "RUNNING" | "HALTED
   return "DISABLED";
 }
 
-export function composeSnapshot(status: Raw, broker: Raw, market: Raw): Snapshot {
+export function composeSnapshot(status: Raw, broker: Raw, market: Raw, dashboard?: Raw): Snapshot {
   const S = status || {};
   const B = broker || {};
   const M = market || {};
@@ -86,7 +86,7 @@ export function composeSnapshot(status: Raw, broker: Raw, market: Raw): Snapshot
     decisions: [] as any[],
   };
 
-  return {
+  const snap: Snapshot = {
     generated_at: S.ts ?? M.ts ?? B.ts ?? new Date().toISOString(),
     mode: B.mode ?? undefined,
     system_status: runtime,
@@ -105,6 +105,54 @@ export function composeSnapshot(status: Raw, broker: Raw, market: Raw): Snapshot
     global_market_data,
     system_health,
     autonomous,
-    trading_risk: null, // observability API exposes no risk budget numbers → Risk Center shows NO DATA
+    trading_risk: null, // filled from the /dashboard read-model below (else NO DATA)
   };
+
+  // Phase G1.8: merge the authenticated /dashboard read-model (account P&L, positions, risk, AI
+  // decisions) assembled from persisted PostgreSQL state. Absent → the fields stay NO DATA; nothing
+  // is fabricated. When no dashboard payload is supplied the snapshot is exactly as before.
+  if (dashboard) {
+    const D = dashboard as any;
+    const dAcct = D.account || {};
+    const dRisk = D.risk || null;
+    const dPositions: any[] = Array.isArray(D.positions) ? D.positions : [];
+    const dDecisions: any[] = Array.isArray(D.ai?.decisions) ? D.ai.decisions : [];
+
+    snap.account = { ...snap.account, pnl: numOrNull(dAcct.pnl) };
+    snap.positions = dPositions.map((p) => ({
+      symbol: String(p.symbol ?? ""),
+      quantity: numOrNull(p.quantity),
+      avg_price: numOrNull(p.avg_price),
+      pnl: numOrNull(p.pnl),
+    }));
+    if (snap.autonomous) snap.autonomous.decisions = dDecisions;
+    if (dRisk) {
+      snap.risk = {
+        drawdown: numOrNull(dRisk.drawdown),
+        daily_pnl: numOrNull(dRisk.daily_pnl),
+        peak_equity: numOrNull(dRisk.peak_equity),
+        day_start_equity: numOrNull(dRisk.day_start_equity),
+      };
+      const capital = numOrNull(dRisk.capital);
+      const rpt = numOrNull(dRisk.risk_per_trade_pct);
+      const mdlp = numOrNull(dRisk.max_daily_loss_pct);
+      if (capital != null && rpt != null && mdlp != null) {
+        const maxDaily = capital * mdlp;
+        const dailyPnl = numOrNull(dRisk.daily_pnl) ?? 0;
+        const lossSoFar = Math.max(0, -dailyPnl);
+        snap.trading_risk = {
+          capital,
+          risk_per_trade_pct: rpt,
+          max_risk_per_trade: capital * rpt,
+          max_daily_loss_pct: mdlp,
+          max_daily_loss: maxDaily,
+          current_daily_pnl: dailyPnl,
+          remaining_daily_risk: Math.max(0, maxDaily - lossSoFar),
+          status: dRisk.halted || dRisk.killed ? "DAILY LOSS LIMIT REACHED" : "ACTIVE",
+        };
+      }
+    }
+  }
+
+  return snap;
 }

@@ -133,6 +133,16 @@ class AuditEventRow:
 
 
 @dataclass(slots=True)
+class DecisionRow:
+    decision_id: str
+    ts: str
+    instrument: str
+    final_decision: str | None
+    payload: str | None
+    correlation_id: str | None
+
+
+@dataclass(slots=True)
 class OhlcBarRow:
     symbol: str
     interval: str
@@ -576,6 +586,15 @@ class SqlStore(Store):
                 "INSERT INTO decisions (decision_id,ts,instrument,final_decision,payload,correlation_id) "
                 "VALUES (?,?,?,?,?,?)",
                 (decision_id, ts, instrument, final_decision, payload_json, correlation_id))
+
+    def list_decisions(self, limit: int = 50) -> list[DecisionRow]:
+        """Most-recent `limit` AI decisions (newest first) for the dashboard read-model. Read-only;
+        returns an empty list when none have been recorded (the UI shows NO DATA)."""
+        n = max(1, min(500, int(limit)))
+        rows = self._all(
+            "SELECT decision_id,ts,instrument,final_decision,payload,correlation_id FROM decisions "
+            "ORDER BY ts DESC LIMIT ?", (n,))
+        return [DecisionRow(r[0], r[1], r[2], r[3], r[4], r[5]) for r in rows]
 
     def upsert_heartbeat(self, *, service: str, status: str, detail: str | None = None) -> None:
         now = utcnow_iso()

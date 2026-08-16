@@ -58,7 +58,12 @@ async function forward(req: NextRequest, path: string[], method: "GET" | "POST")
           ),
         ),
       );
-      return NextResponse.json(composeSnapshot(st, br, mk), { status: 200 });
+      // /dashboard (account/positions/risk/AI, Phase G1.8) is best-effort: if it fails the summary
+      // still returns from status+broker+market, and those extra fields render NO DATA.
+      const dash = await fetch(`${BACKEND}/dashboard`, init)
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null);
+      return NextResponse.json(composeSnapshot(st, br, mk, dash), { status: 200 });
     } catch {
       return NextResponse.json({ detail: "backend unreachable" }, { status: 502 });
     }

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { composeSnapshot } from "@/lib/snapshot-compose";
-import { SystemView, MarketsView, OverviewView } from "@/components/views";
+import { SystemView, MarketsView, OverviewView, PortfolioView, RiskView } from "@/components/views";
 
 // Real payload shapes from the ATP Control/Observability API (/status, /broker, /market), captured live.
 const STATUS = {
@@ -100,5 +100,59 @@ describe("composed snapshot drives the real views with live values", () => {
     const h = r(<OverviewView s={snap} connected />);
     expect(h).toContain("PAPER account");
     expect(h).toContain("DISABLED");
+  });
+});
+
+// Phase G1.8 — the /dashboard read-model (account P&L, positions, risk, AI) from persisted state.
+const BROKER_CONNECTED = { ...BROKER, connection: "CONNECTED", equity: 1000000, cash: 500000, currency: "EUR" };
+const DASHBOARD = {
+  account: { equity: 1000000, cash: 500000, pnl: -8200, currency: "EUR", connected: true },
+  positions: [{ symbol: "AAPL", quantity: 100, avg_price: 150.25, pnl: 1234.5, updated_at: "2026-08-16T09:00:00Z" }],
+  risk: {
+    capital: 1000000, risk_per_trade_pct: 0.01, max_daily_loss_pct: 0.03,
+    day_start_equity: 1000000, peak_equity: 1010000, daily_pnl: -8200,
+    daily_loss_pct: 0.0082, drawdown: 0.0099, halted: false, killed: false,
+  },
+  system: { recovery_state: "DISABLED", recovery_reason: null },
+  ai: {
+    decisions: [{
+      decision_id: "d1", ts: "2026-08-16T10:00:00Z", instrument: "NVDA",
+      action: "BUY", confidence: 0.87, entry: 100.5, stop: 98, target: 104, final_decision: "APPROVED",
+    }],
+  },
+  ts: "2026-08-16T12:00:00Z",
+};
+
+describe("composeSnapshot — merges the /dashboard read-model (never fabricates)", () => {
+  it("maps account P&L, positions, risk and AI decisions from persisted state", () => {
+    const snap = composeSnapshot(STATUS, BROKER_CONNECTED, MARKET, DASHBOARD);
+    expect(snap.account?.equity).toBe(1000000);
+    expect(snap.account?.pnl).toBe(-8200);
+    expect(snap.positions?.length).toBe(1);
+    expect(snap.positions?.[0]).toMatchObject({ symbol: "AAPL", quantity: 100, avg_price: 150.25, pnl: 1234.5 });
+    expect(snap.risk?.drawdown).toBe(0.0099);
+    expect(snap.trading_risk?.capital).toBe(1000000);
+    expect(snap.trading_risk?.max_daily_loss).toBe(30000);
+    expect(snap.trading_risk?.max_risk_per_trade).toBe(10000);
+    expect(snap.trading_risk?.remaining_daily_risk).toBe(21800);   // 30000 - 8200 loss
+    expect(snap.trading_risk?.status).toBe("ACTIVE");
+    expect(snap.autonomous?.decisions?.length).toBe(1);
+    expect(snap.autonomous?.decisions?.[0]).toMatchObject({ instrument: "NVDA", action: "BUY" });
+  });
+
+  it("without a dashboard payload the snapshot is unchanged (graceful NO DATA)", () => {
+    const snap = composeSnapshot(STATUS, BROKER, MARKET);            // 3 args → no dashboard
+    expect(snap.positions).toEqual([]);
+    expect(snap.trading_risk).toBeNull();
+    expect(snap.risk).toBeUndefined();
+    expect(snap.account?.pnl).toBeUndefined();
+    expect(snap.autonomous?.decisions).toEqual([]);
+  });
+
+  it("drives Portfolio / Risk / Overview with real persisted values", () => {
+    const snap = composeSnapshot(STATUS, BROKER_CONNECTED, MARKET, DASHBOARD);
+    expect(r(<PortfolioView s={snap} connected />)).toContain("AAPL");     // real position
+    expect(r(<RiskView s={snap} connected />)).toContain("HEALTHY");        // riskHealth from real limits
+    expect(r(<OverviewView s={snap} connected />)).toContain("NVDA");       // last AI decision
   });
 });
