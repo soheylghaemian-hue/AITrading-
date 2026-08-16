@@ -9,6 +9,7 @@
 import type { Snapshot } from "./types";
 import type { OhlcBar } from "./ohlc";
 import type { NewsItem } from "./news";
+import type { TraderConsensus } from "./traders";
 
 // Where the browser sends dashboard calls. Default: the SAME-ORIGIN server proxy ("/api"), which
 // forwards to the private backend and injects the read token server-side — so no token ever
@@ -84,6 +85,36 @@ export async function fetchNews(
   if (!res.ok) throw new Error(`backend ${res.status}`);
   const body = (await res.json()) as Partial<NewsResponse>;
   return { symbol: body.symbol ?? symbol, items: Array.isArray(body.items) ? body.items : [] };
+}
+
+// Trader-intelligence consensus for the terminal Traders tab (§ Phase G2.5). Read-only, via the SAME
+// same-origin server proxy; the proxy forwards to the Control API's /market/{symbol}/traders. On no
+// backend / non-OK it throws — the caller renders NO DATA (never fabricates a trader or consensus).
+export async function fetchTraders(symbol: string, signal?: AbortSignal): Promise<TraderConsensus> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/traders/${encodeURIComponent(symbol)}`,
+    { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = (await res.json()) as Partial<TraderConsensus>;
+  return {
+    symbol: b.symbol ?? symbol,
+    consensus: b.consensus ?? null,
+    long_percent: b.long_percent ?? null,
+    short_percent: b.short_percent ?? null,
+    neutral_percent: b.neutral_percent ?? null,
+    weighted_score: b.weighted_score ?? null,
+    contributor_count: b.contributor_count ?? 0,
+    contributors: Array.isArray(b.contributors) ? b.contributors : [],
+  };
+}
+
+// Single-trader profile (performance / risk / strategy). Proxy forwards to the Control API /traders/{id}.
+export async function fetchTrader(id: string, signal?: AbortSignal): Promise<any> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/trader/${encodeURIComponent(id)}`,
+    { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  return res.json();
 }
 
 // Mutations are authorized by the SERVER proxy (it injects the owner token from a server env var),

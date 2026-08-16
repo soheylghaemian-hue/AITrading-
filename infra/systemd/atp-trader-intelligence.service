@@ -1,0 +1,29 @@
+[Unit]
+Description=ATP Trader Intelligence Service (Phase G2.5 — read-only trader consensus)
+Documentation=https://github.com/soheylghaemian-hue/AITrading-
+After=network-online.target docker.service
+Wants=network-online.target
+# Polls the configured LICENSED trader provider, persists traders/performance/positions to PostgreSQL;
+# the Control API serves a quality-weighted consensus. An intelligence input source only — never
+# trades, never touches IBKR/execution/broker, holds no credentials. No provider configured => NO DATA.
+
+[Service]
+Type=simple
+User=atp
+Group=atp
+WorkingDirectory=/opt/atp/app
+Environment=PYTHONPATH=/opt/atp/app/src
+EnvironmentFile=/opt/atp/atp.env
+ExecStart=/opt/atp/app/.venv/bin/python -m atp.services.trader_intelligence
+Restart=always
+RestartSec=5
+# Fail-closed: no provider or a provider/DB error persists nothing (never a fabricated trader) and
+# reports DEGRADED; systemd restarts the process, but no trader data is ever invented.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/atp
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -21,6 +21,9 @@ from .base import (
     RuntimeStateRow,
     SqlStore,
     Store,
+    TraderPerformanceRow,
+    TraderPositionRow,
+    TraderRow,
     new_id,
     utcnow_iso,
 )
@@ -33,7 +36,7 @@ __all__ = [
     "D", "money_str", "to_decimal", "new_id", "utcnow_iso",
     "RuntimeStateRow", "KillSwitchRow", "DailyPnlRow", "DailyLossLockRow",
     "RiskConfigRow", "RiskStateRow", "OrderRow", "FillRow", "PositionRow", "AuditEventRow",
-    "DecisionRow", "NewsItemRow",
+    "DecisionRow", "NewsItemRow", "TraderRow", "TraderPerformanceRow", "TraderPositionRow",
 ]
 
 

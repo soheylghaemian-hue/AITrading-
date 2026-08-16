@@ -38,10 +38,11 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
     s = _db(tmp_path)
     assert s.ping()
     applied = sorted(r[0] for r in s._all("SELECT version FROM schema_migrations"))
-    assert applied == [1, 2, 3, 4]
+    assert applied == [1, 2, 3, 4, 5]
     # tables exist
     for t in ("runtime_state", "orders", "fills", "positions", "kill_switch", "daily_pnl",
-              "audit_events", "service_heartbeats", "market_data_health", "ohlc_bars", "news_items"):
+              "audit_events", "service_heartbeats", "market_data_health", "ohlc_bars", "news_items",
+              "traders", "trader_performance", "trader_positions"):
         s._one(f"SELECT COUNT(*) FROM {t}")
     # migration 002 money columns exist
     s._one("SELECT notional, stop, target, monetary_risk, risk_pct FROM orders")
@@ -50,8 +51,12 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
     s._one("SELECT slippage, fees FROM fills")
     # migration 004 news_items columns exist
     s._one("SELECT id, symbol, title, source, url, published_at, content_summary, sentiment_score, impact_level, created_at FROM news_items")
+    # migration 005 trader-intelligence columns exist
+    s._one("SELECT id, name, source, market_focus, strategy_type, track_record_days, created_at FROM traders")
+    s._one("SELECT trader_id, total_return, annualized_return, win_rate, max_drawdown, sharpe_ratio, sortino_ratio, average_holding_period, number_of_trades, updated_at FROM trader_performance")
+    s._one("SELECT trader_id, symbol, direction, entry_price, position_size, timestamp FROM trader_positions")
     s2 = _reopen(tmp_path, s)                     # re-open re-runs migrator → no-op
-    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == [1, 2, 3, 4]
+    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == [1, 2, 3, 4, 5]
 
 
 def test_postgres_ddl_declares_numeric_money():

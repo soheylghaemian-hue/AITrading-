@@ -8,8 +8,9 @@ import React, { useEffect, useState } from "react";
 import type { Snapshot } from "@/lib/types";
 import { instrumentRef } from "@/lib/instruments";
 import { symbolQuote } from "@/lib/market";
-import { fetchOhlc } from "@/lib/api";
+import { fetchOhlc, fetchTraders } from "@/lib/api";
 import type { OhlcBar } from "@/lib/ohlc";
+import type { TraderConsensus } from "@/lib/traders";
 import { Dot } from "@/components/ui";
 import { TerminalHeader } from "./TerminalHeader";
 import { DataQuality } from "./DataQuality";
@@ -29,6 +30,7 @@ export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; s
 
   const [iv, setIv] = useState("1m");
   const [ohlc, setOhlc] = useState<OhlcState>({ bars: null, loading: true, error: null });
+  const [traders, setTraders] = useState<TraderConsensus | null>(null);
 
   // Fetch OHLC whenever the symbol or timeframe changes. AbortController + a cancelled flag guard against
   // a stale response landing after a fast symbol switch (NVDA → AAPL → SPY) overwriting the newer request.
@@ -45,9 +47,32 @@ export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; s
     return () => { cancelled = true; ctrl.abort(); };
   }, [symbol, iv]);
 
+  // §G2.5: fetch the quality-weighted trader consensus and feed it to the AI Brain conviction inputs.
+  // Read-only intelligence signal; null → NO DATA. Never a trading decision or copy-trade.
+  useEffect(() => {
+    let cancelled = false;
+    const ctrl = new AbortController();
+    fetchTraders(symbol, ctrl.signal)
+      .then((r) => { if (!cancelled) setTraders(r); })
+      .catch(() => { if (!cancelled) setTraders(null); });
+    return () => { cancelled = true; ctrl.abort(); };
+  }, [symbol]);
+
   // Header change% is derived from the REAL fetched candles (first→last close), not the snapshot. No bars → NO DATA.
   const bars = ohlc.bars || [];
   const change = bars.length > 1 ? (bars[bars.length - 1].close - bars[0].close) / (bars[0].close || 1) : null;
+
+  // AI Brain conviction inputs: each is a real 0-100 signal or NO DATA. Only Trader Consensus is wired
+  // in this phase (from the quality-weighted score); the others get their feeds later. No fabricated total.
+  const convictionInputs = [
+    { label: "Price Action", value: null as number | null },
+    { label: "News", value: null as number | null },
+    { label: "Fundamentals", value: null as number | null },
+    { label: "Options Flow", value: null as number | null },
+    { label: "Trader Consensus", value: traders?.weighted_score ?? null },
+    { label: "Macro", value: null as number | null },
+    { label: "Risk", value: null as number | null },
+  ];
 
   return (
     <div className="term">
@@ -60,7 +85,7 @@ export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; s
         <div className="card term-chart">
           <MarketChart bars={ohlc.bars} loading={ohlc.loading} error={ohlc.error} interval={iv} onInterval={setIv} ai={ai} />
         </div>
-        <AiAnalysisPanel dec={dec} risk={s?.trading_risk || null} mode={s?.mode} executionEnabled={s?.execution_enabled} />
+        <AiAnalysisPanel dec={dec} risk={s?.trading_risk || null} mode={s?.mode} executionEnabled={s?.execution_enabled} convictionInputs={convictionInputs} />
       </div>
       <ResearchTabs quote={quote} decisions={decisions} symbol={symbol} />
     </div>

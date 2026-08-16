@@ -321,3 +321,43 @@ a.newsrow:hover{background:var(--line-soft)}
 .newstime{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--faint)}
 .newstitle{font-size:13.5px;font-weight:550;color:var(--ink);line-height:1.35}
 .newsmeta{margin-top:5px;font-size:11px;color:var(--dim)}
+
+/* ---------------------------------------------------------------- Trader intelligence (§ G2.5) ---- */
+.traders{display:flex;flex-direction:column;gap:16px;padding:4px 2px}
+.trhead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.trsub{font-size:11px;color:var(--dim);margin-top:3px}
+.trverdict{display:flex;align-items:center;gap:12px}
+.consb{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:1px;padding:4px 10px;border-radius:6px;border:1px solid transparent}
+.consb.pos{color:var(--pos);background:var(--pos-bg);border-color:rgba(52,211,153,.3)}
+.consb.neg{color:var(--neg);background:var(--neg-bg);border-color:rgba(248,113,113,.3)}
+.consb.neu{color:var(--dim);background:var(--line-soft);border-color:var(--line)}
+.trscore{font-family:var(--mono);font-size:20px;font-weight:650;color:var(--ink)}
+.trscore small{font-size:11px;color:var(--faint);font-weight:500}
+.trshares{display:flex;flex-direction:column;gap:9px}
+.trshare-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+.trdir{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.8px;padding:1px 7px;border-radius:5px;border:1px solid transparent}
+.trdir.pos{color:var(--pos);background:var(--pos-bg);border-color:rgba(52,211,153,.25)}
+.trdir.neg{color:var(--neg);background:var(--neg-bg);border-color:rgba(248,113,113,.25)}
+.trdir.neu{color:var(--dim);background:var(--line-soft);border-color:var(--line)}
+.trbar{height:7px;border-radius:4px;background:var(--line-soft);overflow:hidden}
+.trbar i{display:block;height:100%;border-radius:4px}
+.trbar i.pos{background:linear-gradient(90deg,var(--accent-deep),var(--pos))}
+.trbar i.neg{background:var(--neg)}
+.trbar i.neu{background:var(--faint)}
+.trcontrib{border-top:1px solid var(--line-soft);padding-top:12px}
+.trrow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 2px;border-bottom:1px solid var(--line-soft)}
+.trrow:last-child{border-bottom:0}
+.trrow-main{display:flex;align-items:center;gap:9px}
+.trname{font-size:13.5px;font-weight:600;color:var(--ink)}
+.trrow-meta{display:flex;align-items:center;gap:10px}
+.qb{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.4px;padding:2px 7px;border-radius:5px;border:1px solid transparent}
+.qb.hi{color:var(--pos);background:var(--pos-bg);border-color:rgba(52,211,153,.28)}
+.qb.med{color:var(--warn);background:var(--warn-bg);border-color:rgba(245,158,11,.28)}
+.qb.lo{color:var(--faint);background:var(--line-soft);border-color:var(--line)}
+.trstrat{font-size:11px;color:var(--dim);min-width:90px;text-align:right}
+/* AI Brain conviction inputs */
+.cinput{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 0}
+.cinput .k{font-size:12.5px;color:var(--dim)}
+.cival{display:flex;align-items:center;gap:8px;min-width:120px;justify-content:flex-end}
+.cival i{display:block;height:6px;border-radius:3px;background:linear-gradient(90deg,var(--accent-deep),var(--accent));max-width:80px;flex:1}
+.cival b{color:var(--ink);min-width:22px;text-align:right}

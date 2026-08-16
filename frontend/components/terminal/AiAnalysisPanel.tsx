@@ -11,11 +11,14 @@ const AGENTS: [string, string][] = [
   ["news", "News Agent"],
 ];
 
-export function AiAnalysisPanel({ dec, risk, mode, executionEnabled }: {
+export function AiAnalysisPanel({ dec, risk, mode, executionEnabled, convictionInputs }: {
   dec: Record<string, any> | null;
   risk: Record<string, any> | null;
   mode?: string;
   executionEnabled?: boolean;
+  // §G2.5 AI Brain: the intelligence inputs feeding a future conviction model. Each is a real 0-100
+  // signal or NO DATA — NO overall conviction is fabricated from partial inputs.
+  convictionInputs?: { label: string; value: number | null }[];
 }) {
   const conf = dec?.confidence;
   const score = isPresent(conf) ? Math.round(conf * 100) : null;
@@ -48,6 +51,20 @@ export function AiAnalysisPanel({ dec, risk, mode, executionEnabled }: {
         <div className="row"><span className="k">Max Daily Loss</span><b className="num">{risk ? money(risk.max_daily_loss, 0) : NO_DATA}</b></div>
         <div className="row"><span className="k">Remaining Today</span><b className="num up">{risk ? money(risk.remaining_daily_risk, 0) : NO_DATA}</b></div>
       </div>
+
+      {convictionInputs && convictionInputs.length ? (
+        <div className="sec">
+          <div className="label" style={{ marginBottom: 8 }}>Conviction Inputs</div>
+          {convictionInputs.map((ci) => (
+            <div className="cinput" key={ci.label}>
+              <span className="k">{ci.label}</span>
+              {ci.value == null ? <span className="num neut">{NO_DATA}</span> : (
+                <span className="cival"><i style={{ width: `${Math.max(0, Math.min(100, ci.value))}%` }} /><b className="num">{Math.round(ci.value)}</b></span>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       <div className="sec">
         <details><summary><span className="chev">▸</span>WHY? — agent breakdown</summary>

@@ -18,7 +18,7 @@ const OWNER_TOKEN = process.env.DASHBOARD_API_OWNER_TOKEN ?? "";
 const READ_PATHS = new Set([
   "summary", "positions", "risk", "agents", "opportunities", "performance", "governance",
   "system", "notifications", "reconciliation", "market-data", "subscriptions", "ai-analysis",
-  "trading-risk", "ohlc", "news",
+  "trading-risk", "ohlc", "news", "traders", "trader",
 ]);
 // Mutations require the OWNER token, supplied by the user (not stored) and enforced by the backend.
 // "autonomous" covers the token-gated /dashboard/autonomous/{arm,start,stop,disarm,kill,reset}.
@@ -69,11 +69,16 @@ async function forward(req: NextRequest, path: string[], method: "GET" | "POST")
     }
   }
 
-  // OHLC and News live on the Control API at /market/{symbol}/{ohlc,news} (not /dashboard/*); everything
-  // else is /dashboard/*. Query params (interval/limit) are forwarded. Same DASHBOARD_API_URL + token.
-  const target = (top === "ohlc" || top === "news")
-    ? `${BACKEND}/market/${encodeURIComponent(path[1] ?? "")}/${top}${req.nextUrl.search}`
-    : `${BACKEND}/dashboard/${path.join("/")}`;
+  // OHLC / News / Traders consensus live on the Control API at /market/{symbol}/{ohlc,news,traders};
+  // a single-trader profile is /traders/{id}; everything else is /dashboard/*. Query params are
+  // forwarded. Same DASHBOARD_API_URL + token.
+  const sym = encodeURIComponent(path[1] ?? "");
+  const target =
+    (top === "ohlc" || top === "news" || top === "traders")
+      ? `${BACKEND}/market/${sym}/${top}${req.nextUrl.search}`
+      : top === "trader"
+        ? `${BACKEND}/traders/${sym}`
+        : `${BACKEND}/dashboard/${path.join("/")}`;
 
   try {
     const res = await fetch(target, init);

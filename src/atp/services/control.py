@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from ..dashboard.readmodel import build_dashboard_read_model
 from ..news.analysis import sentiment_label
 from ..persistence.state import RedisStateStore
+from ..traders.readmodel import build_symbol_consensus, build_trader_profile
 from ..runtime.lifecycle import LifecycleManager, RuntimeStatus
 from ..store import open_store
 from .base import build_dsn, redis_url
@@ -212,6 +213,27 @@ def market_news(symbol: str, limit: int = 30) -> dict:
     } for r in rows]
     return {"symbol": symbol.upper(), "count": len(items), "items": items,
             "ts": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/market/{symbol}/traders")
+def market_traders(symbol: str) -> dict:
+    """Read-only trader-intelligence consensus (§ Phase G2.5) for a symbol — quality-weighted LONG/
+    SHORT/NEUTRAL shares + ranked contributors, computed from persisted trader data. This is an
+    INTELLIGENCE SIGNAL, never a trading decision or copy-trade. No positions -> null/empty (NO DATA),
+    never fabricated. Carries NO credentials. Public read-model like /market and /market/{symbol}/news."""
+    with ctx.lock:
+        return build_symbol_consensus(ctx.store, symbol.upper())
+
+
+@app.get("/traders/{trader_id}")
+def trader_profile(trader_id: str) -> dict:
+    """Read-only single-trader profile (§ Phase G2.5): performance, risk, strategy + a deterministic
+    quality score. 404 when the trader is unknown. No secrets, no execution."""
+    with ctx.lock:
+        prof = build_trader_profile(ctx.store, trader_id)
+    if prof is None:
+        raise HTTPException(404, "trader not found")
+    return prof
 
 
 @app.get("/broker")

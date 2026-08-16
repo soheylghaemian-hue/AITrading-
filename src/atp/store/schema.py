@@ -121,12 +121,37 @@ def _migration_004(dialect: str) -> list[str]:
     ]
 
 
+def _migration_005(dialect: str) -> list[str]:
+    """Trader intelligence (§ Phase G2.5 — read-only). Three additive tables: traders (identity),
+    trader_performance (track record — one row per trader), trader_positions (latest position per
+    trader+symbol). Float metrics are canonical-decimal TEXT (dialect-agnostic). Quality scores and
+    consensus are COMPUTED deterministically on read (never stored, never fabricated). This is an
+    intelligence input source only — no Trading Core / Risk / Broker / IBKR / Execution code is touched."""
+    t = _types(dialect)
+    ts, txt, i = t["TS"], t["TXT"], t["INT"]
+    return [
+        f"""CREATE TABLE IF NOT EXISTS traders (
+            id {txt} PRIMARY KEY, name {txt} NOT NULL, source {txt} NOT NULL, market_focus {txt},
+            strategy_type {txt}, track_record_days {i}, created_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS trader_performance (
+            trader_id {txt} PRIMARY KEY, total_return {txt}, annualized_return {txt}, win_rate {txt},
+            max_drawdown {txt}, sharpe_ratio {txt}, sortino_ratio {txt}, average_holding_period {txt},
+            number_of_trades {i}, updated_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS trader_positions (
+            trader_id {txt} NOT NULL, symbol {txt} NOT NULL, direction {txt} NOT NULL,
+            entry_price {txt}, position_size {txt}, timestamp {ts} NOT NULL,
+            PRIMARY KEY (trader_id, symbol))""",
+        "CREATE INDEX IF NOT EXISTS ix_trader_positions_symbol ON trader_positions(symbol)",
+    ]
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
     (2, "money_columns_numeric", _migration_002),
     (3, "ohlc_bars", _migration_003),
     (4, "news_items", _migration_004),
+    (5, "trader_intelligence", _migration_005),
 ]
 
 

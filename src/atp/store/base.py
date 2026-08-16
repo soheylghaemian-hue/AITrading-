@@ -157,6 +157,41 @@ class NewsItemRow:
 
 
 @dataclass(slots=True)
+class TraderRow:
+    id: str
+    name: str
+    source: str
+    market_focus: str | None
+    strategy_type: str | None
+    track_record_days: int | None
+    created_at: str
+
+
+@dataclass(slots=True)
+class TraderPerformanceRow:
+    trader_id: str
+    total_return: float | None
+    annualized_return: float | None
+    win_rate: float | None
+    max_drawdown: float | None
+    sharpe_ratio: float | None
+    sortino_ratio: float | None
+    average_holding_period: float | None
+    number_of_trades: int | None
+    updated_at: str
+
+
+@dataclass(slots=True)
+class TraderPositionRow:
+    trader_id: str
+    symbol: str
+    direction: str             # LONG / SHORT / NEUTRAL
+    entry_price: float | None
+    position_size: float | None
+    timestamp: str
+
+
+@dataclass(slots=True)
 class OhlcBarRow:
     symbol: str
     interval: str
@@ -634,6 +669,83 @@ class SqlStore(Store):
             r = self._one("SELECT COUNT(*) FROM news_items WHERE symbol=?", (symbol,))
         else:
             r = self._one("SELECT COUNT(*) FROM news_items")
+        return int(r[0]) if r else 0
+
+    # -- trader intelligence (§ Phase G2.5, read-only) --------------------
+    def upsert_trader(self, *, id: str, name: str, source: str, market_focus: str | None,
+                      strategy_type: str | None, track_record_days: int | None) -> None:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO traders (id,name,source,market_focus,strategy_type,track_record_days,created_at) "
+                "VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, "
+                "source=excluded.source, market_focus=excluded.market_focus, "
+                "strategy_type=excluded.strategy_type, track_record_days=excluded.track_record_days",
+                (id, name, source, market_focus, strategy_type, track_record_days, now))
+
+    def upsert_trader_performance(self, *, trader_id: str, total_return, annualized_return, win_rate,
+                                  max_drawdown, sharpe_ratio, sortino_ratio, average_holding_period,
+                                  number_of_trades) -> None:
+        now = utcnow_iso()
+        f = lambda v: None if v is None else str(float(v))  # noqa: E731 — canonical-decimal TEXT
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO trader_performance (trader_id,total_return,annualized_return,win_rate,"
+                "max_drawdown,sharpe_ratio,sortino_ratio,average_holding_period,number_of_trades,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(trader_id) DO UPDATE SET "
+                "total_return=excluded.total_return, annualized_return=excluded.annualized_return, "
+                "win_rate=excluded.win_rate, max_drawdown=excluded.max_drawdown, "
+                "sharpe_ratio=excluded.sharpe_ratio, sortino_ratio=excluded.sortino_ratio, "
+                "average_holding_period=excluded.average_holding_period, "
+                "number_of_trades=excluded.number_of_trades, updated_at=excluded.updated_at",
+                (trader_id, f(total_return), f(annualized_return), f(win_rate), f(max_drawdown),
+                 f(sharpe_ratio), f(sortino_ratio), f(average_holding_period), number_of_trades, now))
+
+    def upsert_trader_position(self, *, trader_id: str, symbol: str, direction: str,
+                               entry_price, position_size, timestamp: str) -> None:
+        f = lambda v: None if v is None else str(float(v))  # noqa: E731
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO trader_positions (trader_id,symbol,direction,entry_price,position_size,timestamp) "
+                "VALUES (?,?,?,?,?,?) ON CONFLICT(trader_id,symbol) DO UPDATE SET direction=excluded.direction, "
+                "entry_price=excluded.entry_price, position_size=excluded.position_size, timestamp=excluded.timestamp",
+                (trader_id, symbol.upper(), direction.upper(), f(entry_price), f(position_size), timestamp))
+
+    def get_trader(self, trader_id: str) -> TraderRow | None:
+        r = self._one("SELECT id,name,source,market_focus,strategy_type,track_record_days,created_at "
+                      "FROM traders WHERE id=?", (trader_id,))
+        return TraderRow(r[0], r[1], r[2], r[3], r[4], (int(r[5]) if r[5] is not None else None), r[6]) if r else None
+
+    def list_traders(self, limit: int = 200) -> list[TraderRow]:
+        n = max(1, min(1000, int(limit)))
+        rows = self._all("SELECT id,name,source,market_focus,strategy_type,track_record_days,created_at "
+                         "FROM traders ORDER BY created_at DESC LIMIT ?", (n,))
+        return [TraderRow(r[0], r[1], r[2], r[3], r[4], (int(r[5]) if r[5] is not None else None), r[6]) for r in rows]
+
+    def get_trader_performance(self, trader_id: str) -> TraderPerformanceRow | None:
+        r = self._one("SELECT trader_id,total_return,annualized_return,win_rate,max_drawdown,sharpe_ratio,"
+                      "sortino_ratio,average_holding_period,number_of_trades,updated_at "
+                      "FROM trader_performance WHERE trader_id=?", (trader_id,))
+        if not r:
+            return None
+        g = lambda v: None if v is None else float(v)  # noqa: E731
+        return TraderPerformanceRow(r[0], g(r[1]), g(r[2]), g(r[3]), g(r[4]), g(r[5]), g(r[6]), g(r[7]),
+                                    (int(r[8]) if r[8] is not None else None), r[9])
+
+    def list_trader_positions_for_symbol(self, symbol: str) -> list[TraderPositionRow]:
+        rows = self._all("SELECT trader_id,symbol,direction,entry_price,position_size,timestamp "
+                         "FROM trader_positions WHERE symbol=?", (symbol.upper(),))
+        g = lambda v: None if v is None else float(v)  # noqa: E731
+        return [TraderPositionRow(r[0], r[1], r[2], g(r[3]), g(r[4]), r[5]) for r in rows]
+
+    def list_trader_positions_for_trader(self, trader_id: str) -> list[TraderPositionRow]:
+        rows = self._all("SELECT trader_id,symbol,direction,entry_price,position_size,timestamp "
+                         "FROM trader_positions WHERE trader_id=?", (trader_id,))
+        g = lambda v: None if v is None else float(v)  # noqa: E731
+        return [TraderPositionRow(r[0], r[1], r[2], g(r[3]), g(r[4]), r[5]) for r in rows]
+
+    def count_traders(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM traders")
         return int(r[0]) if r else 0
 
     def list_decisions(self, limit: int = 50) -> list[DecisionRow]:
