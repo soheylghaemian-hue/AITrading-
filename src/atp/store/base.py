@@ -143,6 +143,20 @@ class DecisionRow:
 
 
 @dataclass(slots=True)
+class NewsItemRow:
+    id: str
+    symbol: str
+    title: str
+    source: str | None
+    url: str | None
+    published_at: str
+    content_summary: str | None
+    sentiment_score: float | None
+    impact_level: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
 class OhlcBarRow:
     symbol: str
     interval: str
@@ -586,6 +600,41 @@ class SqlStore(Store):
                 "INSERT INTO decisions (decision_id,ts,instrument,final_decision,payload,correlation_id) "
                 "VALUES (?,?,?,?,?,?)",
                 (decision_id, ts, instrument, final_decision, payload_json, correlation_id))
+
+    # -- news items (§ Phase G2.1, read-only intelligence) ----------------
+    def upsert_news_item(self, *, id: str, symbol: str, title: str, source: str | None, url: str | None,
+                         published_at: str, content_summary: str | None, sentiment_score: float | None,
+                         impact_level: str | None) -> None:
+        """Insert or update a news item (idempotent on the deterministic `id`). Stores ONLY article
+        fields + the derived sentiment/impact — never a provider key or secret."""
+        now = utcnow_iso()
+        ss = None if sentiment_score is None else str(float(sentiment_score))
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO news_items (id,symbol,title,source,url,published_at,content_summary,"
+                "sentiment_score,impact_level,created_at) VALUES (?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET title=excluded.title, source=excluded.source, "
+                "url=excluded.url, published_at=excluded.published_at, "
+                "content_summary=excluded.content_summary, sentiment_score=excluded.sentiment_score, "
+                "impact_level=excluded.impact_level",
+                (id, symbol, title, source, url, published_at, content_summary, ss, impact_level, now))
+
+    def list_news(self, symbol: str, limit: int = 50) -> list[NewsItemRow]:
+        """Most-recent `limit` news items for a symbol (newest first). Empty when none collected."""
+        n = max(1, min(200, int(limit)))
+        rows = self._all(
+            "SELECT id,symbol,title,source,url,published_at,content_summary,sentiment_score,"
+            "impact_level,created_at FROM news_items WHERE symbol=? ORDER BY published_at DESC LIMIT ?",
+            (symbol, n))
+        return [NewsItemRow(r[0], r[1], r[2], r[3], r[4], r[5], r[6],
+                            (float(r[7]) if r[7] is not None else None), r[8], r[9]) for r in rows]
+
+    def count_news(self, symbol: str | None = None) -> int:
+        if symbol:
+            r = self._one("SELECT COUNT(*) FROM news_items WHERE symbol=?", (symbol,))
+        else:
+            r = self._one("SELECT COUNT(*) FROM news_items")
+        return int(r[0]) if r else 0
 
     def list_decisions(self, limit: int = 50) -> list[DecisionRow]:
         """Most-recent `limit` AI decisions (newest first) for the dashboard read-model. Read-only;

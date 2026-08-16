@@ -6,6 +6,7 @@ import { NO_DATA, price, num, spread as fmtSpread, isPresent } from "@/lib/forma
 import { humanStatus } from "@/lib/errors";
 import { NoData } from "@/components/ui";
 import { EventTimeline, type TimelineEvent } from "./EventTimeline";
+import { NewsFeed } from "./NewsFeed";
 import type { Quote } from "@/lib/market";
 
 const TABS = ["Overview", "News", "Fundamentals", "Options", "AI History"] as const;
@@ -50,7 +51,7 @@ export function ResearchTabs({ quote, decisions, symbol }: { quote: Quote | null
         {TABS.map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t}</button>)}
       </div>
       {tab === "Overview" && <Overview quote={quote} />}
-      {tab === "News" && <NoFeed note="News feed not connected. Headlines appear here once a news source is wired — never invented." />}
+      {tab === "News" && <NewsFeed symbol={symbol} />}
       {tab === "Fundamentals" && <NoFeed note="Fundamentals not connected. Financials appear here once a data source is wired — never invented." />}
       {tab === "Options" && <NoFeed note="Options chain not connected. Contracts appear here once an options feed is wired — never invented." />}
       {tab === "AI History" && <EventTimeline events={aiEvents} />}

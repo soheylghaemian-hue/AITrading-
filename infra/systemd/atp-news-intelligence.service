@@ -1,0 +1,29 @@
+[Unit]
+Description=ATP News Intelligence Service (Phase G2.1 — read-only market news)
+Documentation=https://github.com/soheylghaemian-hue/AITrading-
+After=network-online.target docker.service
+Wants=network-online.target
+# Polls the real news provider (Massive/Polygon) for the watched symbols, runs deterministic
+# sentiment/impact analysis, and persists results to PostgreSQL (news_items). Independent of market
+# hours. Never trades, never touches IBKR/execution/OHLC.
+
+[Service]
+Type=simple
+User=atp
+Group=atp
+WorkingDirectory=/opt/atp/app
+Environment=PYTHONPATH=/opt/atp/app/src
+EnvironmentFile=/opt/atp/atp.env
+ExecStart=/opt/atp/app/.venv/bin/python -m atp.services.news_intelligence
+Restart=always
+RestartSec=5
+# Fail-closed: no API key or a provider/DB error persists nothing (never a fabricated headline) and
+# reports DEGRADED; systemd restarts the process, but no news is ever invented.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/atp
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

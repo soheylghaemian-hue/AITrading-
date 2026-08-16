@@ -21,6 +21,7 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from ..dashboard.readmodel import build_dashboard_read_model
+from ..news.analysis import sentiment_label
 from ..persistence.state import RedisStateStore
 from ..runtime.lifecycle import LifecycleManager, RuntimeStatus
 from ..store import open_store
@@ -188,6 +189,28 @@ def market_ohlc(symbol: str, interval: str = "1m", limit: int = 500) -> dict:
     bars = [{"timestamp": r.ts, "open": float(r.open), "high": float(r.high), "low": float(r.low),
              "close": float(r.close), "volume": float(r.volume)} for r in rows]
     return {"symbol": symbol.upper(), "interval": iv, "count": len(bars), "bars": bars,
+            "ts": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/market/{symbol}/news")
+def market_news(symbol: str, limit: int = 30) -> dict:
+    """Read-only market news (§ Phase G2.1) for a symbol — real headlines collected by the
+    news-intelligence service into PostgreSQL, each with a deterministic sentiment score/label and
+    impact level. Carries NO secrets or provider keys. No items -> empty list (NO DATA), never
+    fabricated. Public read-model like /market and /market/{symbol}/ohlc."""
+    try:
+        n = max(1, min(100, int(limit)))
+    except (TypeError, ValueError):
+        n = 30
+    with ctx.lock:
+        rows = ctx.store.list_news(symbol.upper(), n)
+    items = [{
+        "id": r.id, "symbol": r.symbol, "title": r.title, "source": r.source, "url": r.url,
+        "published_at": r.published_at, "summary": r.content_summary,
+        "sentiment_score": r.sentiment_score, "sentiment": sentiment_label(r.sentiment_score),
+        "impact": r.impact_level,
+    } for r in rows]
+    return {"symbol": symbol.upper(), "count": len(items), "items": items,
             "ts": datetime.now(timezone.utc).isoformat()}
 
 

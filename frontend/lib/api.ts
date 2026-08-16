@@ -8,6 +8,7 @@
 
 import type { Snapshot } from "./types";
 import type { OhlcBar } from "./ohlc";
+import type { NewsItem } from "./news";
 
 // Where the browser sends dashboard calls. Default: the SAME-ORIGIN server proxy ("/api"), which
 // forwards to the private backend and injects the read token server-side — so no token ever
@@ -62,6 +63,27 @@ export async function fetchOhlc(
     interval: body.interval ?? interval,
     bars: Array.isArray(body.bars) ? body.bars : [],
   };
+}
+
+export interface NewsResponse {
+  symbol: string;
+  items: NewsItem[];
+}
+
+// Market news for the terminal News tab (§ Phase G2.1). Read-only, via the SAME same-origin server
+// proxy (no token in the browser); the proxy forwards to the Control API's /market/{symbol}/news. On
+// no backend / non-OK it throws — the caller renders NO DATA (never fabricates a headline).
+export async function fetchNews(
+  symbol: string, limit = 30, signal?: AbortSignal,
+): Promise<NewsResponse> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(
+    `${API_BASE}/dashboard/news/${encodeURIComponent(symbol)}?limit=${limit}`,
+    { signal, cache: "no-store", headers: { Accept: "application/json" } },
+  );
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const body = (await res.json()) as Partial<NewsResponse>;
+  return { symbol: body.symbol ?? symbol, items: Array.isArray(body.items) ? body.items : [] };
 }
 
 // Mutations are authorized by the SERVER proxy (it injects the owner token from a server env var),

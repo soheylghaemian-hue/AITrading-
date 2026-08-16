@@ -105,11 +105,28 @@ def _migration_003(dialect: str) -> list[str]:
     ]
 
 
+def _migration_004(dialect: str) -> list[str]:
+    """News items (§ Phase G2.1 — news intelligence). Read-only headlines collected by the
+    news-intelligence service (real provider text only) with a deterministic sentiment score and
+    impact level. `id` is a deterministic hash of (symbol,url) so re-ingesting the same article is
+    idempotent (no duplicates). Independent of Trading Core / Risk / Broker / OHLC. Additive."""
+    t = _types(dialect)
+    ts, txt = t["TS"], t["TXT"]
+    return [
+        f"""CREATE TABLE IF NOT EXISTS news_items (
+            id {txt} PRIMARY KEY, symbol {txt} NOT NULL, title {txt} NOT NULL,
+            source {txt}, url {txt}, published_at {ts} NOT NULL, content_summary {txt},
+            sentiment_score {txt}, impact_level {txt}, created_at {ts} NOT NULL)""",
+        "CREATE INDEX IF NOT EXISTS ix_news_symbol_pub ON news_items(symbol, published_at)",
+    ]
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
     (2, "money_columns_numeric", _migration_002),
     (3, "ohlc_bars", _migration_003),
+    (4, "news_items", _migration_004),
 ]
 
 
