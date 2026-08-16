@@ -27,6 +27,8 @@ from ..dashboard.readmodel import build_dashboard_read_model
 from ..evaluation.metrics import build_ai_history, compute_outcomes_summary, compute_performance
 from ..fundamentals.readmodel import build_fundamentals
 from ..news.analysis import sentiment_label
+from ..optflow.diagnostics import audit_options_provider
+from ..optflow.provider import resolve_provider as resolve_options_provider
 from ..optflow.readmodel import build_options
 from ..persistence.state import RedisStateStore
 from ..traders.readmodel import build_symbol_consensus, build_trader_profile
@@ -306,6 +308,25 @@ def market_options(symbol: str) -> dict:
     null/empty (NO DATA), never fabricated. No secrets. Public read-model like /market/{symbol}/news."""
     with ctx.lock:
         return build_options(ctx.store, symbol.upper())
+
+
+@app.get("/market/{symbol}/options-diagnostics")
+def market_options_diagnostics(symbol: str) -> dict:
+    """Read-only options-provider entitlement probe (§ Phase R1.1): whether the licensed options data is
+    actually AVAILABLE for this symbol — 200 entitled / 401 bad key / 403 NOT_AUTHORIZED — reported
+    honestly instead of being swallowed to NO DATA. Never exposes the API key or the raw payload (only
+    the HTTP status, Polygon's status word, and the contract count). Diagnostic only: no trade, order,
+    broker, IBKR, or execution. No store access (no lock needed)."""
+    provider = resolve_options_provider()
+    return {"symbol": symbol.upper(), "provider": provider.name, **provider.probe(symbol.upper())}
+
+
+@app.get("/options/audit")
+def options_audit() -> dict:
+    """Read-only audit (§ Phase R1.1): is a licensed options data provider AVAILABLE? Probes the
+    configured provider for NVDA / AAPL / SPY and returns an AVAILABLE / NOT AVAILABLE verdict with
+    recommended providers when unavailable. Exposes no secrets; no trading/broker/IBKR/execution."""
+    return audit_options_provider()
 
 
 @app.get("/market/{symbol}/fundamentals")

@@ -13,6 +13,7 @@ import json
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
@@ -56,6 +57,13 @@ class OptionsProvider(ABC):
 
     @abstractmethod
     def get_unusual_activity(self, symbol: str) -> dict | None: ...
+
+    def probe(self, symbol: str) -> dict:
+        """Read-only entitlement probe (§ R1.1). Reports whether this provider can actually return
+        licensed options data, WITHOUT masking the reason and WITHOUT exposing the API key. The default
+        (for providers without a live endpoint) is simply 'not entitled'. Never fabricates."""
+        return {"configured": bool(self.configured), "http_status": None, "entitled": False,
+                "reason": "not_supported", "upstream_status": None, "contracts": 0}
 
 
 class NullOptionsProvider(OptionsProvider):
@@ -133,6 +141,40 @@ class PolygonOptionsProvider(OptionsProvider):
     def get_unusual_activity(self, symbol: str) -> dict | None:
         cs = self.get_option_chain(symbol)
         return {"contracts": len(cs)} if cs else None
+
+    def probe(self, symbol: str) -> dict:
+        """Read-only entitlement probe (§ R1.1): ONE upstream GET whose outcome is reported honestly
+        instead of being swallowed to NO DATA — 200 = entitled, 401 = bad key, 403 NOT_AUTHORIZED = the
+        plan lacks the Options add-on. Never exposes the API key or the raw payload — only the HTTP
+        status, Polygon's own status word, and the parsed contract count. Read-only; no order/trade/IBKR."""
+        if not self._api_key:
+            return {"configured": False, "http_status": None, "entitled": False,
+                    "reason": "no_api_key", "upstream_status": None, "contracts": 0}
+        path = f"/v3/snapshot/options/{symbol.upper()}?limit=250"
+        req = Request(f"{self._base}{path}", headers={
+            "Accept": "application/json", "Authorization": f"Bearer {self._api_key}"})  # key in header only
+        try:
+            with urlopen(req, timeout=self._timeout) as resp:  # noqa: S310 — fixed https host
+                payload = json.loads(resp.read().decode("utf-8"))
+            contracts = len(parse_polygon_options(payload, symbol))
+            return {"configured": True, "http_status": getattr(resp, "status", 200), "entitled": True,
+                    "reason": "ok", "upstream_status": (payload or {}).get("status"), "contracts": contracts}
+        except HTTPError as e:
+            upstream = None
+            try:                                              # capture Polygon's status word — never the key
+                body = json.loads(e.read().decode("utf-8"))
+                upstream = body.get("status") or body.get("error")
+            except Exception:
+                upstream = None
+            reason = {401: "auth_failed", 403: "not_entitled", 429: "rate_limited"}.get(e.code, f"http_{e.code}")
+            return {"configured": True, "http_status": e.code, "entitled": False, "reason": reason,
+                    "upstream_status": upstream, "contracts": 0}
+        except URLError:
+            return {"configured": True, "http_status": None, "entitled": None, "reason": "unreachable",
+                    "upstream_status": None, "contracts": 0}
+        except Exception:
+            return {"configured": True, "http_status": None, "entitled": None, "reason": "error",
+                    "upstream_status": None, "contracts": 0}
 
 
 PROVIDERS: dict[str, type[OptionsProvider]] = {
