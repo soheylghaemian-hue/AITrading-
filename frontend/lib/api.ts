@@ -214,6 +214,7 @@ export async function fetchPerformance(horizon = 5, signal?: AbortSignal): Promi
     errors: b.errors ?? {},
     best_inputs: Array.isArray(b.best_inputs) ? b.best_inputs : [],
     weakest_inputs: Array.isArray(b.weakest_inputs) ? b.weakest_inputs : [],
+    by_horizon: b.by_horizon,                        // §G3.2: 1/3/5/20-day accuracy grid
   };
 }
 

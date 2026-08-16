@@ -107,6 +107,8 @@ describe("fetch endpoints — via the same-origin proxy only", () => {
     const res = await fetchPerformance(5);
     expect(calls[0]).toBe("/api/dashboard/ai-performance?horizon=5");
     expect(res.direction_accuracy).toBe(67);
+    // §G3.2: the per-horizon grid must survive the field-by-field rebuild (regression).
+    expect(res.by_horizon?.["20"].accuracy).toBe(71);
   });
   it("fetchAiHistory hits /api/dashboard/ai-history/{symbol}", async () => {
     vi.stubGlobal("fetch", okFetch(HIST));
