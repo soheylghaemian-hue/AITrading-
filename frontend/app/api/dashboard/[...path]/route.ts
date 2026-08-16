@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { composeSnapshot } from "@/lib/snapshot-compose";
 
 // Server-side proxy (runs ONLY on Vercel's server, never shipped to the browser). It forwards
 // same-origin /api/dashboard/* calls to the private Dashboard API over the authenticated tunnel,
@@ -43,6 +44,24 @@ async function forward(req: NextRequest, path: string[], method: "GET" | "POST")
   if (method === "POST") {
     headers["Content-Type"] = "application/json";
     init.body = await req.text();
+  }
+
+  // The ATP backend is an observability API — its read routes are /status, /broker, /market and
+  // /market/{sym}/ohlc; it has NO /dashboard/summary. Compose the frontend Snapshot server-side from the
+  // three read endpoints. If any fails, return 502 → the client shows NO DATA (never fabricates).
+  if (method === "GET" && top === "summary") {
+    try {
+      const [st, br, mk] = await Promise.all(
+        ["status", "broker", "market"].map((p) =>
+          fetch(`${BACKEND}/${p}`, init).then((r) =>
+            r.ok ? r.json() : Promise.reject(new Error(`${p} ${r.status}`)),
+          ),
+        ),
+      );
+      return NextResponse.json(composeSnapshot(st, br, mk), { status: 200 });
+    } catch {
+      return NextResponse.json({ detail: "backend unreachable" }, { status: 502 });
+    }
   }
 
   // OHLC read lives on the Control API at /market/{symbol}/ohlc (not /dashboard/*); everything else is
