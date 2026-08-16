@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { InstitutionalPanel } from "@/components/terminal/InstitutionalPanel";
-import { fetchInstitutionalFlow } from "@/lib/api";
-import { flowTone, fmtShares, hasInstitutional, insiderTone, type InstitutionalFlow } from "@/lib/institutional";
+import { fetchInstitutionalFlow, fetchInsiderCluster } from "@/lib/api";
+import { clusterTone, flowTone, fmtShares, hasInstitutional, insiderTone, type InstitutionalFlow } from "@/lib/institutional";
 
 const r = (el: React.ReactElement) => renderToStaticMarkup(el);
 
@@ -19,11 +19,13 @@ const FLOW: InstitutionalFlow = {
   ],
   insider_sentiment: "BEARISH", insider_score: 0,
   insider_summary: { buy_count: 0, sell_count: 43, buy_shares: 0, sell_shares: 2512857, distinct_buyers: 0 },
+  insider_cluster: { cluster_type: "DISTRIBUTION", score: 20, insider_count: 2, summary: "Insider distribution cluster — 2 insiders selling" },
 };
 const EMPTY: InstitutionalFlow = {
   symbol: "NVDA", status: "NO DATA", institutional_changes: [], institutional_direction: null,
   accumulation_score: null, net_share_change_pct: null, insider_activity: [], insider_sentiment: null,
   insider_score: null, insider_summary: { buy_count: 0, sell_count: 0, buy_shares: 0, sell_shares: 0, distinct_buyers: 0 },
+  insider_cluster: { cluster_type: null, score: null, insider_count: 0, summary: null },
 };
 
 describe("institutional helpers", () => {
@@ -35,20 +37,24 @@ describe("institutional helpers", () => {
     expect(flowTone("MIXED")).toBe("mixed");
     expect(insiderTone("BULLISH")).toBe("acc");
     expect(insiderTone("BEARISH")).toBe("red");
+    expect(clusterTone("ACCUMULATION")).toBe("acc");
+    expect(clusterTone("DISTRIBUTION")).toBe("red");
     expect(fmtShares(7091256)).toBe("7.1M");
     expect(fmtShares(null)).toBe("—");
   });
 });
 
 describe("InstitutionalPanel — smart money, never fabricated", () => {
-  it("renders 13F changes + insider sentiment", () => {
+  it("renders 13F changes + insider cluster", () => {
     const h = r(<InstitutionalPanel data={FLOW} />);
     expect(h).toContain("Smart Money Flow");
     expect(h).toContain("MIXED");                        // institutional direction
     expect(h).toContain("+15.8%");                       // net change
     expect(h).toContain("RENAISSANCE TECHNOLOGIES");
     expect(h).toContain("+180.6%");                      // accumulation
-    expect(h).toContain("BEARISH");                      // insider sentiment
+    expect(h).toContain("DISTRIBUTION");                 // §R1.4 insider cluster
+    expect(h).toContain("20/100");                       // cluster score
+    expect(h).toContain("distribution cluster");         // cluster summary
     expect(h).toContain("STEVENS MARK A");
   });
   it("shows NO DATA when empty (nothing invented)", () => {
@@ -73,7 +79,14 @@ describe("fetchInstitutionalFlow — same-origin proxy only", () => {
     const res = await fetchInstitutionalFlow("NVDA");
     expect(calls[0]).toBe("/api/dashboard/institutional-flow/NVDA");
     expect(res.institutional_direction).toBe("MIXED");
-    expect(res.insider_sentiment).toBe("BEARISH");
+    expect(res.insider_cluster.cluster_type).toBe("DISTRIBUTION");
+  });
+  it("fetchInsiderCluster hits /api/dashboard/insider-cluster/{symbol}", async () => {
+    vi.stubGlobal("fetch", okFetch({ symbol: "NVDA", status: "COMPLETE", cluster_type: "DISTRIBUTION", score: 20, insider_count: 2, summary: "x" }));
+    const res = await fetchInsiderCluster("NVDA");
+    expect(calls[0]).toBe("/api/dashboard/insider-cluster/NVDA");
+    expect(res.cluster_type).toBe("DISTRIBUTION");
+    expect(res.score).toBe(20);
   });
   it("rejects on a non-OK response (caller shows NO DATA)", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 502, json: async () => ({}) } as any)));

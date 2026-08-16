@@ -25,6 +25,15 @@ export interface InsiderTx {
   transaction_date: string | null;
 }
 
+export type ClusterType = "ACCUMULATION" | "DISTRIBUTION" | "NONE";
+
+export interface InsiderCluster {
+  cluster_type: ClusterType | null;
+  score: number | null;
+  insider_count: number;
+  summary: string | null;
+}
+
 export interface InstitutionalFlow {
   symbol: string;
   status: string | null;                 // COMPLETE / NO DATA
@@ -36,6 +45,7 @@ export interface InstitutionalFlow {
   insider_sentiment: InsiderSentiment | null;
   insider_score: number | null;
   insider_summary: { buy_count: number; sell_count: number; buy_shares: number; sell_shares: number; distinct_buyers: number };
+  insider_cluster: InsiderCluster;       // § R1.4 cluster refinement
 }
 
 export function hasInstitutional(f: InstitutionalFlow | null | undefined): boolean {
@@ -51,6 +61,16 @@ export function flowTone(d: string | null | undefined): "acc" | "red" | "mixed" 
 /** Tone for insider sentiment. */
 export function insiderTone(s: string | null | undefined): "acc" | "red" | "mixed" | "neu" {
   return s === "BULLISH" ? "acc" : s === "BEARISH" ? "red" : s === "NEUTRAL" ? "mixed" : "neu";
+}
+
+/** Tone for an insider cluster type. */
+export function clusterTone(c: string | null | undefined): "acc" | "red" | "mixed" | "neu" {
+  return c === "ACCUMULATION" ? "acc" : c === "DISTRIBUTION" ? "red" : c === "NONE" ? "mixed" : "neu";
+}
+
+/** Short cluster label, e.g. "ACCUMULATION" → "ACCUM". */
+export function clusterLabel(c: string | null | undefined): string {
+  return c === "ACCUMULATION" ? "ACCUMULATION" : c === "DISTRIBUTION" ? "DISTRIBUTION" : c === "NONE" ? "NONE" : "NO DATA";
 }
 
 /** Compact share count, e.g. 2,000,000 → "2.0M". */

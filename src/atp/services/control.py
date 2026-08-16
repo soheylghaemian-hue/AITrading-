@@ -26,6 +26,7 @@ from ..consensus.engine import build_ai_consensus
 from ..dashboard.readmodel import build_dashboard_read_model
 from ..evaluation.metrics import build_ai_history, compute_outcomes_summary, compute_performance
 from ..fundamentals.readmodel import build_fundamentals
+from ..institutional.clusters import build_insider_cluster
 from ..institutional.readmodel import build_institutional_flow
 from ..macrodata.readmodel import build_macro, build_macro_context
 from ..news.analysis import sentiment_label
@@ -359,6 +360,16 @@ def market_institutional_flow(symbol: str) -> dict:
     fabricated. No secrets. Public read-model."""
     with ctx.lock:
         return build_institutional_flow(ctx.store, symbol.upper())
+
+
+@app.get("/market/{symbol}/insider-cluster")
+def market_insider_cluster(symbol: str) -> dict:
+    """Read-only Insider Cluster Intelligence (§ Phase R1.4): whether a role-weighted CLUSTER of insider
+    buying (ACCUMULATION) or selling (DISTRIBUTION) is present for a symbol across the 7/30/90-day
+    windows, with a 0-100 score, participant count and a plain summary. INTELLIGENCE ONLY — not a trading
+    signal, order, or broker action. No Form 4 data -> NO DATA (never a fabricated cluster). No secrets."""
+    with ctx.lock:
+        return build_insider_cluster(ctx.store, symbol.upper())
 
 
 @app.get("/market/{symbol}/macro-context")

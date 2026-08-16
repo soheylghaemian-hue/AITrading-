@@ -17,7 +17,7 @@ import type { AiPerformance, AiHistory, AiOutcomes } from "./performance";
 import type { Governance, GovernanceFeed } from "./governance";
 import type { Completeness } from "./completeness";
 import type { Macro, MacroContext } from "./macro";
-import type { InstitutionalFlow } from "./institutional";
+import type { InstitutionalFlow, InsiderCluster } from "./institutional";
 
 // Where the browser sends dashboard calls. Default: the SAME-ORIGIN server proxy ("/api"), which
 // forwards to the private backend and injects the read token server-side — so no token ever
@@ -321,6 +321,20 @@ export async function fetchInstitutionalFlow(symbol: string, signal?: AbortSigna
     insider_activity: Array.isArray(b.insider_activity) ? b.insider_activity : [],
     insider_sentiment: b.insider_sentiment ?? null, insider_score: b.insider_score ?? null,
     insider_summary: b.insider_summary ?? { buy_count: 0, sell_count: 0, buy_shares: 0, sell_shares: 0, distinct_buyers: 0 },
+    insider_cluster: b.insider_cluster ?? { cluster_type: null, score: null, insider_count: 0, summary: null },
+  };
+}
+
+// § R1.4 — the insider cluster (ACCUMULATION / DISTRIBUTION / NONE) for a symbol.
+export async function fetchInsiderCluster(symbol: string, signal?: AbortSignal): Promise<InsiderCluster & { symbol: string; status: string | null }> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/insider-cluster/${encodeURIComponent(symbol)}`,
+    { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = (await res.json()) as any;
+  return {
+    symbol: b.symbol ?? symbol, status: b.status ?? null, cluster_type: b.cluster_type ?? null,
+    score: b.score ?? null, insider_count: b.insider_count ?? 0, summary: b.summary ?? null,
   };
 }
 

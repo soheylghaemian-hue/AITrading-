@@ -395,6 +395,19 @@ class InsiderTransactionRow:
 
 
 @dataclass(slots=True)
+class InsiderClusterRow:
+    id: str
+    symbol: str
+    time_window: str
+    cluster_type: str | None
+    insider_count: float | None
+    weighted_score: float | None
+    total_shares: float | None
+    total_value: float | None
+    created_at: str
+
+
+@dataclass(slots=True)
 class OhlcBarRow:
     symbol: str
     interval: str
@@ -1132,6 +1145,40 @@ class SqlStore(Store):
 
     def count_insider_transactions(self) -> int:
         r = self._one("SELECT COUNT(*) FROM insider_transactions")
+        return int(r[0]) if r else 0
+
+    # -- Insider clusters (§ Phase R1.4, read-only IMMUTABLE cluster snapshots) ------
+    _CLUSTER_COLS = ("id,symbol,time_window,cluster_type,insider_count,weighted_score,total_shares,"
+                     "total_value,created_at")
+
+    def insert_insider_cluster(self, *, id: str, symbol: str, time_window: str, cluster_type: str | None,
+                               insider_count, weighted_score, total_shares, total_value) -> None:
+        """Record an insider cluster snapshot once. ON CONFLICT DO NOTHING → never rewritten (never fabricated)."""
+        now = utcnow_iso()
+        f = lambda v: None if v is None else str(float(v))  # noqa: E731
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO insider_clusters (id,symbol,time_window,cluster_type,insider_count,"
+                "weighted_score,total_shares,total_value,created_at) VALUES (?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(id) DO NOTHING",
+                (id, symbol.upper(), time_window, cluster_type, f(insider_count), f(weighted_score),
+                 f(total_shares), f(total_value), now))
+
+    def _cluster_row(self, r) -> InsiderClusterRow:
+        g = lambda v: None if v is None else float(v)  # noqa: E731
+        return InsiderClusterRow(r[0], r[1], r[2], r[3], g(r[4]), g(r[5]), g(r[6]), g(r[7]), r[8])
+
+    def list_insider_clusters(self, symbol: str | None = None, limit: int = 500) -> list[InsiderClusterRow]:
+        n = max(1, min(5000, int(limit)))
+        if symbol:
+            rows = self._all(f"SELECT {self._CLUSTER_COLS} FROM insider_clusters WHERE symbol=? "
+                             "ORDER BY created_at DESC LIMIT ?", (symbol.upper(), n))
+        else:
+            rows = self._all(f"SELECT {self._CLUSTER_COLS} FROM insider_clusters ORDER BY created_at DESC LIMIT ?", (n,))
+        return [self._cluster_row(r) for r in rows]
+
+    def count_insider_clusters(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM insider_clusters")
         return int(r[0]) if r else 0
 
     # -- AI consensus (§ Phase G3, read-only orchestration snapshot) ------

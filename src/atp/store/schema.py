@@ -317,6 +317,23 @@ def _migration_014(dialect: str) -> list[str]:
     ]
 
 
+def _migration_015(dialect: str) -> list[str]:
+    """Insider Cluster Intelligence (§ Phase R1.4 — read-only, IMMUTABLE history). One row per
+    (symbol, time_window) snapshot: the detected insider cluster (ACCUMULATION / DISTRIBUTION / NONE),
+    role-weighted score, participant count and aggregate shares/value. Append-only (ON CONFLICT DO
+    NOTHING → never rewritten). INTELLIGENCE ONLY — not a trading signal; no order/broker/IBKR/execution.
+    Missing Form 4 data → no cluster (NO DATA, never fabricated)."""
+    t = _types(dialect)
+    ts, txt = t["TS"], t["TXT"]
+    return [
+        f"""CREATE TABLE IF NOT EXISTS insider_clusters (
+            id {txt} PRIMARY KEY, symbol {txt} NOT NULL, time_window {txt} NOT NULL,
+            cluster_type {txt}, insider_count {txt}, weighted_score {txt}, total_shares {txt},
+            total_value {txt}, created_at {ts} NOT NULL)""",
+        "CREATE INDEX IF NOT EXISTS ix_insider_clusters_symbol ON insider_clusters(symbol, time_window)",
+    ]
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -333,6 +350,7 @@ MIGRATIONS = [
     (12, "data_completeness", _migration_012),
     (13, "macro_intelligence", _migration_013),
     (14, "institutional_intelligence", _migration_014),
+    (15, "insider_clusters", _migration_015),
 ]
 
 

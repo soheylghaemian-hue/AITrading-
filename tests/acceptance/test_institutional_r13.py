@@ -140,7 +140,7 @@ class FakeInsiders:
 
 def test_collector_and_flow(store):
     res = InstitutionalCollector(store, FakeHoldings(), FakeInsiders()).collect()
-    assert res == {"changes": 3, "insiders": 2}
+    assert res["changes"] == 3 and res["insiders"] == 2      # (also derives insider clusters, § R1.4)
     flow = build_institutional_flow(store, "NVDA")
     assert flow["status"] == "COMPLETE"
     assert flow["institutional_direction"] == "ACCUMULATION"   # NVDA +100% → bullish

@@ -100,6 +100,7 @@ export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; s
     { label: "Trader Consensus", value: traders?.weighted_score ?? null },
     { label: "Institutional Flow", value: institutional?.accumulation_score ?? null },  // §R1.3
     { label: "Insider Activity", value: institutional?.insider_score ?? null },         // §R1.3
+    { label: "Insider Cluster", value: institutional?.insider_cluster?.score ?? null }, // §R1.4
     { label: "Macro", value: macro?.score ?? null },        // §R1.2 wired to the macro environment score
     { label: "Risk", value: null as number | null },
   ];

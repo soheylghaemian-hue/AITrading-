@@ -10,6 +10,7 @@ Risk Engine / Broker / IBKR / Execution. Missing data → NO DATA (never fabrica
 """
 
 from .changes import accumulation_score, analyze_changes, net_share_change_pct
+from .clusters import build_insider_cluster, detect_cluster, role_weight
 from .collector import InstitutionalCollector
 from .form4 import SecForm4Provider, parse_form4, parse_issuer_form4_refs
 from .insider import insider_sentiment
@@ -23,6 +24,9 @@ __all__ = [
     "parse_form4",
     "parse_issuer_form4_refs",
     "insider_sentiment",
+    "role_weight",
+    "detect_cluster",
+    "build_insider_cluster",
     "InstitutionalCollector",
     "build_institutional_flow",
 ]

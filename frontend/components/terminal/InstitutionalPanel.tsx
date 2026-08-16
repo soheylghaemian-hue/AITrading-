@@ -5,7 +5,7 @@
 // or copy-trade. No data → NO DATA (never fabricated).
 import React from "react";
 import { NO_DATA } from "@/lib/format";
-import { fmtShares, flowTone, hasInstitutional, insiderTone, type InstitutionalFlow } from "@/lib/institutional";
+import { clusterLabel, clusterTone, fmtShares, flowTone, hasInstitutional, type InstitutionalFlow } from "@/lib/institutional";
 
 const DIR_LABEL: Record<string, string> = {
   ACCUMULATION: "▲ ACC", NEW_POSITION: "✦ NEW", REDUCTION: "▼ RED", EXIT: "✕ EXIT",
@@ -22,8 +22,9 @@ export function InstitutionalPanel({ data }: { data: InstitutionalFlow | null })
   }
   const d = data as InstitutionalFlow;
   const instTone = flowTone(d.institutional_direction);
-  const inTone = insiderTone(d.insider_sentiment);
   const netPct = d.net_share_change_pct;
+  const cl = d.insider_cluster;
+  const clTone = clusterTone(cl?.cluster_type);
 
   return (
     <div className={`card smf ${instTone}`}>
@@ -43,14 +44,16 @@ export function InstitutionalPanel({ data }: { data: InstitutionalFlow | null })
             {netPct == null ? NO_DATA : `${netPct >= 0 ? "+" : ""}${netPct}%`}</div>
         </div>
         <div className="smf-metric">
-          <div className="label">Accumulation</div>
-          <div className="smf-val num">{d.accumulation_score == null ? NO_DATA : `${d.accumulation_score}/100`}</div>
+          <div className="label">Insider Cluster</div>
+          <div className={`smf-badge ${clTone}`}>{clusterLabel(cl?.cluster_type)}</div>
         </div>
         <div className="smf-metric">
-          <div className="label">Insider</div>
-          <div className={`smf-badge ${inTone}`}>{d.insider_sentiment ?? NO_DATA}</div>
+          <div className="label">Cluster Score</div>
+          <div className="smf-val num">{cl?.score == null ? NO_DATA : `${cl.score}/100`}</div>
         </div>
       </div>
+
+      {cl?.summary ? <p className="smf-clustersum">🔎 {cl.summary}</p> : null}
 
       <div className="smf-lists">
         <div className="smf-col">

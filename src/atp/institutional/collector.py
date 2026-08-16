@@ -5,7 +5,10 @@ fabricated change or transaction. No execution, no broker, no IBKR, no copy-trad
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from .changes import analyze_changes
+from .clusters import WINDOWS, detect_cluster
 
 
 class InstitutionalCollector:
@@ -52,5 +55,30 @@ class InstitutionalCollector:
                 recorded += 1
         return recorded
 
+    def collect_clusters(self, now: datetime | None = None) -> int:
+        """Snapshot the current insider cluster per (symbol, window) from persisted Form 4 data (§ R1.4).
+        Immutable per day. Returns snapshots recorded."""
+        now = now or datetime.now(timezone.utc)
+        day = now.strftime("%Y-%m-%d")
+        recorded = 0
+        for sym in self.symbols:
+            txns = self.store.list_insider_transactions(sym.upper(), 500)
+            if not txns:
+                continue
+            for w in WINDOWS:
+                c = detect_cluster(txns, w, now)
+                if c["cluster_type"] is None:              # no in-window activity → nothing to record
+                    continue
+                cid = f"{sym.upper()}:{c['time_window']}:{day}"
+                self.store.insert_insider_cluster(
+                    id=cid, symbol=sym.upper(), time_window=c["time_window"], cluster_type=c["cluster_type"],
+                    insider_count=c["insider_count"], weighted_score=c["score"],
+                    total_shares=c["total_shares"], total_value=c["total_value"])
+                recorded += 1
+        return recorded
+
     def collect(self) -> dict:
-        return {"changes": self.collect_changes(), "insiders": self.collect_insiders()}
+        changes = self.collect_changes()
+        insiders = self.collect_insiders()
+        clusters = self.collect_clusters()                 # derived from the just-persisted Form 4 data
+        return {"changes": changes, "insiders": insiders, "clusters": clusters}

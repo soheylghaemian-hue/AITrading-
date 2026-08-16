@@ -8,6 +8,7 @@ action.
 from __future__ import annotations
 
 from .changes import accumulation_score, net_share_change_pct
+from .clusters import build_insider_cluster
 from .insider import insider_sentiment
 
 
@@ -31,6 +32,7 @@ def build_institutional_flow(store, symbol: str, limit: int = 50) -> dict:
         "insider_name": t.insider_name, "title": t.title, "transaction_type": t.transaction_type,
         "shares": t.shares, "price": t.price, "transaction_date": t.transaction_date} for t in insiders]
     isent = insider_sentiment(insiders)
+    cluster = build_insider_cluster(store, sym)            # § R1.4 insider cluster refinement
 
     status = "COMPLETE" if (change_items or insider_items) else "NO DATA"
     return {
@@ -44,4 +46,6 @@ def build_institutional_flow(store, symbol: str, limit: int = 50) -> dict:
         "insider_score": isent["score"],
         "insider_summary": {k: isent[k] for k in
                             ("buy_count", "sell_count", "buy_shares", "sell_shares", "distinct_buyers")},
+        "insider_cluster": {"cluster_type": cluster["cluster_type"], "score": cluster["score"],
+                            "insider_count": cluster["insider_count"], "summary": cluster["summary"]},
     }
