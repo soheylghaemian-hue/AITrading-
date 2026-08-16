@@ -46,6 +46,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const mode = pills.find((p) => p.key === "mode")!;
   const system = pills.find((p) => p.key === "system")!;
 
+  // The branded /login page owns the full screen — render it without the dashboard chrome. (All
+  // hooks above run unconditionally, so this early return never changes hook order.)
+  if (path === "/login") return <>{children}</>;
+
+  async function onSignOut() {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    window.location.assign("/login");
+  }
+
   // Emergency control (not a normal button): a guarded, confirmed action. The kill switch is
   // authoritative in the BACKEND RiskEngine — the browser only sends a token-authenticated request.
   async function onStop() {
@@ -79,6 +88,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <button className="stop" onClick={onStop} disabled={stopping || !connected} aria-label="Emergency stop — engage backend kill switch, halts all trading" title="Emergency control — requires confirmation">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2" /></svg>
             {stopping ? "…" : "EMERGENCY STOP"}
+          </button>
+          <button className="signout" onClick={onSignOut} aria-label="Sign out">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M15 17l5-5-5-5M20 12H9M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h3" /></svg>
+            Sign out
           </button>
         </div>
       </aside>

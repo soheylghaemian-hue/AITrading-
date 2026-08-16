@@ -257,3 +257,48 @@ details[open] summary .chev{transform:rotate(90deg)}
   .engine{flex-direction:column;align-items:flex-start}.health{grid-template-columns:1fr}.agents{grid-template-columns:1fr}
 }
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ---------------------------------------------------------------- Login (branded sign-in) ----- */
+/* Replaces the browser's native Basic-Auth dialog with an on-brand screen. */
+.login-wrap{min-height:100vh;display:grid;place-items:center;padding:24px;position:relative;overflow:hidden}
+.login-wrap::before{content:"";position:absolute;inset:0;pointer-events:none;background:
+  radial-gradient(620px 420px at 50% -8%,var(--accent-glow),transparent 70%),
+  radial-gradient(760px 480px at 50% 118%,rgba(14,140,126,.10),transparent 70%)}
+.login-wrap::after{content:"";position:absolute;inset:0;opacity:.45;pointer-events:none;
+  background-image:linear-gradient(var(--line-soft) 1px,transparent 1px),linear-gradient(90deg,var(--line-soft) 1px,transparent 1px);
+  background-size:46px 46px;
+  -webkit-mask-image:radial-gradient(circle at 50% 42%,#000,transparent 68%);
+  mask-image:radial-gradient(circle at 50% 42%,#000,transparent 68%)}
+.login-card{position:relative;z-index:1;width:100%;max-width:394px;
+  background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--line);border-radius:var(--r);
+  padding:34px 30px;box-shadow:0 26px 64px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.02)}
+.login-brand{display:flex;align-items:center;gap:12px;margin-bottom:26px}
+.login-brand .logo{width:40px;height:40px;flex:0 0 40px}
+.login-brand .logo svg{width:100%;height:100%}
+.login-brand h1{font-size:17px;font-weight:700;letter-spacing:.4px;line-height:1.05}
+.login-brand p{font-size:9px;letter-spacing:1.7px;text-transform:uppercase;color:var(--faint);margin-top:3px}
+.login-card h2{font-size:16px;font-weight:650;margin-bottom:4px}
+.login-card .lead{font-size:12.5px;color:var(--dim);margin-bottom:22px}
+.login-field{margin-bottom:14px}
+.login-field label{display:block;font-size:10px;letter-spacing:1.4px;text-transform:uppercase;color:var(--faint);font-weight:600;margin-bottom:7px}
+.login-field input{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:var(--r-sm);color:var(--ink);
+  font-family:var(--mono);font-size:14px;letter-spacing:.3px;padding:11px 13px;transition:border-color .15s,box-shadow .15s}
+.login-field input::placeholder{color:var(--faint)}
+.login-field input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.login-err{display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:9px 12px;border-radius:var(--r-sm);
+  background:var(--neg-bg);border:1px solid rgba(248,113,113,.28);color:#FCA5A5;font-size:12.5px}
+.login-err svg{flex:0 0 15px}
+.login-btn{width:100%;margin-top:6px;padding:12px;border:0;border-radius:var(--r-sm);
+  background:linear-gradient(180deg,var(--accent),var(--accent-deep));color:#04120F;font-weight:700;font-size:13.5px;
+  letter-spacing:.3px;transition:filter .15s;box-shadow:0 8px 20px rgba(53,208,186,.22)}
+.login-btn:hover{filter:brightness(1.07)}
+.login-btn:disabled{opacity:.55;cursor:default;box-shadow:none;filter:none}
+.login-foot{margin-top:20px;display:flex;align-items:center;justify-content:center;gap:7px;
+  font-size:10px;letter-spacing:.7px;text-transform:uppercase;color:var(--faint)}
+.login-foot .dot{width:5px;height:5px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent)}
+
+/* Sidebar sign-out (paired with the emergency-stop control) */
+.signout{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;margin-top:8px;padding:8px;
+  background:none;border:1px solid var(--line);border-radius:var(--r-sm);color:var(--dim);
+  font-size:11.5px;font-weight:600;letter-spacing:.4px;transition:.15s}
+.signout:hover{color:var(--ink);border-color:var(--faint);background:var(--line-soft)}
