@@ -14,6 +14,7 @@ import type { FundamentalsData } from "./fundamentals";
 import type { OptionsData } from "./options";
 import type { AiConsensus } from "./consensus";
 import type { AiPerformance, AiHistory, AiOutcomes } from "./performance";
+import type { Governance, GovernanceFeed } from "./governance";
 
 // Where the browser sends dashboard calls. Default: the SAME-ORIGIN server proxy ("/api"), which
 // forwards to the private backend and injects the read token server-side — so no token ever
@@ -241,6 +242,35 @@ export async function fetchAiHistory(symbol: string, signal?: AbortSignal): Prom
   if (!res.ok) throw new Error(`backend ${res.status}`);
   const b = (await res.json()) as Partial<AiHistory>;
   return { symbol: b.symbol ?? symbol, count: b.count ?? 0, assessments: Array.isArray(b.assessments) ? b.assessments : [] };
+}
+
+// § G3.3 — the current governance verdict for a symbol (APPROVED / PARTIAL / CONFLICT / BLOCKED).
+export async function fetchGovernance(symbol: string, signal?: AbortSignal): Promise<Governance> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/ai-governance/${encodeURIComponent(symbol)}`,
+    { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = (await res.json()) as Partial<Governance>;
+  return {
+    symbol: b.symbol ?? symbol, status: b.status ?? null, score: b.score ?? null,
+    confidence: b.confidence ?? null, data_completeness: b.data_completeness ?? null,
+    reasons: Array.isArray(b.reasons) ? b.reasons : [], approved: !!b.approved,
+    direction: b.direction ?? null, missing: Array.isArray(b.missing) ? b.missing : [],
+    conflicts: Array.isArray(b.conflicts) ? b.conflicts : [],
+  };
+}
+
+// § G3.3 — recent governance decisions (Prediction → Governance → Outcome).
+export async function fetchGovernanceFeed(signal?: AbortSignal): Promise<GovernanceFeed> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/ai-governance`,
+    { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = (await res.json()) as Partial<GovernanceFeed>;
+  return {
+    count: b.count ?? 0, decisions: Array.isArray(b.decisions) ? b.decisions : [],
+    status_counts: b.status_counts ?? {},
+  };
 }
 
 // Mutations are authorized by the SERVER proxy (it injects the owner token from a server env var),

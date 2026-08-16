@@ -9,6 +9,7 @@ interface. `open_store` selects a backend from a URL:
 from .base import (
     AiAssessmentComponentRow,
     AiAssessmentRow,
+    AiGovernanceResultRow,
     AiPredictionOutcomeRow,
     AiPredictionRow,
     AnalystEstimatesRow,
@@ -49,7 +50,7 @@ __all__ = [
     "DecisionRow", "NewsItemRow", "TraderRow", "TraderPerformanceRow", "TraderPositionRow",
     "CompanyRow", "FinancialMetricsRow", "ValuationRow", "AnalystEstimatesRow",
     "OptionsSnapshotRow", "OptionsFlowRow", "AiAssessmentRow", "AiAssessmentComponentRow",
-    "AiPredictionRow", "AiPredictionOutcomeRow",
+    "AiPredictionRow", "AiPredictionOutcomeRow", "AiGovernanceResultRow",
 ]
 
 

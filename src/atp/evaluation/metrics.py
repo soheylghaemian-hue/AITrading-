@@ -10,7 +10,18 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 
+from ..aigov.engine import assessment_from_prediction, evaluate_governance
 from .tracker import HORIZONS
+
+
+def _gov_loads(raw) -> list[str]:
+    if not raw:
+        return []
+    try:
+        v = json.loads(raw)
+        return list(v) if isinstance(v, list) else []
+    except (ValueError, TypeError):
+        return []
 
 CONF_BUCKETS = [("high", 80, 101), ("medium", 60, 80), ("low", 0, 60)]
 
@@ -172,6 +183,19 @@ def compute_performance(store, horizon: int = 5) -> dict:
             "by_horizon": accuracy_by_horizon(store)}     # §G3.2: 1/3/5/20-day accuracy + avg return
 
 
+def _history_governance(store, pred) -> dict:
+    """The governance verdict stored with a prediction (§ G3.3). Immutable if already recorded; else
+    computed live from the same immutable snapshot so history shows a verdict before the service runs."""
+    gr = store.get_governance_result(pred.id)
+    if gr is not None:
+        return {"status": gr.status, "score": gr.score, "confidence": gr.confidence,
+                "data_completeness": gr.data_completeness, "reasons": _gov_loads(gr.reason_codes),
+                "approved": gr.status == "APPROVED"}
+    g = evaluate_governance(assessment_from_prediction(pred))
+    return {"status": g["status"], "score": g["score"], "confidence": g["confidence"],
+            "data_completeness": g["data_completeness"], "reasons": g["reasons"], "approved": g["approved"]}
+
+
 def build_ai_history(store, symbol: str, limit: int = 50) -> dict:
     out = []
     for p in store.list_ai_predictions(symbol, limit):
@@ -180,6 +204,7 @@ def build_ai_history(store, symbol: str, limit: int = 50) -> dict:
             "id": p.id, "symbol": p.symbol, "timestamp": p.timestamp, "score": p.score,
             "direction": p.direction, "confidence": p.confidence, "status": p.status,
             "price_at_prediction": p.price_at_prediction,
+            "governance": _history_governance(store, p),      # § G3.3 Prediction → Governance → Outcome
             "outcomes": [{"time_horizon": o.time_horizon, "prediction_price": o.price_at_prediction,
                           "future_price": o.future_price, "return_percentage": o.return_percentage,
                           "direction_expected": o.direction_expected, "direction_actual": o.direction_actual,

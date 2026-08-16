@@ -43,10 +43,15 @@ export interface AiHistoryOutcome {
   result?: string | null;
   status?: string | null;
 }
+export interface AiHistoryGovernance {          // §G3.3: governance verdict stored with the prediction
+  status: string | null; score: number | null; confidence: number | null;
+  data_completeness: number | null; reasons: string[]; approved: boolean;
+}
 export interface AiHistoryItem {
   id: string; symbol: string; timestamp: string | null; score: number | null;
   direction: string | null; confidence: number | null; status: string | null;
   price_at_prediction: number | null; outcomes: AiHistoryOutcome[];
+  governance?: AiHistoryGovernance;
 }
 export interface AiHistory { symbol: string; count: number; assessments: AiHistoryItem[] }
 

@@ -326,6 +326,19 @@ class AiPredictionOutcomeRow:
 
 
 @dataclass(slots=True)
+class AiGovernanceResultRow:
+    id: str
+    prediction_id: str
+    symbol: str
+    status: str
+    score: float | None
+    confidence: float | None
+    data_completeness: float | None
+    reason_codes: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
 class OhlcBarRow:
     symbol: str
     interval: str
@@ -874,6 +887,45 @@ class SqlStore(Store):
 
     def count_ai_predictions(self) -> int:
         r = self._one("SELECT COUNT(*) FROM ai_predictions")
+        return int(r[0]) if r else 0
+
+    # -- AI governance results (§ Phase G3.3, read-only IMMUTABLE decision verdicts) ------
+    _GOV_COLS = ("id,prediction_id,symbol,status,score,confidence,data_completeness,reason_codes,created_at")
+
+    def insert_governance_result(self, *, id: str, prediction_id: str, symbol: str, status: str,
+                                 score, confidence, data_completeness, reason_codes: str | None) -> None:
+        """Record a governance verdict once. ON CONFLICT DO NOTHING → a governance decision is NEVER
+        rewritten (old verdicts stay exactly as decided)."""
+        now = utcnow_iso()
+        f = lambda v: None if v is None else str(float(v))  # noqa: E731
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO ai_governance_results (id,prediction_id,symbol,status,score,confidence,"
+                "data_completeness,reason_codes,created_at) VALUES (?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(id) DO NOTHING",
+                (id, prediction_id, symbol.upper(), status, f(score), f(confidence),
+                 f(data_completeness), reason_codes, now))
+
+    def _gov_row(self, r) -> AiGovernanceResultRow:
+        g = lambda v: None if v is None else float(v)  # noqa: E731
+        return AiGovernanceResultRow(r[0], r[1], r[2], r[3], g(r[4]), g(r[5]), g(r[6]), r[7], r[8])
+
+    def get_governance_result(self, prediction_id: str) -> AiGovernanceResultRow | None:
+        r = self._one(f"SELECT {self._GOV_COLS} FROM ai_governance_results WHERE id=?", (prediction_id,))
+        return self._gov_row(r) if r else None
+
+    def list_governance_results(self, symbol: str | None = None, limit: int = 200) -> list[AiGovernanceResultRow]:
+        n = max(1, min(2000, int(limit)))
+        if symbol:
+            rows = self._all(f"SELECT {self._GOV_COLS} FROM ai_governance_results WHERE symbol=? "
+                             "ORDER BY created_at DESC LIMIT ?", (symbol.upper(), n))
+        else:
+            rows = self._all(f"SELECT {self._GOV_COLS} FROM ai_governance_results "
+                             "ORDER BY created_at DESC LIMIT ?", (n,))
+        return [self._gov_row(r) for r in rows]
+
+    def count_governance_results(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM ai_governance_results")
         return int(r[0]) if r else 0
 
     # -- AI consensus (§ Phase G3, read-only orchestration snapshot) ------

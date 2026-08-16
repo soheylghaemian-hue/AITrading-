@@ -246,6 +246,23 @@ def _migration_010(dialect: str) -> list[str]:
     ]
 
 
+def _migration_011(dialect: str) -> list[str]:
+    """AI Decision Governance (§ Phase G3.3 — read-only, IMMUTABLE history). One row per prediction:
+    the deterministic governance verdict (APPROVED / PARTIAL / CONFLICT / BLOCKED) with the score,
+    confidence, data completeness and reason codes it was based on. Governance decisions are NEVER
+    rewritten (ON CONFLICT DO NOTHING). This layer only evaluates decision quality/readiness — it does
+    NOT execute trades, generate orders, or touch Trading Core / Risk Engine / Broker / IBKR / Execution."""
+    t = _types(dialect)
+    ts, txt = t["TS"], t["TXT"]
+    return [
+        f"""CREATE TABLE IF NOT EXISTS ai_governance_results (
+            id {txt} PRIMARY KEY, prediction_id {txt} NOT NULL, symbol {txt} NOT NULL,
+            status {txt} NOT NULL, score {txt}, confidence {txt}, data_completeness {txt},
+            reason_codes {txt}, created_at {ts} NOT NULL)""",
+        "CREATE INDEX IF NOT EXISTS ix_ai_governance_symbol ON ai_governance_results(symbol, created_at)",
+    ]
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -258,6 +275,7 @@ MIGRATIONS = [
     (8, "ai_consensus", _migration_008),
     (9, "ai_evaluation", _migration_009),
     (10, "outcome_lifecycle", _migration_010),
+    (11, "ai_governance", _migration_011),
 ]
 
 

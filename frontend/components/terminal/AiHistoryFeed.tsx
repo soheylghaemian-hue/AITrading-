@@ -6,6 +6,7 @@ import React, { useEffect, useState } from "react";
 import { fetchAiHistory } from "@/lib/api";
 import { NO_DATA } from "@/lib/format";
 import { directionTone, hasHistory, shortDate, type AiHistory, type AiHistoryItem } from "@/lib/performance";
+import { govTone } from "@/lib/governance";
 
 function Box({ title, note }: { title: string; note: string }) {
   return <div className="ndbox"><div className="nd">{title}</div><p>{note}</p></div>;
@@ -36,7 +37,11 @@ export function AiHistoryList({ data, loading, error, symbol }: {
         return (
           <div className="aihrow" key={item.id}>
             <span className="aihdate">{symbol} · {shortDate(item.timestamp)}</span>
-            <span className={`consb ${directionTone(item.direction)}`}>{item.direction || NO_DATA}</span>
+            <span className="aihmeta">
+              <span className={`consb ${directionTone(item.direction)}`}>{item.direction || NO_DATA}</span>
+              {item.governance?.status
+                ? <span className={`aihgov ${govTone(item.governance.status)}`}>{item.governance.status}</span> : null}
+            </span>
             <span className="aihscore num">Score {item.score == null ? NO_DATA : item.score}</span>
             <span className={`aihout num ${oc.tone}`}>{oc.text}</span>
           </div>

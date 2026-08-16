@@ -1,0 +1,31 @@
+[Unit]
+Description=ATP AI Decision Governance (Phase G3.3 — read-only decision quality/readiness)
+Documentation=https://github.com/soheylghaemian-hue/AITrading-
+After=network-online.target docker.service
+Wants=network-online.target
+# The Governance Engine: for each immutable prediction, records the deterministic verdict
+# (APPROVED / PARTIAL / CONFLICT / BLOCKED) exactly once. It only evaluates decision quality — it
+# never trades, never generates orders, never touches IBKR/execution/broker/risk-engine, holds no
+# credentials.
+
+[Service]
+Type=simple
+User=atp
+Group=atp
+WorkingDirectory=/opt/atp/app
+Environment=PYTHONPATH=/opt/atp/app/src
+EnvironmentFile=/opt/atp/atp.env
+ExecStart=/opt/atp/app/.venv/bin/python -m atp.services.ai_governance
+Restart=always
+RestartSec=5
+# Fail-closed + restart-safe: verdicts are immutable (ON CONFLICT DO NOTHING) so a restart never
+# re-decides or rewrites an old verdict; missing inputs → BLOCKED (never a fabricated verdict). A DB
+# error records nothing; systemd restarts the process.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/atp
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

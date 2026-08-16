@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
+from ..aigov.engine import build_governance_feed, evaluate_governance
 from ..consensus.engine import build_ai_consensus
 from ..dashboard.readmodel import build_dashboard_read_model
 from ..evaluation.metrics import build_ai_history, compute_outcomes_summary, compute_performance
@@ -260,6 +261,29 @@ def market_ai_consensus(symbol: str) -> dict:
     action. Missing inputs -> NO DATA / PARTIAL, never fabricated. No secrets. Public read-model."""
     with ctx.lock:
         return build_ai_consensus(ctx.store, symbol.upper())
+
+
+@app.get("/market/{symbol}/ai-governance")
+def market_ai_governance(symbol: str) -> dict:
+    """Read-only AI Decision Governance verdict (§ Phase G3.3) for the CURRENT view: APPROVED / PARTIAL /
+    CONFLICT / BLOCKED with the score, confidence, data completeness and reason codes it was based on.
+    This EVALUATES decision quality/readiness only — it is NOT a trade, order, or broker/IBKR action.
+    Missing inputs -> BLOCKED (INSUFFICIENT_DATA), never fabricated. No secrets. Public read-model."""
+    with ctx.lock:
+        return evaluate_governance(build_ai_consensus(ctx.store, symbol.upper()))
+
+
+@app.get("/ai/governance")
+def ai_governance(limit: int = 50) -> dict:
+    """Read-only recent governance decisions (§ Phase G3.3) — the immutable verdict per prediction joined
+    to its direction and 5-day outcome (Prediction → Governance → Outcome). Governance history is never
+    rewritten. No verdicts yet -> empty (never fabricated). No secrets, no execution."""
+    try:
+        n = max(1, min(200, int(limit)))
+    except (TypeError, ValueError):
+        n = 50
+    with ctx.lock:
+        return build_governance_feed(ctx.store, n)
 
 
 @app.get("/market/{symbol}/options")
