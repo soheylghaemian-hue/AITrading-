@@ -106,16 +106,25 @@ class NullTraderProvider(TraderProvider):
         return None
 
 
-# Registry for future licensed integrations. A provider registers itself here; `resolve_provider`
-# picks one from ATP_TRADER_PROVIDER. Nothing is registered yet, so the default is always Null.
+# Registry for licensed integrations. `resolve_provider` picks one from ATP_TRADER_PROVIDER; the real
+# SEC 13F provider (§ R1.2) is loaded LAZILY to avoid a circular import. Default is always Null.
 PROVIDERS: dict[str, type[TraderProvider]] = {"null": NullTraderProvider}
 
 
+def _load_provider_class(key: str) -> type[TraderProvider]:
+    if key in PROVIDERS:
+        return PROVIDERS[key]
+    if key in ("sec13f", "sec", "edgar", "13f"):
+        from .sec13f import Sec13FTraderProvider          # lazy import (sec13f imports this module)
+        return Sec13FTraderProvider
+    return NullTraderProvider
+
+
 def resolve_provider() -> TraderProvider:
-    """Select the configured provider (env ATP_TRADER_PROVIDER); default = Null (NO DATA)."""
+    """Select the configured provider (env ATP_TRADER_PROVIDER); default = Null (NO DATA). 'sec13f'
+    activates the real SEC 13F institutional-holdings provider (needs ATP_SEC_USER_AGENT)."""
     key = (os.environ.get("ATP_TRADER_PROVIDER") or "null").strip().lower()
-    cls = PROVIDERS.get(key, NullTraderProvider)
     try:
-        return cls()
+        return _load_provider_class(key)()
     except Exception:
         return NullTraderProvider()

@@ -31,6 +31,7 @@ from ..news.analysis import sentiment_label
 from ..optflow.diagnostics import audit_options_provider
 from ..optflow.provider import resolve_provider as resolve_options_provider
 from ..optflow.readmodel import build_options
+from ..traders.diagnostics import audit_trader_providers
 from ..persistence.state import RedisStateStore
 from ..traders.readmodel import build_symbol_consensus, build_trader_profile
 from ..runtime.lifecycle import LifecycleManager, RuntimeStatus
@@ -328,6 +329,14 @@ def options_audit() -> dict:
     configured provider for NVDA / AAPL / SPY and returns an AVAILABLE / NOT AVAILABLE verdict with
     recommended providers when unavailable. Exposes no secrets; no trading/broker/IBKR/execution."""
     return audit_options_provider()
+
+
+@app.get("/traders/audit")
+def traders_audit() -> dict:
+    """Read-only audit (§ Phase R1.2): which trader-intelligence sources are available (SEC 13F / fund
+    holdings / insider / Darwinex / Collective2 / eToro / TradingView), which one is selected (SEC 13F),
+    and whether it is active. Data only — no copy-trading, no broker, no IBKR, no execution. No secrets."""
+    return audit_trader_providers()
 
 
 @app.get("/macro/current")
