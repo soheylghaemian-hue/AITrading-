@@ -1,0 +1,31 @@
+[Unit]
+Description=ATP Macro Intelligence (Phase R1.2 — read-only global-environment intelligence)
+Documentation=https://github.com/soheylghaemian-hue/AITrading-
+After=network-online.target docker.service
+Wants=network-online.target
+# The Macro Collector: pulls the global macro environment (rates / inflation / employment / volatility
+# / currency / commodities) from the configured provider (FRED by default) and appends an immutable
+# hourly snapshot. Intelligence input only — it never trades, never generates orders, never touches
+# IBKR/execution/broker/risk-engine.
+
+[Service]
+Type=simple
+User=atp
+Group=atp
+WorkingDirectory=/opt/atp/app
+Environment=PYTHONPATH=/opt/atp/app/src
+EnvironmentFile=/opt/atp/atp.env
+ExecStart=/opt/atp/app/.venv/bin/python -m atp.services.macro_intelligence
+Restart=always
+RestartSec=5
+# Fail-closed + restart-safe: snapshots are immutable (ON CONFLICT DO NOTHING) so a restart never
+# rewrites history; no provider/key → NO DATA (never a fabricated metric). A provider/DB error persists
+# nothing; systemd restarts the process.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/atp
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

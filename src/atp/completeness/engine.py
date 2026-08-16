@@ -140,8 +140,17 @@ def _trader_domain(store, sym: str) -> tuple[float, dict]:
 
 
 def _macro_domain(store, sym: str) -> tuple[float, dict]:
-    # Interface prepared for a future macro-intelligence source. Currently NO DATA (never fabricated).
-    return 0.0, {"macro_available": False}
+    # § R1.2: Macro is a global (symbol-independent) environment snapshot. Available when a real snapshot
+    # carries the core metrics. No snapshot → NO DATA (never fabricated).
+    snap = store.latest_macro_snapshot()
+    if snap is None:
+        return 0.0, {"macro_snapshot": False, "rates": False, "volatility": False}
+    checks = {
+        "macro_snapshot": True,
+        "rates": snap.fed_rate is not None or snap.treasury_10y is not None,
+        "volatility": snap.vix is not None,
+    }
+    return _frac(checks), checks
 
 
 _DOMAINS = {

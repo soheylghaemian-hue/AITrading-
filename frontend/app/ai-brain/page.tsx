@@ -4,6 +4,7 @@ import { useDashboard } from "@/components/shell";
 import { AiBrainView } from "@/components/views";
 import { ConsensusPanel } from "@/components/ConsensusPanel";
 import { DataQualityPanel } from "@/components/DataQualityPanel";
+import { MacroPanel } from "@/components/MacroPanel";
 import { GovernancePanel } from "@/components/GovernancePanel";
 import { AiPerformancePanel } from "@/components/AiPerformance";
 
@@ -25,6 +26,7 @@ export default function Page() {
       </div>
       <ConsensusPanel symbol={symbol} />
       <DataQualityPanel symbol={symbol} />
+      <MacroPanel />
       <GovernancePanel symbol={symbol} />
       <AiPerformancePanel />
       <AiBrainView s={data} connected={connected} />

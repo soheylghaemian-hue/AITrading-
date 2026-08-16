@@ -16,6 +16,7 @@ import type { AiConsensus } from "./consensus";
 import type { AiPerformance, AiHistory, AiOutcomes } from "./performance";
 import type { Governance, GovernanceFeed } from "./governance";
 import type { Completeness } from "./completeness";
+import type { Macro, MacroContext } from "./macro";
 
 // Where the browser sends dashboard calls. Default: the SAME-ORIGIN server proxy ("/api"), which
 // forwards to the private backend and injects the read token server-side — so no token ever
@@ -287,6 +288,34 @@ export async function fetchCompleteness(symbol: string, signal?: AbortSignal): P
     missing: Array.isArray(b.missing) ? b.missing : [],
     partial: Array.isArray(b.partial) ? b.partial : [],
     details: b.details ?? {},
+  };
+}
+
+// § R1.2 — the current global macro environment (score, regime, signals/risks, metrics).
+export async function fetchMacro(signal?: AbortSignal): Promise<Macro> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/macro`,
+    { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = (await res.json()) as Partial<Macro>;
+  return {
+    score: b.score ?? null, regime: b.regime ?? null, status: b.status ?? null,
+    signals: Array.isArray(b.signals) ? b.signals : [], risks: Array.isArray(b.risks) ? b.risks : [],
+    metrics: b.metrics ?? {}, timestamp: b.timestamp ?? null, source: b.source ?? null,
+  };
+}
+
+// § R1.2 — what the current macro regime means for a symbol (tailwind / neutral / headwind).
+export async function fetchMacroContext(symbol: string, signal?: AbortSignal): Promise<MacroContext> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/macro-context/${encodeURIComponent(symbol)}`,
+    { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = (await res.json()) as Partial<MacroContext>;
+  return {
+    symbol: b.symbol ?? symbol, regime: b.regime ?? null, score: b.score ?? null,
+    relevance: b.relevance ?? null, note: b.note ?? null, status: b.status ?? null,
+    signals: Array.isArray(b.signals) ? b.signals : [], risks: Array.isArray(b.risks) ? b.risks : [],
   };
 }
 

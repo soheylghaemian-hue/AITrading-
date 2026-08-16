@@ -22,6 +22,7 @@ from .base import (
     FillRow,
     FinancialMetricsRow,
     KillSwitchRow,
+    MacroSnapshotRow,
     NewsItemRow,
     OptionsFlowRow,
     OptionsSnapshotRow,
@@ -52,6 +53,7 @@ __all__ = [
     "CompanyRow", "FinancialMetricsRow", "ValuationRow", "AnalystEstimatesRow",
     "OptionsSnapshotRow", "OptionsFlowRow", "AiAssessmentRow", "AiAssessmentComponentRow",
     "AiPredictionRow", "AiPredictionOutcomeRow", "AiGovernanceResultRow", "DataCompletenessRow",
+    "MacroSnapshotRow",
 ]
 
 

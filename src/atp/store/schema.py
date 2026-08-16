@@ -279,6 +279,23 @@ def _migration_012(dialect: str) -> list[str]:
     ]
 
 
+def _migration_013(dialect: str) -> list[str]:
+    """Macro Intelligence Layer (§ Phase R1.2 — read-only, IMMUTABLE history). One row per hour: a
+    snapshot of the global macro environment (rates, inflation, employment, volatility, currency,
+    commodities). Snapshots are never rewritten (ON CONFLICT DO NOTHING). This is an INTELLIGENCE input
+    only — it does NOT trade, generate orders, or touch Trading Core / Risk Engine / Broker / IBKR /
+    Execution. Missing metrics stay NULL → NO DATA, never fabricated."""
+    t = _types(dialect)
+    ts, txt = t["TS"], t["TXT"]
+    return [
+        f"""CREATE TABLE IF NOT EXISTS macro_snapshots (
+            id {txt} PRIMARY KEY, timestamp {ts},
+            fed_rate {txt}, treasury_10y {txt}, treasury_2y {txt}, cpi {txt}, unemployment {txt},
+            vix {txt}, dxy {txt}, oil {txt}, gold {txt}, source {txt}, created_at {ts} NOT NULL)""",
+        "CREATE INDEX IF NOT EXISTS ix_macro_snapshots_ts ON macro_snapshots(timestamp)",
+    ]
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -293,6 +310,7 @@ MIGRATIONS = [
     (10, "outcome_lifecycle", _migration_010),
     (11, "ai_governance", _migration_011),
     (12, "data_completeness", _migration_012),
+    (13, "macro_intelligence", _migration_013),
 ]
 
 

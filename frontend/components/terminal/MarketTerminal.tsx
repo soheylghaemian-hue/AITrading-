@@ -8,18 +8,20 @@ import React, { useEffect, useState } from "react";
 import type { Snapshot } from "@/lib/types";
 import { instrumentRef } from "@/lib/instruments";
 import { symbolQuote } from "@/lib/market";
-import { fetchOhlc, fetchTraders, fetchFundamentals, fetchOptions, fetchConsensus } from "@/lib/api";
+import { fetchOhlc, fetchTraders, fetchFundamentals, fetchOptions, fetchConsensus, fetchMacroContext } from "@/lib/api";
 import type { OhlcBar } from "@/lib/ohlc";
 import type { TraderConsensus } from "@/lib/traders";
 import type { FundamentalsData } from "@/lib/fundamentals";
 import type { OptionsData } from "@/lib/options";
 import type { AiConsensus } from "@/lib/consensus";
+import type { MacroContext } from "@/lib/macro";
 import { Dot } from "@/components/ui";
 import { TerminalHeader } from "./TerminalHeader";
 import { DataQuality } from "./DataQuality";
 import { MarketChart } from "./MarketChart";
 import { AiAnalysisPanel } from "./AiAnalysisPanel";
 import { AiSummary } from "./AiSummary";
+import { MacroContextCard } from "./MacroContextCard";
 import { ResearchTabs } from "./ResearchTabs";
 
 type OhlcState = { bars: OhlcBar[] | null; loading: boolean; error: string | null };
@@ -38,6 +40,7 @@ export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; s
   const [fundamentals, setFundamentals] = useState<FundamentalsData | null>(null);
   const [options, setOptions] = useState<OptionsData | null>(null);
   const [consensus, setConsensus] = useState<AiConsensus | null>(null);
+  const [macro, setMacro] = useState<MacroContext | null>(null);
 
   // Fetch OHLC whenever the symbol or timeframe changes. AbortController + a cancelled flag guard against
   // a stale response landing after a fast symbol switch (NVDA → AAPL → SPY) overwriting the newer request.
@@ -71,6 +74,9 @@ export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; s
     fetchConsensus(symbol, ctrl.signal)
       .then((r) => { if (!cancelled) setConsensus(r); })
       .catch(() => { if (!cancelled) setConsensus(null); });
+    fetchMacroContext(symbol, ctrl.signal)                  // §R1.2 macro context for this symbol
+      .then((r) => { if (!cancelled) setMacro(r); })
+      .catch(() => { if (!cancelled) setMacro(null); });
     return () => { cancelled = true; ctrl.abort(); };
   }, [symbol]);
 
@@ -86,7 +92,7 @@ export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; s
     { label: "Fundamentals", value: fundamentals?.quality_score ?? null },
     { label: "Options Flow", value: options?.options_score ?? null },
     { label: "Trader Consensus", value: traders?.weighted_score ?? null },
-    { label: "Macro", value: null as number | null },
+    { label: "Macro", value: macro?.score ?? null },        // §R1.2 wired to the macro environment score
     { label: "Risk", value: null as number | null },
   ];
 
@@ -97,6 +103,7 @@ export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; s
       ) : null}
       <TerminalHeader symbol={symbol} refData={refData} quote={quote} mode={s?.mode} change={change} connected={connected} />
       <AiSummary data={consensus} />
+      <MacroContextCard data={macro} />
       <DataQuality quote={quote} refData={refData} />
       <div className="term-main">
         <div className="card term-chart">

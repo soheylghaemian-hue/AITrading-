@@ -26,6 +26,7 @@ from ..consensus.engine import build_ai_consensus
 from ..dashboard.readmodel import build_dashboard_read_model
 from ..evaluation.metrics import build_ai_history, compute_outcomes_summary, compute_performance
 from ..fundamentals.readmodel import build_fundamentals
+from ..macrodata.readmodel import build_macro, build_macro_context
 from ..news.analysis import sentiment_label
 from ..optflow.diagnostics import audit_options_provider
 from ..optflow.provider import resolve_provider as resolve_options_provider
@@ -327,6 +328,25 @@ def options_audit() -> dict:
     configured provider for NVDA / AAPL / SPY and returns an AVAILABLE / NOT AVAILABLE verdict with
     recommended providers when unavailable. Exposes no secrets; no trading/broker/IBKR/execution."""
     return audit_options_provider()
+
+
+@app.get("/macro/current")
+def macro_current() -> dict:
+    """Read-only Macro Intelligence (§ Phase R1.2): the current global macro environment — a
+    deterministic 0-100 score, the risk regime (RISK_ON / RISK_NEUTRAL / RISK_OFF), signals, risks and
+    the raw metrics (rates, inflation, employment, VIX, USD, commodities) with their trend. INTELLIGENCE
+    INPUT only — never a trade, order, or broker action. No snapshot -> NO DATA, never fabricated."""
+    with ctx.lock:
+        return build_macro(ctx.store)
+
+
+@app.get("/market/{symbol}/macro-context")
+def market_macro_context(symbol: str) -> dict:
+    """Read-only macro relevance for a symbol (§ Phase R1.2): what the current global regime means for
+    this (risk-asset) symbol — TAILWIND / NEUTRAL / HEADWIND — plus the regime, score, signals and risks.
+    INTELLIGENCE INPUT only. No snapshot -> NO DATA, never fabricated. No secrets."""
+    with ctx.lock:
+        return build_macro_context(ctx.store, symbol.upper())
 
 
 @app.get("/market/{symbol}/fundamentals")

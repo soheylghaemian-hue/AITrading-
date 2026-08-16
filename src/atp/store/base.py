@@ -351,6 +351,23 @@ class DataCompletenessRow:
 
 
 @dataclass(slots=True)
+class MacroSnapshotRow:
+    id: str
+    timestamp: str | None
+    fed_rate: float | None
+    treasury_10y: float | None
+    treasury_2y: float | None
+    cpi: float | None
+    unemployment: float | None
+    vix: float | None
+    dxy: float | None
+    oil: float | None
+    gold: float | None
+    source: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
 class OhlcBarRow:
     symbol: str
     interval: str
@@ -981,6 +998,43 @@ class SqlStore(Store):
 
     def count_data_completeness(self) -> int:
         r = self._one("SELECT COUNT(*) FROM data_completeness_snapshots")
+        return int(r[0]) if r else 0
+
+    # -- Macro snapshots (§ Phase R1.2, read-only IMMUTABLE macro-environment history) ------
+    _MACRO_COLS = ("id,timestamp,fed_rate,treasury_10y,treasury_2y,cpi,unemployment,vix,dxy,oil,gold,"
+                   "source,created_at")
+
+    def insert_macro_snapshot(self, *, id: str, timestamp, fed_rate=None, treasury_10y=None,
+                              treasury_2y=None, cpi=None, unemployment=None, vix=None, dxy=None,
+                              oil=None, gold=None, source: str | None = None) -> None:
+        """Record a macro snapshot once. ON CONFLICT DO NOTHING → snapshots are never rewritten. Missing
+        metrics stay NULL (NO DATA) — never fabricated."""
+        now = utcnow_iso()
+        f = lambda v: None if v is None else str(float(v))  # noqa: E731
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO macro_snapshots (id,timestamp,fed_rate,treasury_10y,treasury_2y,cpi,"
+                "unemployment,vix,dxy,oil,gold,source,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(id) DO NOTHING",
+                (id, timestamp, f(fed_rate), f(treasury_10y), f(treasury_2y), f(cpi), f(unemployment),
+                 f(vix), f(dxy), f(oil), f(gold), source, now))
+
+    def _macro_row(self, r) -> MacroSnapshotRow:
+        g = lambda v: None if v is None else float(v)  # noqa: E731
+        return MacroSnapshotRow(r[0], r[1], g(r[2]), g(r[3]), g(r[4]), g(r[5]), g(r[6]), g(r[7]),
+                                g(r[8]), g(r[9]), g(r[10]), r[11], r[12])
+
+    def latest_macro_snapshot(self) -> MacroSnapshotRow | None:
+        r = self._one(f"SELECT {self._MACRO_COLS} FROM macro_snapshots ORDER BY timestamp DESC LIMIT 1")
+        return self._macro_row(r) if r else None
+
+    def list_macro_snapshots(self, limit: int = 200) -> list[MacroSnapshotRow]:
+        n = max(1, min(2000, int(limit)))
+        rows = self._all(f"SELECT {self._MACRO_COLS} FROM macro_snapshots ORDER BY timestamp DESC LIMIT ?", (n,))
+        return [self._macro_row(r) for r in rows]
+
+    def count_macro_snapshots(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM macro_snapshots")
         return int(r[0]) if r else 0
 
     # -- AI consensus (§ Phase G3, read-only orchestration snapshot) ------

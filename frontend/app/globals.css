@@ -477,3 +477,38 @@ a.newsrow:hover{background:var(--line-soft)}
 .dqwarn.insufficient{color:#FCA5A5;background:var(--neg-bg);border-color:rgba(248,113,113,.3)}
 .dqwarn.insufficient b{color:var(--neg)}
 .dqpct{font-family:var(--mono);font-size:11px;color:var(--faint);margin-left:4px}
+
+/* ---------------------------------------------------------------- Macro Intelligence (§ R1.2) ------ */
+.macrocard.on{border-left:3px solid var(--pos)}
+.macrocard.neutral{border-left:3px solid var(--warn)}
+.macrocard.off{border-left:3px solid var(--neg)}
+.macroscore{font-family:var(--mono);font-size:34px;font-weight:650;line-height:1}
+.macroscore small{font-size:13px;color:var(--faint);font-weight:500}
+.macroscore.on{color:var(--pos)} .macroscore.neutral{color:var(--warn)} .macroscore.off{color:var(--neg)}
+.regimeb{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:1.5px;padding:5px 12px;
+  border-radius:6px;border:1px solid transparent}
+.regimeb.on{color:var(--pos);background:var(--pos-bg);border-color:rgba(52,211,153,.35)}
+.regimeb.neutral{color:var(--warn);background:var(--warn-bg);border-color:rgba(245,158,11,.35)}
+.regimeb.off{color:var(--neg);background:var(--neg-bg);border-color:rgba(248,113,113,.4)}
+.regimeb.neu{color:var(--dim);background:var(--line-soft);border-color:var(--line)}
+.macrometrics{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;border-top:1px solid var(--line-soft);padding-top:12px}
+.macrometric{background:var(--panel);border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:9px 11px;
+  display:flex;flex-direction:column;gap:3px}
+.macrometric .mlabel{font-size:10.5px;letter-spacing:.6px;text-transform:uppercase;color:var(--faint)}
+.macrometric .mval{font-family:var(--mono);font-size:14px;font-weight:600;color:var(--ink)}
+.mval.t-up{color:var(--neg)} .mval.t-down{color:var(--pos)}   /* rising rates/vix = risk-off tone */
+@media (max-width:900px){.macrometrics{grid-template-columns:repeat(2,1fr)}}
+/* terminal macro context card */
+.macroctx{display:flex;flex-direction:column;gap:8px}
+.macroctx.on{border-left:3px solid var(--pos)} .macroctx.neutral{border-left:3px solid var(--warn)}
+.macroctx.off{border-left:3px solid var(--neg)}
+.mctx-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.mctx-nd{font-family:var(--mono);font-size:11px;letter-spacing:1px;color:var(--faint)}
+.mctx-rel{font-family:var(--mono);font-size:10.5px;font-weight:700;letter-spacing:1px;padding:2px 8px;border-radius:5px}
+.mctx-rel.on{color:var(--pos);background:var(--pos-bg)} .mctx-rel.neutral{color:var(--warn);background:var(--warn-bg)}
+.mctx-rel.off{color:var(--neg);background:var(--neg-bg)} .mctx-rel.neu{color:var(--dim);background:var(--line-soft)}
+.mctx-score{font-family:var(--mono);font-size:13px;color:var(--ink);margin-left:auto}
+.mctx-note{font-size:12.5px;color:var(--dim);margin:0}
+.mctx-lists{display:flex;flex-wrap:wrap;gap:6px}
+.mctx-sig{font-size:11.5px;padding:2px 8px;border-radius:5px;background:var(--line-soft)}
+.mctx-sig.pos{color:var(--pos)} .mctx-sig.neg{color:var(--neg)}

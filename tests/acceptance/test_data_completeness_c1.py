@@ -90,7 +90,7 @@ def test_no_data_is_insufficient_never_fabricated(store):
     assert c["state"] == "INSUFFICIENT"
     assert c["available"] == []
     assert set(c["missing"]) == set(WEIGHTS)                 # every domain missing, none invented
-    assert c["details"]["macro"]["checks"] == {"macro_available": False}
+    assert c["details"]["macro"]["checks"]["macro_snapshot"] is False   # no macro snapshot → NO DATA
 
 
 def test_partial_state_example(store):
