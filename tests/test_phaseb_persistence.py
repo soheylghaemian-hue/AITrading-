@@ -38,12 +38,13 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
     s = _db(tmp_path)
     assert s.ping()
     applied = sorted(r[0] for r in s._all("SELECT version FROM schema_migrations"))
-    assert applied == [1, 2, 3, 4, 5, 6]
+    assert applied == [1, 2, 3, 4, 5, 6, 7]
     # tables exist
     for t in ("runtime_state", "orders", "fills", "positions", "kill_switch", "daily_pnl",
               "audit_events", "service_heartbeats", "market_data_health", "ohlc_bars", "news_items",
               "traders", "trader_performance", "trader_positions",
-              "companies", "financial_metrics", "valuation", "analyst_estimates"):
+              "companies", "financial_metrics", "valuation", "analyst_estimates",
+              "options_snapshot", "options_flow"):
         s._one(f"SELECT COUNT(*) FROM {t}")
     # migration 002 money columns exist
     s._one("SELECT notional, stop, target, monetary_risk, risk_pct FROM orders")
@@ -61,8 +62,11 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
     s._one("SELECT symbol, period, revenue, revenue_growth, gross_margin, operating_margin, net_margin, eps, eps_growth, free_cash_flow, debt, cash, updated_at FROM financial_metrics")
     s._one("SELECT symbol, market_cap, pe_ratio, forward_pe, price_sales, enterprise_value, updated_at FROM valuation")
     s._one("SELECT symbol, rating, target_price, analyst_count, upgrade_count, downgrade_count, updated_at FROM analyst_estimates")
+    # migration 007 options columns exist
+    s._one("SELECT symbol, expiration_date, strike, option_type, timestamp, bid, ask, last, volume, open_interest, implied_volatility, source, created_at FROM options_snapshot")
+    s._one("SELECT symbol, timestamp, call_volume, put_volume, call_put_ratio, implied_volatility, open_interest, unusual_activity_score, large_trade_count, premium_volume, sentiment, updated_at FROM options_flow")
     s2 = _reopen(tmp_path, s)                     # re-open re-runs migrator → no-op
-    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == [1, 2, 3, 4, 5, 6]
+    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == [1, 2, 3, 4, 5, 6, 7]
 
 
 def test_postgres_ddl_declares_numeric_money():

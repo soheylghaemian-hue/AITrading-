@@ -17,6 +17,8 @@ from .base import (
     FinancialMetricsRow,
     KillSwitchRow,
     NewsItemRow,
+    OptionsFlowRow,
+    OptionsSnapshotRow,
     OrderRow,
     PositionRow,
     RiskConfigRow,
@@ -42,6 +44,7 @@ __all__ = [
     "RiskConfigRow", "RiskStateRow", "OrderRow", "FillRow", "PositionRow", "AuditEventRow",
     "DecisionRow", "NewsItemRow", "TraderRow", "TraderPerformanceRow", "TraderPositionRow",
     "CompanyRow", "FinancialMetricsRow", "ValuationRow", "AnalystEstimatesRow",
+    "OptionsSnapshotRow", "OptionsFlowRow",
 ]
 
 

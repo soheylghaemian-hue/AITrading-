@@ -9,6 +9,7 @@ import { EventTimeline, type TimelineEvent } from "./EventTimeline";
 import { NewsFeed } from "./NewsFeed";
 import { TradersFeed } from "./TradersFeed";
 import { FundamentalsFeed } from "./FundamentalsFeed";
+import { OptionsFeed } from "./OptionsFeed";
 import type { Quote } from "@/lib/market";
 
 const TABS = ["Overview", "News", "Fundamentals", "Options", "Traders", "AI History"] as const;
@@ -55,7 +56,7 @@ export function ResearchTabs({ quote, decisions, symbol }: { quote: Quote | null
       {tab === "Overview" && <Overview quote={quote} />}
       {tab === "News" && <NewsFeed symbol={symbol} />}
       {tab === "Fundamentals" && <FundamentalsFeed symbol={symbol} />}
-      {tab === "Options" && <NoFeed note="Options chain not connected. Contracts appear here once an options feed is wired — never invented." />}
+      {tab === "Options" && <OptionsFeed symbol={symbol} />}
       {tab === "Traders" && <TradersFeed symbol={symbol} />}
       {tab === "AI History" && <EventTimeline events={aiEvents} />}
     </div>

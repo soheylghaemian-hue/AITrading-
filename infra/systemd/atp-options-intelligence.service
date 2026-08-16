@@ -1,0 +1,29 @@
+[Unit]
+Description=ATP Options Intelligence Service (Phase G2.3 — read-only options positioning)
+Documentation=https://github.com/soheylghaemian-hue/AITrading-
+After=network-online.target docker.service
+Wants=network-online.target
+# Polls the configured options provider (Massive/Polygon by default), aggregates the option chain and
+# persists per-symbol flow to PostgreSQL; the Control API serves a deterministic options score. An
+# intelligence input only — never trades, never touches IBKR/execution/broker, holds no credentials.
+
+[Service]
+Type=simple
+User=atp
+Group=atp
+WorkingDirectory=/opt/atp/app
+Environment=PYTHONPATH=/opt/atp/app/src
+EnvironmentFile=/opt/atp/atp.env
+ExecStart=/opt/atp/app/.venv/bin/python -m atp.services.options_intelligence
+Restart=always
+RestartSec=5
+# Fail-closed: no provider/entitlement or a provider/DB error persists nothing (never a fabricated IV/
+# flow) and reports DEGRADED; systemd restarts the process, but no options data is ever invented.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/atp
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

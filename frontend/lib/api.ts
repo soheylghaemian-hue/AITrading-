@@ -11,6 +11,7 @@ import type { OhlcBar } from "./ohlc";
 import type { NewsItem } from "./news";
 import type { TraderConsensus } from "./traders";
 import type { FundamentalsData } from "./fundamentals";
+import type { OptionsData } from "./options";
 
 // Where the browser sends dashboard calls. Default: the SAME-ORIGIN server proxy ("/api"), which
 // forwards to the private backend and injects the read token server-side — so no token ever
@@ -136,6 +137,34 @@ export async function fetchFundamentals(symbol: string, signal?: AbortSignal): P
     valuation: b.valuation ?? null,
     analyst_estimates: b.analyst_estimates ?? null,
     strengths: Array.isArray(b.strengths) ? b.strengths : [],
+    risks: Array.isArray(b.risks) ? b.risks : [],
+  };
+}
+
+// Options intelligence for the terminal Options tab (§ Phase G2.3). Read-only, via the SAME same-origin
+// server proxy; the proxy forwards to the Control API's /market/{symbol}/options. On no backend / non-OK
+// it throws — the caller renders NO DATA (never fabricates IV / flow / unusual activity).
+export async function fetchOptions(symbol: string, signal?: AbortSignal): Promise<OptionsData> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/options/${encodeURIComponent(symbol)}`,
+    { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = (await res.json()) as Partial<OptionsData>;
+  return {
+    symbol: b.symbol ?? symbol,
+    options_score: b.options_score ?? null,
+    call_put_ratio: b.call_put_ratio ?? null,
+    implied_volatility: b.implied_volatility ?? null,
+    volume: b.volume ?? null,
+    call_volume: b.call_volume ?? null,
+    put_volume: b.put_volume ?? null,
+    open_interest: b.open_interest ?? null,
+    premium_volume: b.premium_volume ?? null,
+    unusual_activity: b.unusual_activity ?? null,
+    unusual_activity_score: b.unusual_activity_score ?? null,
+    large_trade_count: b.large_trade_count ?? null,
+    sentiment: b.sentiment ?? null,
+    signals: Array.isArray(b.signals) ? b.signals : [],
     risks: Array.isArray(b.risks) ? b.risks : [],
   };
 }

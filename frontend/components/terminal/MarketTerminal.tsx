@@ -8,10 +8,11 @@ import React, { useEffect, useState } from "react";
 import type { Snapshot } from "@/lib/types";
 import { instrumentRef } from "@/lib/instruments";
 import { symbolQuote } from "@/lib/market";
-import { fetchOhlc, fetchTraders, fetchFundamentals } from "@/lib/api";
+import { fetchOhlc, fetchTraders, fetchFundamentals, fetchOptions } from "@/lib/api";
 import type { OhlcBar } from "@/lib/ohlc";
 import type { TraderConsensus } from "@/lib/traders";
 import type { FundamentalsData } from "@/lib/fundamentals";
+import type { OptionsData } from "@/lib/options";
 import { Dot } from "@/components/ui";
 import { TerminalHeader } from "./TerminalHeader";
 import { DataQuality } from "./DataQuality";
@@ -33,6 +34,7 @@ export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; s
   const [ohlc, setOhlc] = useState<OhlcState>({ bars: null, loading: true, error: null });
   const [traders, setTraders] = useState<TraderConsensus | null>(null);
   const [fundamentals, setFundamentals] = useState<FundamentalsData | null>(null);
+  const [options, setOptions] = useState<OptionsData | null>(null);
 
   // Fetch OHLC whenever the symbol or timeframe changes. AbortController + a cancelled flag guard against
   // a stale response landing after a fast symbol switch (NVDA → AAPL → SPY) overwriting the newer request.
@@ -60,6 +62,9 @@ export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; s
     fetchFundamentals(symbol, ctrl.signal)
       .then((r) => { if (!cancelled) setFundamentals(r); })
       .catch(() => { if (!cancelled) setFundamentals(null); });
+    fetchOptions(symbol, ctrl.signal)
+      .then((r) => { if (!cancelled) setOptions(r); })
+      .catch(() => { if (!cancelled) setOptions(null); });
     return () => { cancelled = true; ctrl.abort(); };
   }, [symbol]);
 
@@ -73,7 +78,7 @@ export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; s
     { label: "Price Action", value: null as number | null },
     { label: "News", value: null as number | null },
     { label: "Fundamentals", value: fundamentals?.quality_score ?? null },
-    { label: "Options Flow", value: null as number | null },
+    { label: "Options Flow", value: options?.options_score ?? null },
     { label: "Trader Consensus", value: traders?.weighted_score ?? null },
     { label: "Macro", value: null as number | null },
     { label: "Risk", value: null as number | null },

@@ -242,6 +242,39 @@ class AnalystEstimatesRow:
 
 
 @dataclass(slots=True)
+class OptionsSnapshotRow:
+    symbol: str
+    expiration_date: str
+    strike: float | None
+    option_type: str
+    timestamp: str | None
+    bid: float | None
+    ask: float | None
+    last: float | None
+    volume: int | None
+    open_interest: int | None
+    implied_volatility: float | None
+    source: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
+class OptionsFlowRow:
+    symbol: str
+    timestamp: str | None
+    call_volume: int | None
+    put_volume: int | None
+    call_put_ratio: float | None
+    implied_volatility: float | None
+    open_interest: int | None
+    unusual_activity_score: float | None
+    large_trade_count: int | None
+    premium_volume: float | None
+    sentiment: str | None
+    updated_at: str
+
+
+@dataclass(slots=True)
 class OhlcBarRow:
     symbol: str
     interval: str
@@ -719,6 +752,66 @@ class SqlStore(Store):
             r = self._one("SELECT COUNT(*) FROM news_items WHERE symbol=?", (symbol,))
         else:
             r = self._one("SELECT COUNT(*) FROM news_items")
+        return int(r[0]) if r else 0
+
+    # -- options intelligence (§ Phase G2.3, read-only) -------------------
+    def upsert_options_snapshot(self, *, symbol: str, expiration_date: str, strike, option_type: str,
+                                timestamp, bid, ask, last, volume, open_interest, implied_volatility,
+                                source: str) -> None:
+        now = utcnow_iso()
+        f = lambda v: None if v is None else str(float(v))  # noqa: E731
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO options_snapshot (symbol,expiration_date,strike,option_type,timestamp,bid,ask,"
+                "last,volume,open_interest,implied_volatility,source,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(symbol,expiration_date,strike,option_type) DO UPDATE SET timestamp=excluded.timestamp, "
+                "bid=excluded.bid, ask=excluded.ask, last=excluded.last, volume=excluded.volume, "
+                "open_interest=excluded.open_interest, implied_volatility=excluded.implied_volatility, "
+                "source=excluded.source",
+                (symbol.upper(), expiration_date, f(strike), option_type.lower(), timestamp, f(bid), f(ask),
+                 f(last), volume, open_interest, f(implied_volatility), source, now))
+
+    def upsert_options_flow(self, *, symbol: str, timestamp, call_volume, put_volume, call_put_ratio,
+                            implied_volatility, open_interest, unusual_activity_score, large_trade_count,
+                            premium_volume, sentiment) -> None:
+        now = utcnow_iso()
+        f = lambda v: None if v is None else str(float(v))  # noqa: E731
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO options_flow (symbol,timestamp,call_volume,put_volume,call_put_ratio,"
+                "implied_volatility,open_interest,unusual_activity_score,large_trade_count,premium_volume,"
+                "sentiment,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(symbol) DO UPDATE SET "
+                "timestamp=excluded.timestamp, call_volume=excluded.call_volume, put_volume=excluded.put_volume, "
+                "call_put_ratio=excluded.call_put_ratio, implied_volatility=excluded.implied_volatility, "
+                "open_interest=excluded.open_interest, unusual_activity_score=excluded.unusual_activity_score, "
+                "large_trade_count=excluded.large_trade_count, premium_volume=excluded.premium_volume, "
+                "sentiment=excluded.sentiment, updated_at=excluded.updated_at",
+                (symbol.upper(), timestamp, call_volume, put_volume, f(call_put_ratio), f(implied_volatility),
+                 open_interest, f(unusual_activity_score), large_trade_count, f(premium_volume), sentiment, now))
+
+    def get_options_flow(self, symbol: str) -> OptionsFlowRow | None:
+        r = self._one("SELECT symbol,timestamp,call_volume,put_volume,call_put_ratio,implied_volatility,"
+                      "open_interest,unusual_activity_score,large_trade_count,premium_volume,sentiment,updated_at "
+                      "FROM options_flow WHERE symbol=?", (symbol.upper(),))
+        if not r:
+            return None
+        g = lambda v: None if v is None else float(v)  # noqa: E731
+        i = lambda v: None if v is None else int(v)    # noqa: E731
+        return OptionsFlowRow(r[0], r[1], i(r[2]), i(r[3]), g(r[4]), g(r[5]), i(r[6]), g(r[7]), i(r[8]),
+                              g(r[9]), r[10], r[11])
+
+    def list_options_snapshots(self, symbol: str, limit: int = 100) -> list[OptionsSnapshotRow]:
+        n = max(1, min(500, int(limit)))
+        rows = self._all("SELECT symbol,expiration_date,strike,option_type,timestamp,bid,ask,last,volume,"
+                         "open_interest,implied_volatility,source,created_at FROM options_snapshot "
+                         "WHERE symbol=? ORDER BY volume DESC LIMIT ?", (symbol.upper(), n))
+        g = lambda v: None if v is None else float(v)  # noqa: E731
+        i = lambda v: None if v is None else int(v)    # noqa: E731
+        return [OptionsSnapshotRow(x[0], x[1], g(x[2]), x[3], x[4], g(x[5]), g(x[6]), g(x[7]), i(x[8]),
+                                   i(x[9]), g(x[10]), x[11], x[12]) for x in rows]
+
+    def count_options_flow(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM options_flow")
         return int(r[0]) if r else 0
 
     # -- fundamentals intelligence (§ Phase G2.2, read-only) --------------

@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from ..dashboard.readmodel import build_dashboard_read_model
 from ..fundamentals.readmodel import build_fundamentals
 from ..news.analysis import sentiment_label
+from ..optflow.readmodel import build_options
 from ..persistence.state import RedisStateStore
 from ..traders.readmodel import build_symbol_consensus, build_trader_profile
 from ..runtime.lifecycle import LifecycleManager, RuntimeStatus
@@ -214,6 +215,16 @@ def market_news(symbol: str, limit: int = 30) -> dict:
     } for r in rows]
     return {"symbol": symbol.upper(), "count": len(items), "items": items,
             "ts": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/market/{symbol}/options")
+def market_options(symbol: str) -> dict:
+    """Read-only options intelligence (§ Phase G2.3): a deterministic options score, put/call ratio,
+    implied volatility, volume, open interest, unusual-activity flag, sentiment + signals/risks —
+    assembled from persisted flow. INTELLIGENCE SIGNAL only, never a trade signal. Missing data ->
+    null/empty (NO DATA), never fabricated. No secrets. Public read-model like /market/{symbol}/news."""
+    with ctx.lock:
+        return build_options(ctx.store, symbol.upper())
 
 
 @app.get("/market/{symbol}/fundamentals")

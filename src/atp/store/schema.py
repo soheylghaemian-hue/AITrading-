@@ -170,6 +170,29 @@ def _migration_006(dialect: str) -> list[str]:
     ]
 
 
+def _migration_007(dialect: str) -> list[str]:
+    """Options intelligence (§ Phase G2.3 — read-only). Two additive tables: options_snapshot (per
+    contract, latest) and options_flow (per-symbol aggregate). Numeric fields are canonical-decimal
+    TEXT (dialect-agnostic). The options intelligence score + signals/risks are COMPUTED
+    deterministically on read (never stored, never fabricated). Intelligence input only — no Trading
+    Core / Risk / Broker / IBKR / Execution code is touched."""
+    t = _types(dialect)
+    ts, txt, i = t["TS"], t["TXT"], t["INT"]
+    return [
+        f"""CREATE TABLE IF NOT EXISTS options_snapshot (
+            symbol {txt} NOT NULL, expiration_date {txt} NOT NULL, strike {txt} NOT NULL,
+            option_type {txt} NOT NULL, timestamp {ts}, bid {txt}, ask {txt}, last {txt},
+            volume {i}, open_interest {i}, implied_volatility {txt}, source {txt}, created_at {ts} NOT NULL,
+            PRIMARY KEY (symbol, expiration_date, strike, option_type))""",
+        "CREATE INDEX IF NOT EXISTS ix_options_snapshot_symbol ON options_snapshot(symbol)",
+        f"""CREATE TABLE IF NOT EXISTS options_flow (
+            symbol {txt} PRIMARY KEY, timestamp {ts}, call_volume {i}, put_volume {i},
+            call_put_ratio {txt}, implied_volatility {txt}, open_interest {i},
+            unusual_activity_score {txt}, large_trade_count {i}, premium_volume {txt},
+            sentiment {txt}, updated_at {ts} NOT NULL)""",
+    ]
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -178,6 +201,7 @@ MIGRATIONS = [
     (4, "news_items", _migration_004),
     (5, "trader_intelligence", _migration_005),
     (6, "fundamentals", _migration_006),
+    (7, "options_intelligence", _migration_007),
 ]
 
 
