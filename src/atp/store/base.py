@@ -192,6 +192,56 @@ class TraderPositionRow:
 
 
 @dataclass(slots=True)
+class CompanyRow:
+    symbol: str
+    company_name: str | None
+    sector: str | None
+    industry: str | None
+    exchange: str | None
+    country: str | None
+    updated_at: str
+
+
+@dataclass(slots=True)
+class FinancialMetricsRow:
+    symbol: str
+    period: str | None
+    revenue: float | None
+    revenue_growth: float | None
+    gross_margin: float | None
+    operating_margin: float | None
+    net_margin: float | None
+    eps: float | None
+    eps_growth: float | None
+    free_cash_flow: float | None
+    debt: float | None
+    cash: float | None
+    updated_at: str
+
+
+@dataclass(slots=True)
+class ValuationRow:
+    symbol: str
+    market_cap: float | None
+    pe_ratio: float | None
+    forward_pe: float | None
+    price_sales: float | None
+    enterprise_value: float | None
+    updated_at: str
+
+
+@dataclass(slots=True)
+class AnalystEstimatesRow:
+    symbol: str
+    rating: str | None
+    target_price: float | None
+    analyst_count: int | None
+    upgrade_count: int | None
+    downgrade_count: int | None
+    updated_at: str
+
+
+@dataclass(slots=True)
 class OhlcBarRow:
     symbol: str
     interval: str
@@ -669,6 +719,95 @@ class SqlStore(Store):
             r = self._one("SELECT COUNT(*) FROM news_items WHERE symbol=?", (symbol,))
         else:
             r = self._one("SELECT COUNT(*) FROM news_items")
+        return int(r[0]) if r else 0
+
+    # -- fundamentals intelligence (§ Phase G2.2, read-only) --------------
+    def upsert_company(self, *, symbol: str, company_name, sector, industry, exchange, country) -> None:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO companies (symbol,company_name,sector,industry,exchange,country,updated_at) "
+                "VALUES (?,?,?,?,?,?,?) ON CONFLICT(symbol) DO UPDATE SET company_name=excluded.company_name, "
+                "sector=excluded.sector, industry=excluded.industry, exchange=excluded.exchange, "
+                "country=excluded.country, updated_at=excluded.updated_at",
+                (symbol.upper(), company_name, sector, industry, exchange, country, now))
+
+    def upsert_financial_metrics(self, *, symbol: str, period, revenue, revenue_growth, gross_margin,
+                                 operating_margin, net_margin, eps, eps_growth, free_cash_flow, debt, cash) -> None:
+        now = utcnow_iso()
+        f = lambda v: None if v is None else str(float(v))  # noqa: E731 — canonical-decimal TEXT
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO financial_metrics (symbol,period,revenue,revenue_growth,gross_margin,"
+                "operating_margin,net_margin,eps,eps_growth,free_cash_flow,debt,cash,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(symbol) DO UPDATE SET period=excluded.period, "
+                "revenue=excluded.revenue, revenue_growth=excluded.revenue_growth, "
+                "gross_margin=excluded.gross_margin, operating_margin=excluded.operating_margin, "
+                "net_margin=excluded.net_margin, eps=excluded.eps, eps_growth=excluded.eps_growth, "
+                "free_cash_flow=excluded.free_cash_flow, debt=excluded.debt, cash=excluded.cash, "
+                "updated_at=excluded.updated_at",
+                (symbol.upper(), period, f(revenue), f(revenue_growth), f(gross_margin), f(operating_margin),
+                 f(net_margin), f(eps), f(eps_growth), f(free_cash_flow), f(debt), f(cash), now))
+
+    def upsert_valuation(self, *, symbol: str, market_cap, pe_ratio, forward_pe, price_sales, enterprise_value) -> None:
+        now = utcnow_iso()
+        f = lambda v: None if v is None else str(float(v))  # noqa: E731
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO valuation (symbol,market_cap,pe_ratio,forward_pe,price_sales,enterprise_value,updated_at) "
+                "VALUES (?,?,?,?,?,?,?) ON CONFLICT(symbol) DO UPDATE SET market_cap=excluded.market_cap, "
+                "pe_ratio=excluded.pe_ratio, forward_pe=excluded.forward_pe, price_sales=excluded.price_sales, "
+                "enterprise_value=excluded.enterprise_value, updated_at=excluded.updated_at",
+                (symbol.upper(), f(market_cap), f(pe_ratio), f(forward_pe), f(price_sales), f(enterprise_value), now))
+
+    def upsert_analyst_estimates(self, *, symbol: str, rating, target_price, analyst_count,
+                                 upgrade_count, downgrade_count) -> None:
+        now = utcnow_iso()
+        f = lambda v: None if v is None else str(float(v))  # noqa: E731
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO analyst_estimates (symbol,rating,target_price,analyst_count,upgrade_count,"
+                "downgrade_count,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(symbol) DO UPDATE SET "
+                "rating=excluded.rating, target_price=excluded.target_price, analyst_count=excluded.analyst_count, "
+                "upgrade_count=excluded.upgrade_count, downgrade_count=excluded.downgrade_count, "
+                "updated_at=excluded.updated_at",
+                (symbol.upper(), rating, f(target_price), analyst_count, upgrade_count, downgrade_count, now))
+
+    def get_company(self, symbol: str) -> CompanyRow | None:
+        r = self._one("SELECT symbol,company_name,sector,industry,exchange,country,updated_at "
+                      "FROM companies WHERE symbol=?", (symbol.upper(),))
+        return CompanyRow(*r) if r else None
+
+    def get_financial_metrics(self, symbol: str) -> FinancialMetricsRow | None:
+        r = self._one("SELECT symbol,period,revenue,revenue_growth,gross_margin,operating_margin,net_margin,"
+                      "eps,eps_growth,free_cash_flow,debt,cash,updated_at FROM financial_metrics WHERE symbol=?",
+                      (symbol.upper(),))
+        if not r:
+            return None
+        g = lambda v: None if v is None else float(v)  # noqa: E731
+        return FinancialMetricsRow(r[0], r[1], g(r[2]), g(r[3]), g(r[4]), g(r[5]), g(r[6]), g(r[7]), g(r[8]),
+                                   g(r[9]), g(r[10]), g(r[11]), r[12])
+
+    def get_valuation(self, symbol: str) -> ValuationRow | None:
+        r = self._one("SELECT symbol,market_cap,pe_ratio,forward_pe,price_sales,enterprise_value,updated_at "
+                      "FROM valuation WHERE symbol=?", (symbol.upper(),))
+        if not r:
+            return None
+        g = lambda v: None if v is None else float(v)  # noqa: E731
+        return ValuationRow(r[0], g(r[1]), g(r[2]), g(r[3]), g(r[4]), g(r[5]), r[6])
+
+    def get_analyst_estimates(self, symbol: str) -> AnalystEstimatesRow | None:
+        r = self._one("SELECT symbol,rating,target_price,analyst_count,upgrade_count,downgrade_count,updated_at "
+                      "FROM analyst_estimates WHERE symbol=?", (symbol.upper(),))
+        if not r:
+            return None
+        return AnalystEstimatesRow(r[0], r[1], (float(r[2]) if r[2] is not None else None),
+                                   (int(r[3]) if r[3] is not None else None),
+                                   (int(r[4]) if r[4] is not None else None),
+                                   (int(r[5]) if r[5] is not None else None), r[6])
+
+    def count_companies(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM companies")
         return int(r[0]) if r else 0
 
     # -- trader intelligence (§ Phase G2.5, read-only) --------------------

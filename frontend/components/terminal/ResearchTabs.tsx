@@ -8,6 +8,7 @@ import { NoData } from "@/components/ui";
 import { EventTimeline, type TimelineEvent } from "./EventTimeline";
 import { NewsFeed } from "./NewsFeed";
 import { TradersFeed } from "./TradersFeed";
+import { FundamentalsFeed } from "./FundamentalsFeed";
 import type { Quote } from "@/lib/market";
 
 const TABS = ["Overview", "News", "Fundamentals", "Options", "Traders", "AI History"] as const;
@@ -53,7 +54,7 @@ export function ResearchTabs({ quote, decisions, symbol }: { quote: Quote | null
       </div>
       {tab === "Overview" && <Overview quote={quote} />}
       {tab === "News" && <NewsFeed symbol={symbol} />}
-      {tab === "Fundamentals" && <NoFeed note="Fundamentals not connected. Financials appear here once a data source is wired — never invented." />}
+      {tab === "Fundamentals" && <FundamentalsFeed symbol={symbol} />}
       {tab === "Options" && <NoFeed note="Options chain not connected. Contracts appear here once an options feed is wired — never invented." />}
       {tab === "Traders" && <TradersFeed symbol={symbol} />}
       {tab === "AI History" && <EventTimeline events={aiEvents} />}

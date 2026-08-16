@@ -21,6 +21,7 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from ..dashboard.readmodel import build_dashboard_read_model
+from ..fundamentals.readmodel import build_fundamentals
 from ..news.analysis import sentiment_label
 from ..persistence.state import RedisStateStore
 from ..traders.readmodel import build_symbol_consensus, build_trader_profile
@@ -213,6 +214,16 @@ def market_news(symbol: str, limit: int = 30) -> dict:
     } for r in rows]
     return {"symbol": symbol.upper(), "count": len(items), "items": items,
             "ts": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/market/{symbol}/fundamentals")
+def market_fundamentals(symbol: str) -> dict:
+    """Read-only fundamentals intelligence (§ Phase G2.2): company profile, financials, valuation,
+    analyst estimates + a deterministic company quality score and strengths/risks — assembled from
+    persisted data. INTELLIGENCE SIGNAL only, never a buy/sell decision. Missing data -> null/empty
+    (NO DATA), never fabricated. No secrets. Public read-model like /market and /market/{symbol}/news."""
+    with ctx.lock:
+        return build_fundamentals(ctx.store, symbol.upper())
 
 
 @app.get("/market/{symbol}/traders")

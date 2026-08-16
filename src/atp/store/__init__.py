@@ -7,11 +7,14 @@ interface. `open_store` selects a backend from a URL:
 """
 
 from .base import (
+    AnalystEstimatesRow,
     AuditEventRow,
+    CompanyRow,
     DailyLossLockRow,
     DailyPnlRow,
     DecisionRow,
     FillRow,
+    FinancialMetricsRow,
     KillSwitchRow,
     NewsItemRow,
     OrderRow,
@@ -21,6 +24,7 @@ from .base import (
     RuntimeStateRow,
     SqlStore,
     Store,
+    ValuationRow,
     TraderPerformanceRow,
     TraderPositionRow,
     TraderRow,
@@ -37,6 +41,7 @@ __all__ = [
     "RuntimeStateRow", "KillSwitchRow", "DailyPnlRow", "DailyLossLockRow",
     "RiskConfigRow", "RiskStateRow", "OrderRow", "FillRow", "PositionRow", "AuditEventRow",
     "DecisionRow", "NewsItemRow", "TraderRow", "TraderPerformanceRow", "TraderPositionRow",
+    "CompanyRow", "FinancialMetricsRow", "ValuationRow", "AnalystEstimatesRow",
 ]
 
 

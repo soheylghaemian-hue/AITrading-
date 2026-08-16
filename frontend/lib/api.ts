@@ -10,6 +10,7 @@ import type { Snapshot } from "./types";
 import type { OhlcBar } from "./ohlc";
 import type { NewsItem } from "./news";
 import type { TraderConsensus } from "./traders";
+import type { FundamentalsData } from "./fundamentals";
 
 // Where the browser sends dashboard calls. Default: the SAME-ORIGIN server proxy ("/api"), which
 // forwards to the private backend and injects the read token server-side — so no token ever
@@ -115,6 +116,28 @@ export async function fetchTrader(id: string, signal?: AbortSignal): Promise<any
     { signal, cache: "no-store", headers: { Accept: "application/json" } });
   if (!res.ok) throw new Error(`backend ${res.status}`);
   return res.json();
+}
+
+// Fundamentals intelligence for the terminal Fundamentals tab (§ Phase G2.2). Read-only, via the SAME
+// same-origin server proxy; the proxy forwards to the Control API's /market/{symbol}/fundamentals. On no
+// backend / non-OK it throws — the caller renders NO DATA (never fabricates a financial value).
+export async function fetchFundamentals(symbol: string, signal?: AbortSignal): Promise<FundamentalsData> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/fundamentals/${encodeURIComponent(symbol)}`,
+    { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = (await res.json()) as Partial<FundamentalsData>;
+  return {
+    symbol: b.symbol ?? symbol,
+    company: b.company ?? null,
+    quality_score: b.quality_score ?? null,
+    quality_breakdown: b.quality_breakdown ?? null,
+    financials: b.financials ?? null,
+    valuation: b.valuation ?? null,
+    analyst_estimates: b.analyst_estimates ?? null,
+    strengths: Array.isArray(b.strengths) ? b.strengths : [],
+    risks: Array.isArray(b.risks) ? b.risks : [],
+  };
 }
 
 // Mutations are authorized by the SERVER proxy (it injects the owner token from a server env var),

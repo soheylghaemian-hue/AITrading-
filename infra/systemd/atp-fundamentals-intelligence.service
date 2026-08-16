@@ -1,0 +1,29 @@
+[Unit]
+Description=ATP Fundamentals Intelligence Service (Phase G2.2 — read-only company fundamentals)
+Documentation=https://github.com/soheylghaemian-hue/AITrading-
+After=network-online.target docker.service
+Wants=network-online.target
+# Polls the configured fundamentals provider (Massive/Polygon by default), persists company profile /
+# financials / valuation to PostgreSQL; the Control API serves a deterministic quality score. An
+# intelligence input only — never trades, never touches IBKR/execution/broker, holds no credentials.
+
+[Service]
+Type=simple
+User=atp
+Group=atp
+WorkingDirectory=/opt/atp/app
+Environment=PYTHONPATH=/opt/atp/app/src
+EnvironmentFile=/opt/atp/atp.env
+ExecStart=/opt/atp/app/.venv/bin/python -m atp.services.fundamentals_intelligence
+Restart=always
+RestartSec=5
+# Fail-closed: no provider/entitlement or a provider/DB error persists nothing (never a fabricated
+# revenue/margin) and reports DEGRADED; systemd restarts the process, but no fundamentals are invented.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/atp
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

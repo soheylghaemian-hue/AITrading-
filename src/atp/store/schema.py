@@ -145,6 +145,31 @@ def _migration_005(dialect: str) -> list[str]:
     ]
 
 
+def _migration_006(dialect: str) -> list[str]:
+    """Fundamentals intelligence (§ Phase G2.2 — read-only). Four additive tables: companies (profile),
+    financial_metrics (latest period per symbol), valuation, analyst_estimates. Numeric fields are
+    canonical-decimal TEXT (dialect-agnostic). The company quality score + strengths/risks are COMPUTED
+    deterministically on read (never stored, never fabricated). Intelligence input only — no Trading
+    Core / Risk / Broker / IBKR / Execution code is touched."""
+    t = _types(dialect)
+    ts, txt, i = t["TS"], t["TXT"], t["INT"]
+    return [
+        f"""CREATE TABLE IF NOT EXISTS companies (
+            symbol {txt} PRIMARY KEY, company_name {txt}, sector {txt}, industry {txt},
+            exchange {txt}, country {txt}, updated_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS financial_metrics (
+            symbol {txt} PRIMARY KEY, period {txt}, revenue {txt}, revenue_growth {txt},
+            gross_margin {txt}, operating_margin {txt}, net_margin {txt}, eps {txt}, eps_growth {txt},
+            free_cash_flow {txt}, debt {txt}, cash {txt}, updated_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS valuation (
+            symbol {txt} PRIMARY KEY, market_cap {txt}, pe_ratio {txt}, forward_pe {txt},
+            price_sales {txt}, enterprise_value {txt}, updated_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS analyst_estimates (
+            symbol {txt} PRIMARY KEY, rating {txt}, target_price {txt}, analyst_count {i},
+            upgrade_count {i}, downgrade_count {i}, updated_at {ts} NOT NULL)""",
+    ]
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -152,6 +177,7 @@ MIGRATIONS = [
     (3, "ohlc_bars", _migration_003),
     (4, "news_items", _migration_004),
     (5, "trader_intelligence", _migration_005),
+    (6, "fundamentals", _migration_006),
 ]
 
 

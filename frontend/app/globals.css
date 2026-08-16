@@ -361,3 +361,26 @@ a.newsrow:hover{background:var(--line-soft)}
 .cival{display:flex;align-items:center;gap:8px;min-width:120px;justify-content:flex-end}
 .cival i{display:block;height:6px;border-radius:3px;background:linear-gradient(90deg,var(--accent-deep),var(--accent));max-width:80px;flex:1}
 .cival b{color:var(--ink);min-width:22px;text-align:right}
+
+/* ---------------------------------------------------------------- Fundamentals (§ G2.2) --------- */
+.fund{display:flex;flex-direction:column;gap:16px;padding:4px 2px}
+.fhead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.fsub{font-size:12px;color:var(--dim);margin-top:3px}
+.fscore{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.fq{font-family:var(--mono);font-size:30px;font-weight:650;line-height:1}
+.fq small{font-size:12px;color:var(--faint);font-weight:500}
+.fq.hi{color:var(--pos)} .fq.med{color:var(--warn)} .fq.lo{color:var(--dim)}
+.fgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+.fmetric{background:var(--panel);border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:11px 12px}
+.fmetric .label{margin-bottom:6px}
+.fmetric .v{font-size:14.5px;font-weight:600;color:var(--ink)}
+.fval{font-family:var(--mono);font-size:12px;font-weight:700;padding:2px 8px;border-radius:5px}
+.fval.pos{color:var(--pos);background:var(--pos-bg)} .fval.neg{color:var(--neg);background:var(--neg-bg)} .fval.neu{color:var(--warn);background:var(--warn-bg)}
+.fanalyst{border-top:1px solid var(--line-soft);padding-top:12px}
+.fameta{display:flex;gap:22px;flex-wrap:wrap;margin-top:8px;font-size:12.5px;color:var(--dim)}
+.fameta b{color:var(--ink);font-family:var(--mono);font-weight:600}
+.fsr{display:grid;grid-template-columns:1fr 1fr;gap:16px;border-top:1px solid var(--line-soft);padding-top:12px}
+.fcol .label{margin-bottom:8px}
+.fitem{font-size:13px;padding:4px 0;font-weight:500}
+.fitem.pos{color:var(--pos)} .fitem.neg{color:var(--neg)} .fitem.neu{color:var(--faint);font-family:var(--mono);font-size:11px;letter-spacing:1px}
+@media (max-width:900px){.fgrid{grid-template-columns:repeat(2,1fr)}}
