@@ -13,6 +13,7 @@ import type { TraderConsensus } from "./traders";
 import type { FundamentalsData } from "./fundamentals";
 import type { OptionsData } from "./options";
 import type { AiConsensus } from "./consensus";
+import type { AiPerformance, AiHistory } from "./performance";
 
 // Where the browser sends dashboard calls. Default: the SAME-ORIGIN server proxy ("/api"), which
 // forwards to the private backend and injects the read token server-side — so no token ever
@@ -191,6 +192,39 @@ export async function fetchConsensus(symbol: string, signal?: AbortSignal): Prom
     risks: Array.isArray(b.risks) ? b.risks : [],
     conflicts: Array.isArray(b.conflicts) ? b.conflicts : [],
   };
+}
+
+// AI performance metrics (§ Phase G3.1). Read-only, via the same-origin proxy → Control API /ai/performance.
+export async function fetchPerformance(horizon = 5, signal?: AbortSignal): Promise<AiPerformance> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/ai-performance?horizon=${horizon}`,
+    { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = (await res.json()) as Partial<AiPerformance>;
+  return {
+    sample_size: b.sample_size ?? 0,
+    overall_accuracy: b.overall_accuracy ?? null,
+    direction_accuracy: b.direction_accuracy ?? null,
+    bullish_accuracy: b.bullish_accuracy ?? null,
+    bearish_accuracy: b.bearish_accuracy ?? null,
+    average_return: b.average_return ?? null,
+    confidence_calibration: b.confidence_calibration ?? null,
+    score_reliability: b.score_reliability ?? null,
+    horizon_days: b.horizon_days ?? horizon,
+    errors: b.errors ?? {},
+    best_inputs: Array.isArray(b.best_inputs) ? b.best_inputs : [],
+    weakest_inputs: Array.isArray(b.weakest_inputs) ? b.weakest_inputs : [],
+  };
+}
+
+// AI prediction history for a symbol (§ Phase G3.1) → Control API /market/{symbol}/ai-history.
+export async function fetchAiHistory(symbol: string, signal?: AbortSignal): Promise<AiHistory> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/ai-history/${encodeURIComponent(symbol)}`,
+    { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = (await res.json()) as Partial<AiHistory>;
+  return { symbol: b.symbol ?? symbol, count: b.count ?? 0, assessments: Array.isArray(b.assessments) ? b.assessments : [] };
 }
 
 // Mutations are authorized by the SERVER proxy (it injects the owner token from a server env var),

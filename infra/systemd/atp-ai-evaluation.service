@@ -1,0 +1,29 @@
+[Unit]
+Description=ATP AI Evaluation Service (Phase G3.1 — read-only AI performance tracking)
+Documentation=https://github.com/soheylghaemian-hue/AITrading-
+After=network-online.target docker.service
+Wants=network-online.target
+# Snapshots the AI consensus into an IMMUTABLE prediction history and measures forward-return outcomes
+# from real OHLC. No external fetch. Evaluation only — never trades, never touches IBKR/execution/
+# broker, holds no credentials. History is never rewritten; failed predictions are never removed.
+
+[Service]
+Type=simple
+User=atp
+Group=atp
+WorkingDirectory=/opt/atp/app
+Environment=PYTHONPATH=/opt/atp/app/src
+EnvironmentFile=/opt/atp/atp.env
+ExecStart=/opt/atp/app/.venv/bin/python -m atp.services.ai_evaluation
+Restart=always
+RestartSec=5
+# Fail-closed: no prices → no outcomes (NO DATA, never a fabricated result); a DB error persists
+# nothing; systemd restarts the process, but no prediction or outcome is ever invented or rewritten.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/atp
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

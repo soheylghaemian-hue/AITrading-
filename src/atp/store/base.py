@@ -298,6 +298,31 @@ class AiAssessmentComponentRow:
 
 
 @dataclass(slots=True)
+class AiPredictionRow:
+    id: str
+    symbol: str
+    timestamp: str | None
+    score: float | None
+    direction: str | None
+    confidence: float | None
+    status: str | None
+    price_at_prediction: float | None
+    components_snapshot: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
+class AiPredictionOutcomeRow:
+    prediction_id: str
+    time_horizon: int
+    price_at_prediction: float | None
+    future_price: float | None
+    return_percentage: float | None
+    direction_correct: bool | None
+    evaluated_at: str
+
+
+@dataclass(slots=True)
 class OhlcBarRow:
     symbol: str
     interval: str
@@ -775,6 +800,72 @@ class SqlStore(Store):
             r = self._one("SELECT COUNT(*) FROM news_items WHERE symbol=?", (symbol,))
         else:
             r = self._one("SELECT COUNT(*) FROM news_items")
+        return int(r[0]) if r else 0
+
+    # -- AI evaluation & performance (§ Phase G3.1, IMMUTABLE history) -----
+    def insert_ai_prediction(self, *, id: str, symbol: str, timestamp, score, direction, confidence,
+                             status, price_at_prediction, components_snapshot: str | None) -> None:
+        """Append an immutable prediction snapshot. ON CONFLICT DO NOTHING → a prediction is NEVER
+        rewritten (history is honest; old scores never change)."""
+        now = utcnow_iso()
+        f = lambda v: None if v is None else str(float(v))  # noqa: E731
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO ai_predictions (id,symbol,timestamp,score,direction,confidence,status,"
+                "price_at_prediction,components_snapshot,created_at) VALUES (?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(id) DO NOTHING",
+                (id, symbol.upper(), timestamp, f(score), direction, f(confidence), status,
+                 f(price_at_prediction), components_snapshot, now))
+
+    def insert_ai_prediction_outcome(self, *, prediction_id: str, time_horizon: int, price_at_prediction,
+                                     future_price, return_percentage, direction_correct: bool | None) -> None:
+        """Record a measured outcome once. ON CONFLICT DO NOTHING → outcomes are never overwritten or
+        removed (failed predictions stay on the record)."""
+        now = utcnow_iso()
+        f = lambda v: None if v is None else str(float(v))  # noqa: E731
+        dc = None if direction_correct is None else (1 if direction_correct else 0)
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO ai_prediction_outcomes (prediction_id,time_horizon,price_at_prediction,"
+                "future_price,return_percentage,direction_correct,evaluated_at) VALUES (?,?,?,?,?,?,?) "
+                "ON CONFLICT(prediction_id,time_horizon) DO NOTHING",
+                (prediction_id, int(time_horizon), f(price_at_prediction), f(future_price),
+                 f(return_percentage), dc, now))
+
+    def get_ai_prediction(self, prediction_id: str) -> AiPredictionRow | None:
+        r = self._one("SELECT id,symbol,timestamp,score,direction,confidence,status,price_at_prediction,"
+                      "components_snapshot,created_at FROM ai_predictions WHERE id=?", (prediction_id,))
+        return self._pred_row(r) if r else None
+
+    def _pred_row(self, r) -> AiPredictionRow:
+        g = lambda v: None if v is None else float(v)  # noqa: E731
+        return AiPredictionRow(r[0], r[1], r[2], g(r[3]), r[4], g(r[5]), r[6], g(r[7]), r[8], r[9])
+
+    def list_ai_predictions(self, symbol: str | None = None, limit: int = 500) -> list[AiPredictionRow]:
+        n = max(1, min(5000, int(limit)))
+        if symbol:
+            rows = self._all("SELECT id,symbol,timestamp,score,direction,confidence,status,price_at_prediction,"
+                             "components_snapshot,created_at FROM ai_predictions WHERE symbol=? "
+                             "ORDER BY timestamp DESC LIMIT ?", (symbol.upper(), n))
+        else:
+            rows = self._all("SELECT id,symbol,timestamp,score,direction,confidence,status,price_at_prediction,"
+                             "components_snapshot,created_at FROM ai_predictions ORDER BY timestamp DESC LIMIT ?", (n,))
+        return [self._pred_row(r) for r in rows]
+
+    def list_ai_prediction_outcomes(self, prediction_id: str | None = None) -> list[AiPredictionOutcomeRow]:
+        if prediction_id:
+            rows = self._all("SELECT prediction_id,time_horizon,price_at_prediction,future_price,"
+                             "return_percentage,direction_correct,evaluated_at FROM ai_prediction_outcomes "
+                             "WHERE prediction_id=?", (prediction_id,))
+        else:
+            rows = self._all("SELECT prediction_id,time_horizon,price_at_prediction,future_price,"
+                             "return_percentage,direction_correct,evaluated_at FROM ai_prediction_outcomes")
+        g = lambda v: None if v is None else float(v)  # noqa: E731
+        return [AiPredictionOutcomeRow(x[0], int(x[1]), g(x[2]), g(x[3]), g(x[4]),
+                                       (None if x[5] is None else bool(x[5])), x[6]) for x in rows]
+
+    def count_ai_predictions(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM ai_predictions")
         return int(r[0]) if r else 0
 
     # -- AI consensus (§ Phase G3, read-only orchestration snapshot) ------

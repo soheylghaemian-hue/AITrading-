@@ -5,11 +5,11 @@ import React, { useState } from "react";
 import { NO_DATA, price, num, spread as fmtSpread, isPresent } from "@/lib/format";
 import { humanStatus } from "@/lib/errors";
 import { NoData } from "@/components/ui";
-import { EventTimeline, type TimelineEvent } from "./EventTimeline";
 import { NewsFeed } from "./NewsFeed";
 import { TradersFeed } from "./TradersFeed";
 import { FundamentalsFeed } from "./FundamentalsFeed";
 import { OptionsFeed } from "./OptionsFeed";
+import { AiHistoryFeed } from "./AiHistoryFeed";
 import type { Quote } from "@/lib/market";
 
 const TABS = ["Overview", "News", "Fundamentals", "Options", "Traders", "AI History"] as const;
@@ -38,16 +38,8 @@ function NoFeed({ note }: { note: string }) {
   return <div className="ndbox"><div className="nd">{NO_DATA}</div><p>{note}</p></div>;
 }
 
-export function ResearchTabs({ quote, decisions, symbol }: { quote: Quote | null; decisions: Record<string, any>[]; symbol: string }) {
+export function ResearchTabs({ quote, decisions: _decisions, symbol }: { quote: Quote | null; decisions: Record<string, any>[]; symbol: string }) {
   const [tab, setTab] = useState<Tab>("Overview");
-  const aiEvents: TimelineEvent[] = (decisions || []).map((d) => {
-    const verdict = (d.risk_decision || "").toString().toUpperCase();
-    const action = (d.action || "").toString().toUpperCase();
-    return {
-      ts: d.ts, kind: "signal", title: `${action || "—"} ${d.instrument || symbol}`, detail: d.reason,
-      tone: verdict === "APPROVED" ? "ok" : verdict === "REJECTED" ? "sell" : action === "SELL" ? "sell" : action === "BUY" ? "buy" : "muted",
-    };
-  });
   return (
     <div className="card">
       <div className="tabs">
@@ -58,7 +50,7 @@ export function ResearchTabs({ quote, decisions, symbol }: { quote: Quote | null
       {tab === "Fundamentals" && <FundamentalsFeed symbol={symbol} />}
       {tab === "Options" && <OptionsFeed symbol={symbol} />}
       {tab === "Traders" && <TradersFeed symbol={symbol} />}
-      {tab === "AI History" && <EventTimeline events={aiEvents} />}
+      {tab === "AI History" && <AiHistoryFeed symbol={symbol} />}
     </div>
   );
 }

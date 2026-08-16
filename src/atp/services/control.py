@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from ..consensus.engine import build_ai_consensus
 from ..dashboard.readmodel import build_dashboard_read_model
+from ..evaluation.metrics import build_ai_history, compute_performance
 from ..fundamentals.readmodel import build_fundamentals
 from ..news.analysis import sentiment_label
 from ..optflow.readmodel import build_options
@@ -216,6 +217,29 @@ def market_news(symbol: str, limit: int = 30) -> dict:
     } for r in rows]
     return {"symbol": symbol.upper(), "count": len(items), "items": items,
             "ts": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/ai/performance")
+def ai_performance(horizon: int = 5) -> dict:
+    """Read-only AI performance (§ Phase G3.1): directional accuracy, average forward return, confidence
+    calibration, score reliability, error classification + sample size — computed from the immutable
+    prediction/outcome history. History is never rewritten. 0 evaluated outcomes -> NO DATA (never
+    fabricated). No secrets, no execution."""
+    h = horizon if horizon in (1, 3, 5, 20) else 5
+    with ctx.lock:
+        return compute_performance(ctx.store, h)
+
+
+@app.get("/market/{symbol}/ai-history")
+def market_ai_history(symbol: str, limit: int = 50) -> dict:
+    """Read-only AI prediction history (§ Phase G3.1) for a symbol — past AI views with their measured
+    outcomes (1/3/5/20-day forward returns). Immutable; missing outcomes -> NO DATA. No secrets."""
+    try:
+        n = max(1, min(200, int(limit)))
+    except (TypeError, ValueError):
+        n = 50
+    with ctx.lock:
+        return build_ai_history(ctx.store, symbol.upper(), n)
 
 
 @app.get("/market/{symbol}/ai-consensus")

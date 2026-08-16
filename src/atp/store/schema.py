@@ -212,6 +212,27 @@ def _migration_008(dialect: str) -> list[str]:
     ]
 
 
+def _migration_009(dialect: str) -> list[str]:
+    """AI evaluation & performance tracking (§ Phase G3.1 — read-only, IMMUTABLE history). Two tables:
+    ai_predictions (an exact snapshot of the AI consensus at prediction time — NEVER rewritten) and
+    ai_prediction_outcomes (the measured result per time horizon — evaluated once, never removed). This
+    only EVALUATES predictions; it is not trading logic. No Trading Core / Risk / Broker / IBKR /
+    Execution code is touched."""
+    t = _types(dialect)
+    ts, txt, i, b = t["TS"], t["TXT"], t["INT"], t["BOOL"]
+    return [
+        f"""CREATE TABLE IF NOT EXISTS ai_predictions (
+            id {txt} PRIMARY KEY, symbol {txt} NOT NULL, timestamp {ts}, score {txt}, direction {txt},
+            confidence {txt}, status {txt}, price_at_prediction {txt}, components_snapshot {txt},
+            created_at {ts} NOT NULL)""",
+        "CREATE INDEX IF NOT EXISTS ix_ai_predictions_symbol ON ai_predictions(symbol, timestamp)",
+        f"""CREATE TABLE IF NOT EXISTS ai_prediction_outcomes (
+            prediction_id {txt} NOT NULL, time_horizon {i} NOT NULL, price_at_prediction {txt},
+            future_price {txt}, return_percentage {txt}, direction_correct {b}, evaluated_at {ts} NOT NULL,
+            PRIMARY KEY (prediction_id, time_horizon))""",
+    ]
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -222,6 +243,7 @@ MIGRATIONS = [
     (6, "fundamentals", _migration_006),
     (7, "options_intelligence", _migration_007),
     (8, "ai_consensus", _migration_008),
+    (9, "ai_evaluation", _migration_009),
 ]
 
 

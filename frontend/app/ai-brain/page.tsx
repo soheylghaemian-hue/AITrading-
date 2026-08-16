@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import { useDashboard } from "@/components/shell";
 import { AiBrainView } from "@/components/views";
 import { ConsensusPanel } from "@/components/ConsensusPanel";
+import { AiPerformancePanel } from "@/components/AiPerformance";
 
 const SYMBOLS = ["NVDA", "AAPL", "SPY"];
 
@@ -21,6 +22,7 @@ export default function Page() {
         </div>
       </div>
       <ConsensusPanel symbol={symbol} />
+      <AiPerformancePanel />
       <AiBrainView s={data} connected={connected} />
     </>
   );

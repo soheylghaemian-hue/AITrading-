@@ -19,6 +19,7 @@ const READ_PATHS = new Set([
   "summary", "positions", "risk", "agents", "opportunities", "performance", "governance",
   "system", "notifications", "reconciliation", "market-data", "subscriptions", "ai-analysis",
   "trading-risk", "ohlc", "news", "traders", "trader", "fundamentals", "options", "ai-consensus",
+  "ai-history", "ai-performance",
 ]);
 // Mutations require the OWNER token, supplied by the user (not stored) and enforced by the backend.
 // "autonomous" covers the token-gated /dashboard/autonomous/{arm,start,stop,disarm,kill,reset}.
@@ -74,11 +75,14 @@ async function forward(req: NextRequest, path: string[], method: "GET" | "POST")
   // forwarded. Same DASHBOARD_API_URL + token.
   const sym = encodeURIComponent(path[1] ?? "");
   const target =
-    (top === "ohlc" || top === "news" || top === "traders" || top === "fundamentals" || top === "options" || top === "ai-consensus")
+    (top === "ohlc" || top === "news" || top === "traders" || top === "fundamentals" || top === "options"
+      || top === "ai-consensus" || top === "ai-history")
       ? `${BACKEND}/market/${sym}/${top}${req.nextUrl.search}`
       : top === "trader"
         ? `${BACKEND}/traders/${sym}`
-        : `${BACKEND}/dashboard/${path.join("/")}`;
+        : top === "ai-performance"
+          ? `${BACKEND}/ai/performance${req.nextUrl.search}`
+          : `${BACKEND}/dashboard/${path.join("/")}`;
 
   try {
     const res = await fetch(target, init);
