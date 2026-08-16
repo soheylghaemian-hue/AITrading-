@@ -99,6 +99,32 @@ describe("every route renders (with data)", () => {
   });
 });
 
+describe("Markets symbol navigation (§ G2.1 fix)", () => {
+  // Market closed → every symbol is DATA_NOT_AVAILABLE, but each must STILL link to its detail terminal
+  // (News + research work independent of market hours). This is the regression that broke navigation.
+  const closed: Snapshot = {
+    mode: "paper", connected: true, execution_enabled: false,
+    global_market_data: ["NVDA", "AAPL", "SPY"].map((symbol) => ({
+      region: "USA", symbol, source: "MASSIVE", status: "DATA_NOT_AVAILABLE", realtime: false,
+      bid: null, ask: null, last: null, spread: null, bid_size: null, ask_size: null, volume: null,
+      subscription_state: "OK",
+    })),
+  } as any;
+
+  it("links every symbol to /markets/[symbol] even when market data is unavailable", () => {
+    const h = r(<MarketsView s={closed} connected />);
+    for (const sym of ["NVDA", "AAPL", "SPY"]) {
+      expect(h).toContain(`<a href="/markets/${sym}">${sym}</a>`);   // NVDA → /markets/NVDA, etc.
+    }
+    expect(h).not.toMatch(/<td>NVDA<\/td>/);                          // never an unlinked plain-text symbol
+  });
+
+  it("still links the symbol when a live quote IS available", () => {
+    const h = r(<MarketsView s={rich} connected />);                  // rich: NVDA DATA_AVAILABLE
+    expect(h).toContain('<a href="/markets/NVDA">NVDA</a>');
+  });
+});
+
 describe("NO DATA discipline (null snapshot) — no fabricated values", () => {
   const cases: [string, React.ReactElement][] = [
     ["Overview", <OverviewView s={null} connected={false} />],

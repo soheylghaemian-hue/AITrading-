@@ -149,8 +149,10 @@ export function MarketsView({ s, connected }: { s: Snapshot | null; connected: b
             <tbody>{rows.map((r, i) => {
               const avail = r.status === "DATA_AVAILABLE" || r.status === "DELAYED";
               return (
-                <tr key={i} className={avail ? "rowlink" : ""}>
-                  <td>{avail ? <a href={`/markets/${r.symbol}`}>{r.symbol}</a> : r.symbol}</td>
+                // The symbol ALWAYS links to its detail terminal — the News tab (and future research)
+                // works independent of market hours, so a symbol with no live quote is still navigable.
+                <tr key={i} className="rowlink">
+                  <td><a href={`/markets/${r.symbol}`}>{r.symbol}</a></td>
                   <td className={`num ${avail ? "" : "neut"}`}>{price(r.last)}</td>
                   <td className={`num ${avail ? "" : "neut"}`}>{price(r.bid)}</td>
                   <td className={`num ${avail ? "" : "neut"}`}>{price(r.ask)}</td>

@@ -105,6 +105,7 @@ nav{display:flex;flex-direction:column;gap:2px}
 .rowtab td:first-child{text-align:left;font-weight:600}
 .rowtab tr:last-child td{border-bottom:none}
 .rowtab tr:hover td{background:rgba(255,255,255,.014)}
+.rowtab td:first-child a:hover{color:var(--accent)}   /* symbol → detail terminal (always clickable) */
 .rowlink{cursor:pointer}
 .tag{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.4px;padding:3px 9px;border-radius:6px}
 .tag.long,.tag.buy,.tag.ok{color:var(--pos);background:var(--pos-bg)}
