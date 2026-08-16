@@ -1,0 +1,32 @@
+[Unit]
+Description=ATP Institutional Intelligence (Phase R1.3 — read-only 13F changes + Form 4 insiders)
+Documentation=https://github.com/soheylghaemian-hue/AITrading-
+After=network-online.target docker.service
+Wants=network-online.target
+# Records 13F quarter-over-quarter position changes (ACCUMULATION / REDUCTION / NEW_POSITION / EXIT) and
+# SEC Form 4 insider BUY/SELL transactions from SEC EDGAR. Intelligence input only — it never trades,
+# never copy-trades, never generates orders, never touches IBKR/execution/broker/risk-engine. Needs a
+# descriptive SEC User-Agent (ATP_SEC_USER_AGENT) and paces requests under SEC's <=10 req/s limit.
+
+[Service]
+Type=simple
+User=atp
+Group=atp
+WorkingDirectory=/opt/atp/app
+Environment=PYTHONPATH=/opt/atp/app/src
+Environment=ATP_SEC_REQUEST_DELAY_S=0.12
+EnvironmentFile=/opt/atp/atp.env
+ExecStart=/opt/atp/app/.venv/bin/python -m atp.services.institutional_intelligence
+Restart=always
+RestartSec=5
+# Fail-closed + restart-safe: changes/transactions are immutable (ON CONFLICT DO NOTHING) so a restart
+# never rewrites history; no SEC User-Agent → NO DATA (never fabricated). A provider/DB error persists
+# nothing; systemd restarts the process.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/atp
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

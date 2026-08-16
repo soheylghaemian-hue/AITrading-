@@ -368,6 +368,33 @@ class MacroSnapshotRow:
 
 
 @dataclass(slots=True)
+class InstitutionalChangeRow:
+    id: str
+    institution: str
+    symbol: str
+    previous_shares: float | None
+    current_shares: float | None
+    share_change: float | None
+    percentage_change: float | None
+    direction: str | None
+    filing_period: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
+class InsiderTransactionRow:
+    id: str
+    symbol: str
+    insider_name: str | None
+    title: str | None
+    transaction_type: str | None
+    shares: float | None
+    price: float | None
+    transaction_date: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
 class OhlcBarRow:
     symbol: str
     interval: str
@@ -1035,6 +1062,76 @@ class SqlStore(Store):
 
     def count_macro_snapshots(self) -> int:
         r = self._one("SELECT COUNT(*) FROM macro_snapshots")
+        return int(r[0]) if r else 0
+
+    # -- Institutional position changes (§ Phase R1.3, read-only IMMUTABLE 13F QoQ history) ------
+    _INSTCHG_COLS = ("id,institution,symbol,previous_shares,current_shares,share_change,"
+                     "percentage_change,direction,filing_period,created_at")
+
+    def insert_institutional_change(self, *, id: str, institution: str, symbol: str, previous_shares,
+                                    current_shares, share_change, percentage_change, direction: str | None,
+                                    filing_period: str | None) -> None:
+        """Record a 13F position change once. ON CONFLICT DO NOTHING → never rewritten (never fabricated)."""
+        now = utcnow_iso()
+        f = lambda v: None if v is None else str(float(v))  # noqa: E731
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO institutional_position_changes (id,institution,symbol,previous_shares,"
+                "current_shares,share_change,percentage_change,direction,filing_period,created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
+                (id, institution, symbol.upper(), f(previous_shares), f(current_shares), f(share_change),
+                 f(percentage_change), direction, filing_period, now))
+
+    def _instchg_row(self, r) -> InstitutionalChangeRow:
+        g = lambda v: None if v is None else float(v)  # noqa: E731
+        return InstitutionalChangeRow(r[0], r[1], r[2], g(r[3]), g(r[4]), g(r[5]), g(r[6]), r[7], r[8], r[9])
+
+    def list_institutional_changes(self, symbol: str | None = None, limit: int = 500) -> list[InstitutionalChangeRow]:
+        n = max(1, min(5000, int(limit)))
+        if symbol:
+            rows = self._all(f"SELECT {self._INSTCHG_COLS} FROM institutional_position_changes WHERE symbol=? "
+                             "ORDER BY filing_period DESC LIMIT ?", (symbol.upper(), n))
+        else:
+            rows = self._all(f"SELECT {self._INSTCHG_COLS} FROM institutional_position_changes "
+                             "ORDER BY filing_period DESC LIMIT ?", (n,))
+        return [self._instchg_row(r) for r in rows]
+
+    def count_institutional_changes(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM institutional_position_changes")
+        return int(r[0]) if r else 0
+
+    # -- Insider transactions (§ Phase R1.3, read-only IMMUTABLE Form 4 history) ------
+    _INSIDER_COLS = "id,symbol,insider_name,title,transaction_type,shares,price,transaction_date,created_at"
+
+    def insert_insider_transaction(self, *, id: str, symbol: str, insider_name: str | None,
+                                   title: str | None, transaction_type: str | None, shares, price,
+                                   transaction_date: str | None) -> None:
+        """Record an insider transaction once. ON CONFLICT DO NOTHING → never rewritten (never fabricated)."""
+        now = utcnow_iso()
+        f = lambda v: None if v is None else str(float(v))  # noqa: E731
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO insider_transactions (id,symbol,insider_name,title,transaction_type,shares,"
+                "price,transaction_date,created_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
+                (id, symbol.upper(), insider_name, title, transaction_type, f(shares), f(price),
+                 transaction_date, now))
+
+    def _insider_row(self, r) -> InsiderTransactionRow:
+        g = lambda v: None if v is None else float(v)  # noqa: E731
+        return InsiderTransactionRow(r[0], r[1], r[2], r[3], r[4], g(r[5]), g(r[6]), r[7], r[8])
+
+    def list_insider_transactions(self, symbol: str | None = None, limit: int = 500) -> list[InsiderTransactionRow]:
+        n = max(1, min(5000, int(limit)))
+        if symbol:
+            rows = self._all(f"SELECT {self._INSIDER_COLS} FROM insider_transactions WHERE symbol=? "
+                             "ORDER BY transaction_date DESC LIMIT ?", (symbol.upper(), n))
+        else:
+            rows = self._all(f"SELECT {self._INSIDER_COLS} FROM insider_transactions "
+                             "ORDER BY transaction_date DESC LIMIT ?", (n,))
+        return [self._insider_row(r) for r in rows]
+
+    def count_insider_transactions(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM insider_transactions")
         return int(r[0]) if r else 0
 
     # -- AI consensus (§ Phase G3, read-only orchestration snapshot) ------

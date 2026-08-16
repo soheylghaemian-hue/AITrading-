@@ -16,10 +16,23 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+
+def _sec_pace() -> None:
+    """Optional polite delay between SEC requests (env ATP_SEC_REQUEST_DELAY_S; default 0 = off). SEC's
+    Archives edge (www.sec.gov) rejects bursts and generic User-Agents — request-heavy collectors should
+    set a small delay (e.g. 0.12) to stay under the <=10 req/s fair-access limit."""
+    try:
+        d = float(os.environ.get("ATP_SEC_REQUEST_DELAY_S", "0") or 0)
+    except ValueError:
+        d = 0.0
+    if d > 0:
+        time.sleep(d)
 
 from .provider import (
     StrategyMetadata, TraderInfo, TraderPerformance, TraderPosition, TraderProvider,
@@ -81,12 +94,13 @@ def parse_submissions(payload: dict | None) -> dict | None:
     name = payload.get("name")
     cik = str(payload.get("cik") or "").zfill(10)
     if not idxs:
-        return {"name": name, "cik": cik, "latest": None, "first_13f_date": None, "filing_count": 0}
-    latest_i = min(idxs)                                    # 'recent' is newest-first
+        return {"name": name, "cik": cik, "latest": None, "filings": [], "first_13f_date": None,
+                "filing_count": 0}
+    filings = [{"accession": accs[i], "date": dates[i]} for i in idxs if i < len(accs) and i < len(dates)]
     first_date = min(dates[i] for i in idxs if i < len(dates))
     return {"name": name, "cik": cik,
-            "latest": {"accession": accs[latest_i], "date": dates[latest_i]},
-            "first_13f_date": first_date, "filing_count": len(idxs)}
+            "latest": filings[0],                          # 'recent' is newest-first → [0] current, [1] prior
+            "filings": filings, "first_13f_date": first_date, "filing_count": len(idxs)}
 
 
 def _localname(tag: str) -> str:
@@ -185,6 +199,7 @@ class Sec13FTraderProvider(TraderProvider):
     def _fetch(self, url: str) -> bytes | None:
         if not self._ua:
             return None
+        _sec_pace()                                        # stay within SEC's <=10 req/s fair-access limit
         try:
             # No Accept-Encoding → SEC returns identity (uncompressed); urllib doesn't auto-inflate gzip.
             req = Request(url, headers={"User-Agent": self._ua, "Accept": "application/json, */*"})
@@ -195,34 +210,57 @@ class Sec13FTraderProvider(TraderProvider):
         except Exception:
             return None
 
+    def _submissions(self, cik: str) -> dict | None:
+        raw = self._fetch(f"{_DATA_BASE}/submissions/CIK{cik.zfill(10)}.json")
+        return parse_submissions(json.loads(raw.decode("utf-8"))) if raw else None
+
+    def _holdings_for_accession(self, cik: str, accession: str) -> list[dict]:
+        """Fetch + parse the info-table holdings for one 13F accession (watched symbols only)."""
+        acc_nodash = accession.replace("-", "")
+        cik_int = str(int(cik.zfill(10)))
+        idx_raw = self._fetch(f"{_WWW_BASE}/Archives/edgar/data/{cik_int}/{acc_nodash}/index.json")
+        if not idx_raw:
+            return []
+        try:
+            items = json.loads(idx_raw.decode("utf-8")).get("directory", {}).get("item", [])
+        except (ValueError, TypeError):
+            return []
+        # The info table is the XML that is NOT primary_doc.xml (the cover page).
+        table = next((i["name"] for i in items
+                      if i.get("name", "").lower().endswith(".xml") and i.get("name") != "primary_doc.xml"), None)
+        if not table:
+            return []
+        xml_raw = self._fetch(f"{_WWW_BASE}/Archives/edgar/data/{cik_int}/{acc_nodash}/{table}")
+        return parse_info_table(xml_raw.decode("utf-8", "replace"), self._cusip) if xml_raw else []
+
     def _load(self, cik: str) -> dict | None:
         """Fetch + parse a filer's submissions and latest 13F holdings (once per run). Cached."""
         cik = cik.zfill(10)
         if cik in self._cache:
             return self._cache[cik]
-        raw = self._fetch(f"{_DATA_BASE}/submissions/CIK{cik}.json")
-        info = parse_submissions(json.loads(raw.decode("utf-8"))) if raw else None
+        info = self._submissions(cik)
         if not info or not info.get("latest"):
             self._cache[cik] = {"info": info, "holdings": []}
             return self._cache[cik]
-        acc_nodash = info["latest"]["accession"].replace("-", "")
-        cik_int = str(int(cik))
-        idx_raw = self._fetch(f"{_WWW_BASE}/Archives/edgar/data/{cik_int}/{acc_nodash}/index.json")
-        holdings: list[dict] = []
-        if idx_raw:
-            try:
-                items = json.loads(idx_raw.decode("utf-8")).get("directory", {}).get("item", [])
-            except (ValueError, TypeError):
-                items = []
-            # The info table is the XML that is NOT primary_doc.xml (the cover page).
-            table = next((i["name"] for i in items
-                          if i.get("name", "").lower().endswith(".xml") and i.get("name") != "primary_doc.xml"), None)
-            if table:
-                xml_raw = self._fetch(f"{_WWW_BASE}/Archives/edgar/data/{cik_int}/{acc_nodash}/{table}")
-                if xml_raw:
-                    holdings = parse_info_table(xml_raw.decode("utf-8", "replace"), self._cusip)
+        holdings = self._holdings_for_accession(cik, info["latest"]["accession"])
         self._cache[cik] = {"info": info, "holdings": holdings}
         return self._cache[cik]
+
+    def get_holdings_history(self, cik: str) -> dict:
+        """Current + previous quarter holdings for a filer (§ R1.3) — the two most recent 13F filings —
+        so a change analyzer can compute quarter-over-quarter position changes. Read-only."""
+        cik = cik.zfill(10)
+        info = self._submissions(cik)
+        if not info or not info.get("filings"):
+            return {"info": info, "name": (info or {}).get("name"), "current": None, "previous": None}
+        filings = info["filings"]
+        current = {"period": filings[0]["date"],
+                   "holdings": self._holdings_for_accession(cik, filings[0]["accession"])}
+        previous = None
+        if len(filings) > 1:
+            previous = {"period": filings[1]["date"],
+                        "holdings": self._holdings_for_accession(cik, filings[1]["accession"])}
+        return {"info": info, "name": info.get("name"), "current": current, "previous": previous}
 
     def get_traders(self) -> list[TraderInfo]:
         out: list[TraderInfo] = []

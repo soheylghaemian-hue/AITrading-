@@ -38,7 +38,7 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
     s = _db(tmp_path)
     assert s.ping()
     applied = sorted(r[0] for r in s._all("SELECT version FROM schema_migrations"))
-    assert applied == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+    assert applied == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
     # tables exist
     for t in ("runtime_state", "orders", "fills", "positions", "kill_switch", "daily_pnl",
               "audit_events", "service_heartbeats", "market_data_health", "ohlc_bars", "news_items",
@@ -46,7 +46,8 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
               "companies", "financial_metrics", "valuation", "analyst_estimates",
               "options_snapshot", "options_flow", "ai_assessments", "ai_assessment_components",
               "ai_predictions", "ai_prediction_outcomes", "ai_governance_results",
-              "data_completeness_snapshots", "macro_snapshots"):
+              "data_completeness_snapshots", "macro_snapshots",
+              "institutional_position_changes", "insider_transactions"):
         s._one(f"SELECT COUNT(*) FROM {t}")
     # migration 002 money columns exist
     s._one("SELECT notional, stop, target, monetary_risk, risk_pct FROM orders")
@@ -80,8 +81,11 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
     s._one("SELECT id, symbol, timestamp, overall_score, state, available_sources, missing_sources, created_at FROM data_completeness_snapshots")
     # migration 013 macro columns exist
     s._one("SELECT id, timestamp, fed_rate, treasury_10y, treasury_2y, cpi, unemployment, vix, dxy, oil, gold, source, created_at FROM macro_snapshots")
+    # migration 014 institutional columns exist
+    s._one("SELECT id, institution, symbol, previous_shares, current_shares, share_change, percentage_change, direction, filing_period, created_at FROM institutional_position_changes")
+    s._one("SELECT id, symbol, insider_name, title, transaction_type, shares, price, transaction_date, created_at FROM insider_transactions")
     s2 = _reopen(tmp_path, s)                     # re-open re-runs migrator → no-op
-    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
 
 
 def test_postgres_ddl_declares_numeric_money():

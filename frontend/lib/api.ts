@@ -17,6 +17,7 @@ import type { AiPerformance, AiHistory, AiOutcomes } from "./performance";
 import type { Governance, GovernanceFeed } from "./governance";
 import type { Completeness } from "./completeness";
 import type { Macro, MacroContext } from "./macro";
+import type { InstitutionalFlow } from "./institutional";
 
 // Where the browser sends dashboard calls. Default: the SAME-ORIGIN server proxy ("/api"), which
 // forwards to the private backend and injects the read token server-side — so no token ever
@@ -302,6 +303,24 @@ export async function fetchMacro(signal?: AbortSignal): Promise<Macro> {
     score: b.score ?? null, regime: b.regime ?? null, status: b.status ?? null,
     signals: Array.isArray(b.signals) ? b.signals : [], risks: Array.isArray(b.risks) ? b.risks : [],
     metrics: b.metrics ?? {}, timestamp: b.timestamp ?? null, source: b.source ?? null,
+  };
+}
+
+// § R1.3 — institutional "smart money" flow: 13F position changes + Form 4 insider activity.
+export async function fetchInstitutionalFlow(symbol: string, signal?: AbortSignal): Promise<InstitutionalFlow> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/institutional-flow/${encodeURIComponent(symbol)}`,
+    { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = (await res.json()) as Partial<InstitutionalFlow>;
+  return {
+    symbol: b.symbol ?? symbol, status: b.status ?? null,
+    institutional_changes: Array.isArray(b.institutional_changes) ? b.institutional_changes : [],
+    institutional_direction: b.institutional_direction ?? null,
+    accumulation_score: b.accumulation_score ?? null, net_share_change_pct: b.net_share_change_pct ?? null,
+    insider_activity: Array.isArray(b.insider_activity) ? b.insider_activity : [],
+    insider_sentiment: b.insider_sentiment ?? null, insider_score: b.insider_score ?? null,
+    insider_summary: b.insider_summary ?? { buy_count: 0, sell_count: 0, buy_shares: 0, sell_shares: 0, distinct_buyers: 0 },
   };
 }
 

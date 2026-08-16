@@ -296,6 +296,27 @@ def _migration_013(dialect: str) -> list[str]:
     ]
 
 
+def _migration_014(dialect: str) -> list[str]:
+    """Institutional Intelligence Enhancement (§ Phase R1.3 — read-only, IMMUTABLE history). Two tables:
+    institutional_position_changes (13F quarter-over-quarter position changes — ACCUMULATION / REDUCTION
+    / NEW_POSITION / EXIT) and insider_transactions (SEC Form 4 insider BUY/SELL). Both are append-only
+    (ON CONFLICT DO NOTHING → never rewritten). DATA ONLY — no trading, no copy-trading, no order/broker/
+    IBKR/execution. Missing data stays NO DATA (never fabricated)."""
+    t = _types(dialect)
+    ts, txt = t["TS"], t["TXT"]
+    return [
+        f"""CREATE TABLE IF NOT EXISTS institutional_position_changes (
+            id {txt} PRIMARY KEY, institution {txt} NOT NULL, symbol {txt} NOT NULL,
+            previous_shares {txt}, current_shares {txt}, share_change {txt}, percentage_change {txt},
+            direction {txt}, filing_period {txt}, created_at {ts} NOT NULL)""",
+        "CREATE INDEX IF NOT EXISTS ix_inst_changes_symbol ON institutional_position_changes(symbol, filing_period)",
+        f"""CREATE TABLE IF NOT EXISTS insider_transactions (
+            id {txt} PRIMARY KEY, symbol {txt} NOT NULL, insider_name {txt}, title {txt},
+            transaction_type {txt}, shares {txt}, price {txt}, transaction_date {txt}, created_at {ts} NOT NULL)""",
+        "CREATE INDEX IF NOT EXISTS ix_insider_symbol ON insider_transactions(symbol, transaction_date)",
+    ]
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -311,6 +332,7 @@ MIGRATIONS = [
     (11, "ai_governance", _migration_011),
     (12, "data_completeness", _migration_012),
     (13, "macro_intelligence", _migration_013),
+    (14, "institutional_intelligence", _migration_014),
 ]
 
 

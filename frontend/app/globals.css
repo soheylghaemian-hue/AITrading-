@@ -512,3 +512,30 @@ a.newsrow:hover{background:var(--line-soft)}
 .mctx-lists{display:flex;flex-wrap:wrap;gap:6px}
 .mctx-sig{font-size:11.5px;padding:2px 8px;border-radius:5px;background:var(--line-soft)}
 .mctx-sig.pos{color:var(--pos)} .mctx-sig.neg{color:var(--neg)}
+
+/* ---------------------------------------------------------------- Smart Money Flow (§ R1.3) -------- */
+.smf{display:flex;flex-direction:column;gap:12px}
+.smf.acc{border-left:3px solid var(--pos)} .smf.red{border-left:3px solid var(--neg)}
+.smf.mixed{border-left:3px solid var(--warn)}
+.smf-head{display:flex;align-items:center;gap:10px}
+.smf-sym{font-size:16px;font-weight:700;margin-left:auto}
+.smf-nd{font-family:var(--mono);font-size:11px;letter-spacing:1px;color:var(--faint);margin-left:auto}
+.smf-note{font-size:12.5px;color:var(--dim);margin:0}
+.smf-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;border-top:1px solid var(--line-soft);padding-top:12px}
+.smf-metric{background:var(--panel);border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:9px 11px;display:flex;flex-direction:column;gap:5px}
+.smf-badge{font-family:var(--mono);font-size:10.5px;font-weight:700;letter-spacing:.8px;padding:3px 8px;border-radius:5px;border:1px solid transparent;align-self:flex-start}
+.smf-badge.acc{color:var(--pos);background:var(--pos-bg);border-color:rgba(52,211,153,.3)}
+.smf-badge.red{color:var(--neg);background:var(--neg-bg);border-color:rgba(248,113,113,.3)}
+.smf-badge.mixed{color:var(--warn);background:var(--warn-bg);border-color:rgba(245,158,11,.3)}
+.smf-badge.neu{color:var(--dim);background:var(--line-soft);border-color:var(--line)}
+.smf-val{font-family:var(--mono);font-size:14px;font-weight:600;color:var(--ink)}
+.smf-lists{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.smf-count{color:var(--faint);font-family:var(--mono);font-size:10px;letter-spacing:0}
+.smf-row{display:grid;grid-template-columns:1fr auto auto auto;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--line-soft);font-size:12px}
+.smf-row:last-child{border-bottom:0}
+.smf-inst{color:var(--ink);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.smf-dir{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.5px;padding:1px 6px;border-radius:4px}
+.smf-dir.acc{color:var(--pos);background:var(--pos-bg)} .smf-dir.red{color:var(--neg);background:var(--neg-bg)}
+.smf-pct,.smf-sh,.smf-px{font-family:var(--mono);font-size:11.5px;color:var(--dim);text-align:right}
+.smf-empty{font-family:var(--mono);font-size:11px;letter-spacing:1px;color:var(--faint);padding:6px 0}
+@media (max-width:900px){.smf-summary{grid-template-columns:repeat(2,1fr)}.smf-lists{grid-template-columns:1fr}}

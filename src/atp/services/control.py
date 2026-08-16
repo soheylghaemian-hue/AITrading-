@@ -26,6 +26,7 @@ from ..consensus.engine import build_ai_consensus
 from ..dashboard.readmodel import build_dashboard_read_model
 from ..evaluation.metrics import build_ai_history, compute_outcomes_summary, compute_performance
 from ..fundamentals.readmodel import build_fundamentals
+from ..institutional.readmodel import build_institutional_flow
 from ..macrodata.readmodel import build_macro, build_macro_context
 from ..news.analysis import sentiment_label
 from ..optflow.diagnostics import audit_options_provider
@@ -347,6 +348,17 @@ def macro_current() -> dict:
     INPUT only — never a trade, order, or broker action. No snapshot -> NO DATA, never fabricated."""
     with ctx.lock:
         return build_macro(ctx.store)
+
+
+@app.get("/market/{symbol}/institutional-flow")
+def market_institutional_flow(symbol: str) -> dict:
+    """Read-only Institutional Intelligence (§ Phase R1.3): 'smart money' flow for a symbol — the 13F
+    quarter-over-quarter position changes (ACCUMULATION / REDUCTION / NEW_POSITION / EXIT) + an
+    accumulation score, and recent SEC Form 4 insider BUY/SELL activity + insider sentiment. INTELLIGENCE
+    INPUT only — never a trade, order, copy-trade, or broker action. No data -> NO DATA, never
+    fabricated. No secrets. Public read-model."""
+    with ctx.lock:
+        return build_institutional_flow(ctx.store, symbol.upper())
 
 
 @app.get("/market/{symbol}/macro-context")
