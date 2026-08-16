@@ -21,6 +21,7 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from ..aigov.engine import build_governance_feed, evaluate_governance
+from ..completeness.engine import compute_completeness
 from ..consensus.engine import build_ai_consensus
 from ..dashboard.readmodel import build_dashboard_read_model
 from ..evaluation.metrics import build_ai_history, compute_outcomes_summary, compute_performance
@@ -284,6 +285,17 @@ def ai_governance(limit: int = 50) -> dict:
         n = 50
     with ctx.lock:
         return build_governance_feed(ctx.store, n)
+
+
+@app.get("/market/{symbol}/data-completeness")
+def market_data_completeness(symbol: str) -> dict:
+    """Read-only Data Completeness (§ Phase C1): how complete GIGBAY's information is for a symbol across
+    the 7 intelligence domains — a deterministic 0-100 score, a readiness state (READY / PARTIAL /
+    INSUFFICIENT) and which sources are available vs missing. This MEASURES information quality only — it
+    is NOT a trade, order, or broker action. A missing source scores 0 / NO DATA (never fabricated, and
+    the score never rises to cover a gap). No secrets. Public read-model."""
+    with ctx.lock:
+        return compute_completeness(ctx.store, symbol.upper())
 
 
 @app.get("/market/{symbol}/options")

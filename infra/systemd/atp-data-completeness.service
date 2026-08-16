@@ -1,0 +1,31 @@
+[Unit]
+Description=ATP Data Completeness Engine (Phase C1 — read-only intelligence-quality measurement)
+Documentation=https://github.com/soheylghaemian-hue/AITrading-
+After=network-online.target docker.service
+Wants=network-online.target
+# The Completeness Analyzer: measures how complete GIGBAY's information is per symbol across the 7
+# intelligence domains and records an immutable snapshot (score + READY/PARTIAL/INSUFFICIENT state). It
+# only measures information quality — it never trades, never generates orders, never touches
+# IBKR/execution/broker/risk-engine, holds no credentials.
+
+[Service]
+Type=simple
+User=atp
+Group=atp
+WorkingDirectory=/opt/atp/app
+Environment=PYTHONPATH=/opt/atp/app/src
+EnvironmentFile=/opt/atp/atp.env
+ExecStart=/opt/atp/app/.venv/bin/python -m atp.services.data_completeness
+Restart=always
+RestartSec=5
+# Fail-closed + restart-safe: snapshots are immutable (ON CONFLICT DO NOTHING) so a restart never
+# rewrites history; a missing source scores 0 (never a fabricated value). A DB error records nothing;
+# systemd restarts the process.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/atp
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

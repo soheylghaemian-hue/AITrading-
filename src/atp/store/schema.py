@@ -263,6 +263,22 @@ def _migration_011(dialect: str) -> list[str]:
     ]
 
 
+def _migration_012(dialect: str) -> list[str]:
+    """Data Completeness Engine (§ Phase C1 — read-only reliability layer, IMMUTABLE history). One row per
+    symbol/hour: the deterministic 0-100 completeness score across the 7 intelligence domains, the
+    readiness state (READY / PARTIAL / INSUFFICIENT), and which sources were available vs missing.
+    Snapshots are never rewritten (ON CONFLICT DO NOTHING). This only MEASURES information quality — it
+    does NOT trade, generate orders, or touch Trading Core / Risk Engine / Broker / IBKR / Execution."""
+    t = _types(dialect)
+    ts, txt = t["TS"], t["TXT"]
+    return [
+        f"""CREATE TABLE IF NOT EXISTS data_completeness_snapshots (
+            id {txt} PRIMARY KEY, symbol {txt} NOT NULL, timestamp {ts}, overall_score {txt},
+            state {txt}, available_sources {txt}, missing_sources {txt}, created_at {ts} NOT NULL)""",
+        "CREATE INDEX IF NOT EXISTS ix_data_completeness_symbol ON data_completeness_snapshots(symbol, timestamp)",
+    ]
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -276,6 +292,7 @@ MIGRATIONS = [
     (9, "ai_evaluation", _migration_009),
     (10, "outcome_lifecycle", _migration_010),
     (11, "ai_governance", _migration_011),
+    (12, "data_completeness", _migration_012),
 ]
 
 

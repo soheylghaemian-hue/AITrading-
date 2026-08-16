@@ -452,3 +452,28 @@ a.newsrow:hover{background:var(--line-soft)}
 .govb.blocked{color:var(--neg);background:var(--neg-bg);border-color:rgba(248,113,113,.5)}
 .govdetail{display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--line-soft);padding-top:12px}
 .fitem.warn{color:var(--warn)}
+
+/* ---------------------------------------------------------------- Data Completeness (§ C1) --------- */
+.dqcard.ready{border-left:3px solid var(--pos)}
+.dqcard.partial{border-left:3px solid var(--warn)}
+.dqcard.insufficient{border-left:3px solid var(--neg)}
+.dqscore{font-family:var(--mono);font-size:34px;font-weight:650;line-height:1}
+.dqscore small{font-size:13px;color:var(--faint);font-weight:500}
+.dqscore.ready{color:var(--pos)} .dqscore.partial{color:var(--warn)} .dqscore.insufficient{color:var(--neg)}
+.dqstate{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:1.5px;padding:5px 12px;
+  border-radius:6px;border:1px solid transparent}
+.dqstate.ready{color:var(--pos);background:var(--pos-bg);border-color:rgba(52,211,153,.35)}
+.dqstate.partial{color:var(--warn);background:var(--warn-bg);border-color:rgba(245,158,11,.35)}
+.dqstate.insufficient{color:var(--neg);background:var(--neg-bg);border-color:rgba(248,113,113,.4)}
+.dqbar-wrap{height:9px;border-radius:5px;background:var(--line-soft);overflow:hidden}
+.dqbar-wrap i{display:block;height:100%;border-radius:5px}
+.dqbar-wrap i.ready{background:linear-gradient(90deg,var(--accent-deep),var(--pos))}
+.dqbar-wrap i.partial{background:var(--warn)}
+.dqbar-wrap i.insufficient{background:var(--neg)}
+.dqwarn{font-size:12.5px;padding:9px 12px;border-radius:var(--r-sm);background:var(--warn-bg);
+  border:1px solid rgba(245,158,11,.3)}
+.dqwarn b{font-family:var(--mono);font-size:11px;letter-spacing:.5px}
+.dqwarn.partial{color:var(--warn)} .dqwarn.partial b{color:var(--warn)}
+.dqwarn.insufficient{color:#FCA5A5;background:var(--neg-bg);border-color:rgba(248,113,113,.3)}
+.dqwarn.insufficient b{color:var(--neg)}
+.dqpct{font-family:var(--mono);font-size:11px;color:var(--faint);margin-left:4px}

@@ -339,6 +339,18 @@ class AiGovernanceResultRow:
 
 
 @dataclass(slots=True)
+class DataCompletenessRow:
+    id: str
+    symbol: str
+    timestamp: str | None
+    overall_score: float | None
+    state: str | None
+    available_sources: str | None
+    missing_sources: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
 class OhlcBarRow:
     symbol: str
     interval: str
@@ -926,6 +938,49 @@ class SqlStore(Store):
 
     def count_governance_results(self) -> int:
         r = self._one("SELECT COUNT(*) FROM ai_governance_results")
+        return int(r[0]) if r else 0
+
+    # -- Data completeness snapshots (§ Phase C1, read-only IMMUTABLE reliability history) ------
+    _DC_COLS = "id,symbol,timestamp,overall_score,state,available_sources,missing_sources,created_at"
+
+    def insert_data_completeness(self, *, id: str, symbol: str, timestamp, overall_score, state: str | None,
+                                 available_sources: str | None, missing_sources: str | None) -> None:
+        """Record a completeness snapshot once. ON CONFLICT DO NOTHING → snapshots are never rewritten."""
+        now = utcnow_iso()
+        f = lambda v: None if v is None else str(float(v))  # noqa: E731
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO data_completeness_snapshots (id,symbol,timestamp,overall_score,state,"
+                "available_sources,missing_sources,created_at) VALUES (?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(id) DO NOTHING",
+                (id, symbol.upper(), timestamp, f(overall_score), state, available_sources,
+                 missing_sources, now))
+
+    def _dc_row(self, r) -> DataCompletenessRow:
+        g = lambda v: None if v is None else float(v)  # noqa: E731
+        return DataCompletenessRow(r[0], r[1], r[2], g(r[3]), r[4], r[5], r[6], r[7])
+
+    def get_data_completeness(self, snapshot_id: str) -> DataCompletenessRow | None:
+        r = self._one(f"SELECT {self._DC_COLS} FROM data_completeness_snapshots WHERE id=?", (snapshot_id,))
+        return self._dc_row(r) if r else None
+
+    def latest_data_completeness(self, symbol: str) -> DataCompletenessRow | None:
+        r = self._one(f"SELECT {self._DC_COLS} FROM data_completeness_snapshots WHERE symbol=? "
+                      "ORDER BY timestamp DESC LIMIT 1", (symbol.upper(),))
+        return self._dc_row(r) if r else None
+
+    def list_data_completeness(self, symbol: str | None = None, limit: int = 200) -> list[DataCompletenessRow]:
+        n = max(1, min(2000, int(limit)))
+        if symbol:
+            rows = self._all(f"SELECT {self._DC_COLS} FROM data_completeness_snapshots WHERE symbol=? "
+                             "ORDER BY timestamp DESC LIMIT ?", (symbol.upper(), n))
+        else:
+            rows = self._all(f"SELECT {self._DC_COLS} FROM data_completeness_snapshots "
+                             "ORDER BY timestamp DESC LIMIT ?", (n,))
+        return [self._dc_row(r) for r in rows]
+
+    def count_data_completeness(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM data_completeness_snapshots")
         return int(r[0]) if r else 0
 
     # -- AI consensus (§ Phase G3, read-only orchestration snapshot) ------

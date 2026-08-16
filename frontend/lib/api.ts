@@ -15,6 +15,7 @@ import type { OptionsData } from "./options";
 import type { AiConsensus } from "./consensus";
 import type { AiPerformance, AiHistory, AiOutcomes } from "./performance";
 import type { Governance, GovernanceFeed } from "./governance";
+import type { Completeness } from "./completeness";
 
 // Where the browser sends dashboard calls. Default: the SAME-ORIGIN server proxy ("/api"), which
 // forwards to the private backend and injects the read token server-side — so no token ever
@@ -270,6 +271,22 @@ export async function fetchGovernanceFeed(signal?: AbortSignal): Promise<Governa
   return {
     count: b.count ?? 0, decisions: Array.isArray(b.decisions) ? b.decisions : [],
     status_counts: b.status_counts ?? {},
+  };
+}
+
+// § C1 — data completeness across the 7 intelligence domains (reliability / capital-protection layer).
+export async function fetchCompleteness(symbol: string, signal?: AbortSignal): Promise<Completeness> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/data-completeness/${encodeURIComponent(symbol)}`,
+    { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = (await res.json()) as Partial<Completeness>;
+  return {
+    symbol: b.symbol ?? symbol, score: b.score ?? null, state: b.state ?? null,
+    available: Array.isArray(b.available) ? b.available : [],
+    missing: Array.isArray(b.missing) ? b.missing : [],
+    partial: Array.isArray(b.partial) ? b.partial : [],
+    details: b.details ?? {},
   };
 }
 

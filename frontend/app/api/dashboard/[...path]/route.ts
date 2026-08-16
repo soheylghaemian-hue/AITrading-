@@ -19,7 +19,7 @@ const READ_PATHS = new Set([
   "summary", "positions", "risk", "agents", "opportunities", "performance", "governance",
   "system", "notifications", "reconciliation", "market-data", "subscriptions", "ai-analysis",
   "trading-risk", "ohlc", "news", "traders", "trader", "fundamentals", "options", "ai-consensus",
-  "ai-history", "ai-performance", "ai-outcomes", "ai-governance",
+  "ai-history", "ai-performance", "ai-outcomes", "ai-governance", "data-completeness",
 ]);
 // Mutations require the OWNER token, supplied by the user (not stored) and enforced by the backend.
 // "autonomous" covers the token-gated /dashboard/autonomous/{arm,start,stop,disarm,kill,reset}.
@@ -76,7 +76,7 @@ async function forward(req: NextRequest, path: string[], method: "GET" | "POST")
   const sym = encodeURIComponent(path[1] ?? "");
   const target =
     (top === "ohlc" || top === "news" || top === "traders" || top === "fundamentals" || top === "options"
-      || top === "ai-consensus" || top === "ai-history")
+      || top === "ai-consensus" || top === "ai-history" || top === "data-completeness")
       ? `${BACKEND}/market/${sym}/${top}${req.nextUrl.search}`
       : top === "trader"
         ? `${BACKEND}/traders/${sym}`
