@@ -8,16 +8,18 @@ import React, { useEffect, useState } from "react";
 import type { Snapshot } from "@/lib/types";
 import { instrumentRef } from "@/lib/instruments";
 import { symbolQuote } from "@/lib/market";
-import { fetchOhlc, fetchTraders, fetchFundamentals, fetchOptions } from "@/lib/api";
+import { fetchOhlc, fetchTraders, fetchFundamentals, fetchOptions, fetchConsensus } from "@/lib/api";
 import type { OhlcBar } from "@/lib/ohlc";
 import type { TraderConsensus } from "@/lib/traders";
 import type { FundamentalsData } from "@/lib/fundamentals";
 import type { OptionsData } from "@/lib/options";
+import type { AiConsensus } from "@/lib/consensus";
 import { Dot } from "@/components/ui";
 import { TerminalHeader } from "./TerminalHeader";
 import { DataQuality } from "./DataQuality";
 import { MarketChart } from "./MarketChart";
 import { AiAnalysisPanel } from "./AiAnalysisPanel";
+import { AiSummary } from "./AiSummary";
 import { ResearchTabs } from "./ResearchTabs";
 
 type OhlcState = { bars: OhlcBar[] | null; loading: boolean; error: string | null };
@@ -35,6 +37,7 @@ export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; s
   const [traders, setTraders] = useState<TraderConsensus | null>(null);
   const [fundamentals, setFundamentals] = useState<FundamentalsData | null>(null);
   const [options, setOptions] = useState<OptionsData | null>(null);
+  const [consensus, setConsensus] = useState<AiConsensus | null>(null);
 
   // Fetch OHLC whenever the symbol or timeframe changes. AbortController + a cancelled flag guard against
   // a stale response landing after a fast symbol switch (NVDA → AAPL → SPY) overwriting the newer request.
@@ -65,6 +68,9 @@ export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; s
     fetchOptions(symbol, ctrl.signal)
       .then((r) => { if (!cancelled) setOptions(r); })
       .catch(() => { if (!cancelled) setOptions(null); });
+    fetchConsensus(symbol, ctrl.signal)
+      .then((r) => { if (!cancelled) setConsensus(r); })
+      .catch(() => { if (!cancelled) setConsensus(null); });
     return () => { cancelled = true; ctrl.abort(); };
   }, [symbol]);
 
@@ -90,6 +96,7 @@ export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; s
         <div className="banner"><Dot tone="r" />Live backend not reachable — showing&nbsp;<b>NO DATA</b>. No values are fabricated.</div>
       ) : null}
       <TerminalHeader symbol={symbol} refData={refData} quote={quote} mode={s?.mode} change={change} connected={connected} />
+      <AiSummary data={consensus} />
       <DataQuality quote={quote} refData={refData} />
       <div className="term-main">
         <div className="card term-chart">

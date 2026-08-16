@@ -193,6 +193,25 @@ def _migration_007(dialect: str) -> list[str]:
     ]
 
 
+def _migration_008(dialect: str) -> list[str]:
+    """AI consensus (§ Phase G3 — read-only orchestration). Two additive tables: ai_assessments (the
+    per-symbol market view) and ai_assessment_components (the per-source contributions). This is an
+    intelligence orchestration snapshot only — NOT a trading decision. The assessment is computed
+    deterministically from the other intelligence layers; scores are canonical-decimal TEXT. No Trading
+    Core / Risk / Broker / IBKR / Execution code is touched."""
+    t = _types(dialect)
+    ts, txt = t["TS"], t["TXT"]
+    return [
+        f"""CREATE TABLE IF NOT EXISTS ai_assessments (
+            id {txt} PRIMARY KEY, symbol {txt} NOT NULL, timestamp {ts},
+            overall_score {txt}, direction_bias {txt}, confidence {txt}, status {txt}, created_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS ai_assessment_components (
+            assessment_id {txt} NOT NULL, component_name {txt} NOT NULL, score {txt}, weight {txt},
+            direction {txt}, reason {txt}, risk_flags {txt},
+            PRIMARY KEY (assessment_id, component_name))""",
+    ]
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -202,6 +221,7 @@ MIGRATIONS = [
     (5, "trader_intelligence", _migration_005),
     (6, "fundamentals", _migration_006),
     (7, "options_intelligence", _migration_007),
+    (8, "ai_consensus", _migration_008),
 ]
 
 

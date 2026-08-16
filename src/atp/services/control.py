@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
+from ..consensus.engine import build_ai_consensus
 from ..dashboard.readmodel import build_dashboard_read_model
 from ..fundamentals.readmodel import build_fundamentals
 from ..news.analysis import sentiment_label
@@ -215,6 +216,16 @@ def market_news(symbol: str, limit: int = 30) -> dict:
     } for r in rows]
     return {"symbol": symbol.upper(), "count": len(items), "items": items,
             "ts": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/market/{symbol}/ai-consensus")
+def market_ai_consensus(symbol: str) -> dict:
+    """Read-only AI consensus (§ Phase G3): the transparent AI market view — conviction score, direction,
+    confidence, per-source components, strengths, risks and surfaced CONFLICTS — computed FRESH from the
+    other intelligence layers. This is an INTELLIGENCE SIGNAL, never a trading decision, order, or broker
+    action. Missing inputs -> NO DATA / PARTIAL, never fabricated. No secrets. Public read-model."""
+    with ctx.lock:
+        return build_ai_consensus(ctx.store, symbol.upper())
 
 
 @app.get("/market/{symbol}/options")

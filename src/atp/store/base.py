@@ -275,6 +275,29 @@ class OptionsFlowRow:
 
 
 @dataclass(slots=True)
+class AiAssessmentRow:
+    id: str
+    symbol: str
+    timestamp: str | None
+    overall_score: float | None
+    direction_bias: str | None
+    confidence: float | None
+    status: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
+class AiAssessmentComponentRow:
+    assessment_id: str
+    component_name: str
+    score: float | None
+    weight: float | None
+    direction: str | None
+    reason: str | None
+    risk_flags: str | None
+
+
+@dataclass(slots=True)
 class OhlcBarRow:
     symbol: str
     interval: str
@@ -752,6 +775,48 @@ class SqlStore(Store):
             r = self._one("SELECT COUNT(*) FROM news_items WHERE symbol=?", (symbol,))
         else:
             r = self._one("SELECT COUNT(*) FROM news_items")
+        return int(r[0]) if r else 0
+
+    # -- AI consensus (§ Phase G3, read-only orchestration snapshot) ------
+    def upsert_ai_assessment(self, *, symbol: str, overall_score, direction_bias, confidence,
+                             status: str | None) -> None:
+        now = utcnow_iso()
+        f = lambda v: None if v is None else str(float(v))  # noqa: E731
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO ai_assessments (id,symbol,timestamp,overall_score,direction_bias,confidence,"
+                "status,created_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+                "timestamp=excluded.timestamp, overall_score=excluded.overall_score, "
+                "direction_bias=excluded.direction_bias, confidence=excluded.confidence, status=excluded.status",
+                (symbol.upper(), symbol.upper(), now, f(overall_score), direction_bias, f(confidence), status, now))
+
+    def upsert_ai_assessment_component(self, *, assessment_id: str, component_name: str, score, weight,
+                                       direction: str | None, reason: str | None, risk_flags: str | None) -> None:
+        f = lambda v: None if v is None else str(float(v))  # noqa: E731
+        with self.tx() as cur:
+            self._exec(cur,
+                "INSERT INTO ai_assessment_components (assessment_id,component_name,score,weight,direction,"
+                "reason,risk_flags) VALUES (?,?,?,?,?,?,?) ON CONFLICT(assessment_id,component_name) DO UPDATE SET "
+                "score=excluded.score, weight=excluded.weight, direction=excluded.direction, "
+                "reason=excluded.reason, risk_flags=excluded.risk_flags",
+                (assessment_id.upper(), component_name, f(score), f(weight), direction, reason, risk_flags))
+
+    def get_ai_assessment(self, symbol: str) -> AiAssessmentRow | None:
+        r = self._one("SELECT id,symbol,timestamp,overall_score,direction_bias,confidence,status,created_at "
+                      "FROM ai_assessments WHERE id=?", (symbol.upper(),))
+        if not r:
+            return None
+        g = lambda v: None if v is None else float(v)  # noqa: E731
+        return AiAssessmentRow(r[0], r[1], r[2], g(r[3]), r[4], g(r[5]), r[6], r[7])
+
+    def list_ai_assessment_components(self, assessment_id: str) -> list[AiAssessmentComponentRow]:
+        rows = self._all("SELECT assessment_id,component_name,score,weight,direction,reason,risk_flags "
+                         "FROM ai_assessment_components WHERE assessment_id=?", (assessment_id.upper(),))
+        g = lambda v: None if v is None else float(v)  # noqa: E731
+        return [AiAssessmentComponentRow(x[0], x[1], g(x[2]), g(x[3]), x[4], x[5], x[6]) for x in rows]
+
+    def count_ai_assessments(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM ai_assessments")
         return int(r[0]) if r else 0
 
     # -- options intelligence (§ Phase G2.3, read-only) -------------------

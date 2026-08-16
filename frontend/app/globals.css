@@ -384,3 +384,41 @@ a.newsrow:hover{background:var(--line-soft)}
 .fitem{font-size:13px;padding:4px 0;font-weight:500}
 .fitem.pos{color:var(--pos)} .fitem.neg{color:var(--neg)} .fitem.neu{color:var(--faint);font-family:var(--mono);font-size:11px;letter-spacing:1px}
 @media (max-width:900px){.fgrid{grid-template-columns:repeat(2,1fr)}}
+
+/* ---------------------------------------------------------------- AI consensus (§ G3) ----------- */
+.csymbar{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.consensus{display:flex;flex-direction:column;gap:16px}
+.chead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.csym{font-size:22px;font-weight:700;letter-spacing:.3px;margin-top:2px}
+.cbig{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.cscore{font-family:var(--mono);font-size:34px;font-weight:650;line-height:1}
+.cscore small{font-size:13px;color:var(--faint);font-weight:500}
+.cscore.hi{color:var(--pos)} .cscore.med{color:var(--warn)} .cscore.lo{color:var(--dim)}
+.consb{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:1px;padding:5px 12px;border-radius:6px;border:1px solid transparent}
+.consb.pos{color:var(--pos);background:var(--pos-bg);border-color:rgba(52,211,153,.3)}
+.consb.neg{color:var(--neg);background:var(--neg-bg);border-color:rgba(248,113,113,.3)}
+.consb.neu{color:var(--dim);background:var(--line-soft);border-color:var(--line)}
+.cconf{font-size:12.5px;color:var(--dim)} .cconf b{color:var(--ink)}
+.cpartial{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:1px;color:var(--warn);background:var(--warn-bg);padding:3px 8px;border-radius:5px}
+.cpartial.neg{color:var(--neg);background:var(--neg-bg)}
+.cconflict{background:var(--neg-bg);border:1px solid rgba(248,113,113,.3);border-radius:var(--r-sm);padding:11px 14px}
+.cconflict b{color:var(--neg);font-size:12px;letter-spacing:.5px}
+.cconflict-list{display:flex;flex-direction:column;gap:2px;margin-top:5px;font-size:12px;color:var(--dim)}
+.ccomp{display:flex;flex-direction:column;gap:9px;border-top:1px solid var(--line-soft);padding-top:12px}
+.crow{display:grid;grid-template-columns:150px 1fr 44px 40px;align-items:center;gap:12px}
+.cname{font-size:13px;font-weight:600;color:var(--ink)}
+.cbar-wrap{height:7px;border-radius:4px;background:var(--line-soft);overflow:hidden}
+.cbar-wrap i{display:block;height:100%;border-radius:4px}
+.cbar-wrap i.pos{background:linear-gradient(90deg,var(--accent-deep),var(--pos))}
+.cbar-wrap i.neg{background:var(--neg)} .cbar-wrap i.neu{background:var(--faint)}
+.cval{font-family:var(--mono);font-size:13.5px;font-weight:600;text-align:right}
+.cval.pos{color:var(--pos)} .cval.neg{color:var(--neg)} .cval.neu{color:var(--ink)}
+.cwt{font-family:var(--mono);font-size:11px;color:var(--faint);text-align:right}
+/* Terminal AI View summary card */
+.aiview{display:flex;flex-direction:column;gap:12px}
+.aiview-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.aiview-conf{font-size:12px;color:var(--dim)} .aiview-conf b{color:var(--ink)}
+.aiview-body{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.aiview-drivers{margin:6px 0 0 18px;font-size:12.5px;color:var(--ink);display:flex;flex-direction:column;gap:3px}
+.aiview-risk{margin-top:6px}
+@media (max-width:900px){.aiview-body{grid-template-columns:1fr}.crow{grid-template-columns:110px 1fr 40px 36px}}

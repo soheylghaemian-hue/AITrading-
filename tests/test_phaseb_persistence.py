@@ -38,13 +38,13 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
     s = _db(tmp_path)
     assert s.ping()
     applied = sorted(r[0] for r in s._all("SELECT version FROM schema_migrations"))
-    assert applied == [1, 2, 3, 4, 5, 6, 7]
+    assert applied == [1, 2, 3, 4, 5, 6, 7, 8]
     # tables exist
     for t in ("runtime_state", "orders", "fills", "positions", "kill_switch", "daily_pnl",
               "audit_events", "service_heartbeats", "market_data_health", "ohlc_bars", "news_items",
               "traders", "trader_performance", "trader_positions",
               "companies", "financial_metrics", "valuation", "analyst_estimates",
-              "options_snapshot", "options_flow"):
+              "options_snapshot", "options_flow", "ai_assessments", "ai_assessment_components"):
         s._one(f"SELECT COUNT(*) FROM {t}")
     # migration 002 money columns exist
     s._one("SELECT notional, stop, target, monetary_risk, risk_pct FROM orders")
@@ -65,8 +65,11 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
     # migration 007 options columns exist
     s._one("SELECT symbol, expiration_date, strike, option_type, timestamp, bid, ask, last, volume, open_interest, implied_volatility, source, created_at FROM options_snapshot")
     s._one("SELECT symbol, timestamp, call_volume, put_volume, call_put_ratio, implied_volatility, open_interest, unusual_activity_score, large_trade_count, premium_volume, sentiment, updated_at FROM options_flow")
+    # migration 008 ai-consensus columns exist
+    s._one("SELECT id, symbol, timestamp, overall_score, direction_bias, confidence, status, created_at FROM ai_assessments")
+    s._one("SELECT assessment_id, component_name, score, weight, direction, reason, risk_flags FROM ai_assessment_components")
     s2 = _reopen(tmp_path, s)                     # re-open re-runs migrator → no-op
-    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == [1, 2, 3, 4, 5, 6, 7]
+    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == [1, 2, 3, 4, 5, 6, 7, 8]
 
 
 def test_postgres_ddl_declares_numeric_money():

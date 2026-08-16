@@ -1,0 +1,29 @@
+[Unit]
+Description=ATP AI Consensus Service (Phase G3 — read-only intelligence orchestration)
+Documentation=https://github.com/soheylghaemian-hue/AITrading-
+After=network-online.target docker.service
+Wants=network-online.target
+# Recomputes the AI market assessment for each watched symbol from the other intelligence layers (all in
+# PostgreSQL) and persists a history snapshot. No external fetch. An intelligence orchestration only —
+# never trades, never touches IBKR/execution/broker, holds no credentials.
+
+[Service]
+Type=simple
+User=atp
+Group=atp
+WorkingDirectory=/opt/atp/app
+Environment=PYTHONPATH=/opt/atp/app/src
+EnvironmentFile=/opt/atp/atp.env
+ExecStart=/opt/atp/app/.venv/bin/python -m atp.services.ai_consensus
+Restart=always
+RestartSec=5
+# Fail-closed: missing intelligence yields PARTIAL/NO DATA (never a fabricated score); a DB error
+# persists nothing; systemd restarts the process, but no assessment is ever invented.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/atp
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

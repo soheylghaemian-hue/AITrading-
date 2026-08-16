@@ -12,6 +12,7 @@ import type { NewsItem } from "./news";
 import type { TraderConsensus } from "./traders";
 import type { FundamentalsData } from "./fundamentals";
 import type { OptionsData } from "./options";
+import type { AiConsensus } from "./consensus";
 
 // Where the browser sends dashboard calls. Default: the SAME-ORIGIN server proxy ("/api"), which
 // forwards to the private backend and injects the read token server-side — so no token ever
@@ -166,6 +167,29 @@ export async function fetchOptions(symbol: string, signal?: AbortSignal): Promis
     sentiment: b.sentiment ?? null,
     signals: Array.isArray(b.signals) ? b.signals : [],
     risks: Array.isArray(b.risks) ? b.risks : [],
+  };
+}
+
+// AI consensus for the AI Brain page + terminal summary (§ Phase G3). Read-only, via the SAME
+// same-origin server proxy; the proxy forwards to the Control API's /market/{symbol}/ai-consensus. On
+// no backend / non-OK it throws — the caller renders NO DATA (never fabricates a conviction).
+export async function fetchConsensus(symbol: string, signal?: AbortSignal): Promise<AiConsensus> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/ai-consensus/${encodeURIComponent(symbol)}`,
+    { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = (await res.json()) as Partial<AiConsensus>;
+  return {
+    symbol: b.symbol ?? symbol,
+    score: b.score ?? null,
+    direction: b.direction ?? null,
+    confidence: b.confidence ?? null,
+    status: b.status ?? null,
+    coverage: b.coverage ?? 0,
+    components: Array.isArray(b.components) ? b.components : [],
+    strengths: Array.isArray(b.strengths) ? b.strengths : [],
+    risks: Array.isArray(b.risks) ? b.risks : [],
+    conflicts: Array.isArray(b.conflicts) ? b.conflicts : [],
   };
 }
 
