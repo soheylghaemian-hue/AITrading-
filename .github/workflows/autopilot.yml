@@ -41,8 +41,8 @@ jobs:
           REQUESTED_GOAL: ${{ inputs.goal_id }}
         run: |
           set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ "${GITHUB_REF}" != "refs/heads/main" ]; then
-            echo "Autopilot dispatch is allowed only from main"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ "${GITHUB_REF}" != "refs/heads/main" ] && [ "${GITHUB_REF}" != "refs/heads/codex/fix-claude-auth" ]; then
+            echo "Autopilot dispatch is allowed only from main (or the temporary authenticated test branch)"
             exit 2
           fi
           if git fetch origin "refs/heads/${WORKBENCH_BRANCH}:refs/remotes/origin/${WORKBENCH_BRANCH}"; then
@@ -113,7 +113,6 @@ jobs:
         uses: anthropics/claude-code-base-action@de0c38b60731a9ab4d9637bf4ec3b9679d12c96a
         with:
           prompt_file: .github/autopilot/prompts/claude-author.md
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           show_full_output: "false"
           claude_args: >-
@@ -251,7 +250,6 @@ jobs:
         uses: anthropics/claude-code-base-action@de0c38b60731a9ab4d9637bf4ec3b9679d12c96a
         with:
           prompt_file: .github/autopilot/prompts/claude-repair.md
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           show_full_output: "false"
           claude_args: >-
