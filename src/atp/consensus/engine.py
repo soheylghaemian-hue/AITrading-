@@ -206,6 +206,121 @@ def build_ai_consensus(store, symbol: str) -> dict:
     }
 
 
+# --------------------------------------------------------------- § R3.1A exact same-read consensus trace
+class _RecordingStore:
+    """Wraps a store so a single consensus computation reads each source EXACTLY ONCE: every read method is
+    memoized by (name, args, kwargs) and its first result recorded. A later mutation of the underlying store
+    can never change what this computation sees (it returns the memoized first read), and the recorded reads
+    are the exact rows that produced the score — so the snapshot is built from them, never a second query."""
+
+    def __init__(self, store):
+        self._store = store
+        self._cache: dict = {}
+        self.reads: list = []
+
+    def __getattr__(self, name):
+        attr = getattr(self._store, name)
+        if not callable(attr):
+            return attr
+
+        def wrapper(*args, **kwargs):
+            key = (name, args, tuple(sorted(kwargs.items())))
+            if key in self._cache:
+                return self._cache[key]
+            result = attr(*args, **kwargs)
+            self._cache[key] = result
+            self.reads.append({"method": name, "args": args, "result": result})
+            return result
+        return wrapper
+
+
+# consensus component_name → the store read that anchors its provenance (first matching recorded read).
+_COMPONENT_ANCHOR = {
+    "News": "list_news", "Market Data": "list_ohlc_bars", "Fundamentals": "get_financial_metrics",
+    "Options": "get_options_flow", "Trader Intelligence": "list_trader_positions_for_symbol", "Risk": None,
+}
+
+
+def _first_read(rec: _RecordingStore, method: str):
+    for r in rec.reads:
+        if r["method"] == method:
+            return r["result"]
+    return None
+
+
+def _anchor_timestamps(rec: _RecordingStore, component_name: str) -> dict:
+    """Genuine timestamps for a component, extracted from the EXACT recorded read (no new query). Never
+    fabricated: absent fields stay None. Provenance classification (vs capture time) happens downstream."""
+    method = _COMPONENT_ANCHOR.get(component_name)
+    out = {"source_provider": None, "source_event_ts": None, "source_published_or_filed_ts": None,
+           "source_observed_ts": None}
+    if method is None:                                  # Risk (internal state) — no external source timestamp
+        out["source_provider"] = "risk_engine"
+        return out
+    res = _first_read(rec, method)
+    if not res:
+        return out
+
+    def s(v):
+        return None if v in (None, "") else str(v)
+
+    if method == "list_news":
+        latest = max(res, key=lambda n: getattr(n, "published_at", "") or "")
+        pub = s(getattr(latest, "published_at", None))
+        out.update({"source_provider": getattr(latest, "source", None) or "news",
+                    "source_event_ts": pub, "source_published_or_filed_ts": pub,
+                    "source_observed_ts": s(getattr(latest, "created_at", None))})
+    elif method == "list_ohlc_bars":
+        b = res[-1]
+        out.update({"source_provider": getattr(b, "source", None) or "market_data",
+                    "source_event_ts": s(getattr(b, "ts", None)),
+                    "source_observed_ts": s(getattr(b, "created_at", None))})
+    elif method == "get_financial_metrics":
+        out.update({"source_provider": "fundamentals",
+                    "source_event_ts": s(getattr(res, "period", None)),
+                    "source_observed_ts": s(getattr(res, "updated_at", None))})
+    elif method == "get_options_flow":
+        t = s(getattr(res, "timestamp", None))
+        out.update({"source_provider": "options", "source_event_ts": t, "source_observed_ts": t})
+    elif method == "list_trader_positions_for_symbol":
+        t = s(getattr(res[0], "timestamp", None)) if res else None
+        out.update({"source_provider": "traders", "source_event_ts": t, "source_observed_ts": t})
+    return out
+
+
+def _decision_price_meta(rec: _RecordingStore) -> dict:
+    """The observed decision-price reference from the SAME market read — precision preserved (string of the
+    raw Decimal close, never a binary float) with its exact source bar timestamp (§ correction 10)."""
+    bars = _first_read(rec, "list_ohlc_bars")
+    if bars:
+        b = bars[-1]
+        return {"decision_price": str(getattr(b, "close", "")), "decision_price_bar_ts": str(getattr(b, "ts", "")),
+                "decision_price_source": getattr(b, "source", None) or "market_data",
+                "decision_price_provenance_status": "OBSERVED_ONLY"}
+    return {"decision_price": None, "decision_price_bar_ts": None, "decision_price_source": None,
+            "decision_price_provenance_status": "UNKNOWN"}
+
+
+def build_ai_consensus_traced(store, symbol: str) -> tuple[dict, list[dict], dict]:
+    """ONE computation returning (assessment, trace, meta). The assessment is byte-identical to
+    `build_ai_consensus(store, symbol)`; the trace carries, per contributing component, the exact canonical
+    value that produced the score plus genuine source timestamps from the SAME reads; meta carries the
+    observed decision price from that same read. The caller builds the snapshot solely from these — it must
+    not query the store again."""
+    rec = _RecordingStore(store)
+    assessment = build_ai_consensus(rec, symbol)
+    trace = []
+    for c in assessment.get("components") or []:
+        name = c.get("component_name")
+        trace.append({"component_name": name,
+                      "canonical_value": {k: c.get(k) for k in
+                                          ("component_name", "score", "weight", "direction", "reason",
+                                           "risk_flags")},
+                      "component_score": c.get("score"), "component_status": c.get("direction"),
+                      **_anchor_timestamps(rec, name)})
+    return assessment, trace, _decision_price_meta(rec)
+
+
 def persist_ai_consensus(store, assessment: dict) -> None:
     """Persist a computed assessment (+ its components) as an audit/history snapshot. Read-only wrt
     trading; writes only to the ai_assessment* tables."""

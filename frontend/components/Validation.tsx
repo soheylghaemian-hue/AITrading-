@@ -62,12 +62,12 @@ export function Validation({ connected }: { connected: boolean }) {
       ) : null}
 
       <div className="card">
-        <h3 style={{ marginBottom: 12 }}>Collection coverage by horizon (matured / effective samples)</h3>
+        <h3 style={{ marginBottom: 12 }}>Collection coverage by horizon (graded predictions vs abstentions)</h3>
         {cov ? (
-          <table className="bt-cov"><thead><tr><th>Horizon (sessions)</th><th>Matured</th><th>Effective samples</th><th>Failed</th></tr></thead>
+          <table className="bt-cov"><thead><tr><th>Horizon (sessions)</th><th>Matured</th><th>Graded</th><th>Abstained</th><th>Effective sessions</th><th>Failed</th></tr></thead>
             <tbody>{HZ.map((h) => {
-              const b = cov.coverage.by_horizon[h] || { matured: 0, effective_samples: 0, failed: 0 };
-              return <tr key={h}><td>{h}</td><td className="num">{b.matured}</td><td className="num">{b.effective_samples}</td><td className="num">{b.failed}</td></tr>;
+              const b = cov.coverage.by_horizon[h] || { matured: 0, graded: 0, abstained: 0, effective_graded_sessions: 0, failed: 0 };
+              return <tr key={h}><td>{h}</td><td className="num">{b.matured}</td><td className="num">{b.graded}</td><td className="num">{b.abstained}</td><td className="num">{b.effective_graded_sessions}</td><td className="num">{b.failed}</td></tr>;
             })}</tbody></table>
         ) : <div className="nodata"><div className="nd">{NO_DATA}</div></div>}
       </div>

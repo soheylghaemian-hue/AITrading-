@@ -127,15 +127,44 @@ def test_one_canonical_snapshot_per_symbol_session_idempotent():
 
 
 # --------------------------------------------------------------------- exact inputs / atomicity / checksums
-def test_exact_inputs_captured_from_the_same_consensus_computation():
+def test_recording_store_reads_each_source_once_memoized():
+    from atp.consensus.engine import _RecordingStore
+
+    class _Flaky:                                            # returns a DIFFERENT value on every read
+        def __init__(self):
+            self.calls = 0
+
+        def list_news(self, sym, k):
+            self.calls += 1
+            return [self.calls]
+
+    flaky = _Flaky()
+    rec = _RecordingStore(flaky)
+    first = rec.list_news("NVDA", 20)
+    assert rec.list_news("NVDA", 20) == first and flaky.calls == 1   # memoized → underlying read exactly once
+
+
+def test_exact_inputs_are_frozen_from_the_single_computation_not_a_later_read():
+    """Strong replacement for the name-only check (§ correction 1/11): the persisted component VALUE is the
+    exact one that produced the score, and a later mutation of the source cannot enter the snapshot."""
     from atp.consensus.engine import build_ai_consensus
     s = _store()
-    _seed_market(s, "NVDA")
+    _seed_market(s, "NVDA")                                  # uptrend closes 100..107
     collect_session(s, now=_window_now(date(2026, 8, 14)), commit_sha=SHA, symbols=["NVDA"])
     sid = _snapshot_id("NVDA", "2026-08-14")
-    input_names = {i.component_name for i in s.ri_list_inputs(sid)}
-    consensus_names = {c["component_name"] for c in build_ai_consensus(s, "NVDA")["components"]}
-    assert input_names == consensus_names                    # exact same component set (same computation)
+    md = [i for i in s.ri_list_inputs(sid) if i.component_name == "Market Data"][0]
+    frozen_score = md.component_score
+    assert json.loads(md.canonical_value_json)["score"] == float(frozen_score)   # value that produced the score
+
+    # mutate the source so a FRESH consensus computes a very different Market Data score
+    for i in range(8, 24):
+        d = (date(2026, 8, 4) + timedelta(days=i)).isoformat()
+        s.insert_ohlc_bar(symbol="NVDA", interval="1D", ts=f"{d}T00:00:00+00:00", open=10, high=11, low=9,
+                          close=10, volume=1000, source="TEST")
+    fresh = [c for c in build_ai_consensus(s, "NVDA")["components"] if c["component_name"] == "Market Data"][0]
+    assert str(fresh["score"]) != frozen_score              # a later read WOULD differ → the snapshot is frozen
+    # re-reading the persisted snapshot still yields the ORIGINAL frozen value (immutable, no leak)
+    assert [i for i in s.ri_list_inputs(sid) if i.component_name == "Market Data"][0].component_score == frozen_score
 
 
 def test_atomic_write_and_fk_rejects_orphans():
@@ -211,21 +240,21 @@ def test_outcome_only_after_maturity_and_requires_completed_dataset():
     assert all(Decimal(o.decision_price) >= 500 for o in outs)   # from the dataset (base 500), never live ~107
 
 
-def test_missing_outcome_bar_is_deterministic_failed():
+def test_covering_but_missing_bar_stays_pending_not_failed():
+    # § correction 5: a covering dataset that lacks the required bar must NOT terminally fail — another valid
+    # dataset may later supply it. The outcome stays PENDING (no row).
     s = _store()
     _seed_market(s, "NVDA")
     collect_session(s, now=_window_now(date(2026, 8, 14)), commit_sha=SHA, symbols=["NVDA"])
-    # a COMPLETED dataset whose RANGE covers the decision session (08-14) but whose bars start later
-    # (08-17) — simulating a halt/gap. The covering-but-bar-absent case is a deterministic FAILED.
     from atp.research.backfill.validate import dataset_checksum as dck
     s.rd_create_dataset(dataset_id="ds-gap", owner="op", request_checksum="rc-gap",
                         symbol_universe_json=json.dumps(["NVDA"]), interval="1D", provider="MASSIVE",
                         provider_contract_version=policy.PROVIDER_CONTRACT_VERSION,
                         adjustment_policy=policy.ADJUSTMENT_POLICY,
-                        normalization_policy="US_EQUITY_RTH_DAILY_FROM_1MIN_V1",
+                        normalization_policy=policy.NORMALIZATION_POLICY,
                         calendar_version=policy.CALENDAR_VERSION, range_start="2026-08-10", range_end="2026-09-30")
     s.rd_advance_status("ds-gap", "PLANNED", "RUNNING")
-    days, d = [], date(2026, 8, 17)
+    days, d = [], date(2026, 8, 17)                              # bars start AFTER the 08-14 decision session
     while d <= date(2026, 9, 30):
         if cal.is_session_day(d):
             days.append(d)
@@ -237,8 +266,75 @@ def test_missing_outcome_bar_is_deterministic_failed():
     s.rd_write_and_finalize("ds-gap", expected_from="RUNNING", status="COMPLETED", bars=gapbars,
                             row_count=len(gapbars), dataset_checksum=dck(gapbars), provider_adjusted_flag=True)
     r = evaluate_pending(s, now=datetime(2026, 10, 20, 21, tzinfo=timezone.utc), commit_sha=SHA)
-    failed = [o for o in s.ri_list_outcomes() if o.status == "FAILED"]
-    assert r["failed_count"] >= 1 and any(o.failure_code == "MISSING_OUTCOME_BAR" for o in failed)
+    assert r["failed_count"] == 0 and s.ri_list_outcomes() == []   # PENDING, not a terminal FAILED
+    assert r["pending"] >= 1
+
+
+def _finalize_dataset(store, ds_id, first, last, base, *, contract=None, checksum=None):
+    from atp.research.backfill.validate import dataset_checksum as dck
+    days, d = [], first
+    while d <= last:
+        if cal.is_session_day(d):
+            days.append(d)
+        d += timedelta(days=1)
+    bars = [{"symbol": "NVDA", "interval": "1D", "ts": f"{dd.isoformat()}T00:00:00+00:00",
+             "session_date": dd.isoformat(), "open": base + Decimal(k), "high": base + Decimal(k) + 1,
+             "low": base + Decimal(k) - 1, "close": base + Decimal(k), "volume": Decimal("1000"),
+             "trade_count": 5, "source": "MASSIVE", "adjustment_policy": policy.ADJUSTMENT_POLICY}
+            for k, dd in enumerate(days)]
+    store.rd_create_dataset(dataset_id=ds_id, owner="op", request_checksum="rc-" + ds_id,
+                            symbol_universe_json=json.dumps(["NVDA"]), interval="1D", provider="MASSIVE",
+                            provider_contract_version=(contract or policy.PROVIDER_CONTRACT_VERSION),
+                            adjustment_policy=policy.ADJUSTMENT_POLICY, normalization_policy=policy.NORMALIZATION_POLICY,
+                            calendar_version=policy.CALENDAR_VERSION, range_start=first.isoformat(),
+                            range_end=last.isoformat())
+    store.rd_advance_status(ds_id, "PLANNED", "RUNNING")
+    store.rd_write_and_finalize(ds_id, expected_from="RUNNING", status="COMPLETED", bars=bars, row_count=len(bars),
+                                dataset_checksum=(checksum or dck(bars)), provider_adjusted_flag=True)
+
+
+def test_wrong_contract_and_tampered_checksum_datasets_are_rejected():
+    # § correction 5: a wrong-contract dataset and a checksum-mismatch dataset are NOT valid and are never
+    # selected; only the fully-valid (deterministically first-by-id) dataset matures the outcome.
+    s = _store()
+    _seed_market(s, "NVDA")
+    collect_session(s, now=_window_now(date(2026, 8, 14)), commit_sha=SHA, symbols=["NVDA"])
+    _finalize_dataset(s, "ds-1-badcontract", date(2026, 7, 1), date(2026, 9, 30), Decimal("500"),
+                      contract="polygon-aggs-1min-OLD-v1")                    # wrong contract → skipped
+    _finalize_dataset(s, "ds-2-badchecksum", date(2026, 7, 1), date(2026, 9, 30), Decimal("500"),
+                      checksum="sha256:bogus")                               # checksum mismatch → skipped
+    _finalize_dataset(s, "ds-3-good", date(2026, 7, 1), date(2026, 9, 30), Decimal("500"))   # valid
+    r = evaluate_pending(s, now=datetime(2026, 10, 20, 21, tzinfo=timezone.utc), commit_sha=SHA)
+    assert r["matured_count"] == len(policy.HORIZONS)
+    assert all(o.dataset_id == "ds-3-good" for o in s.ri_list_outcomes())    # never the invalid ones
+
+
+def test_zero_decision_price_is_deterministic_failed():
+    from atp.research.backfill.validate import dataset_checksum as dck
+    s = _store()
+    _seed_market(s, "NVDA")
+    collect_session(s, now=_window_now(date(2026, 8, 14)), commit_sha=SHA, symbols=["NVDA"])
+    # a valid dataset whose DECISION bar (08-14) close is exactly 0 → structurally un-returnable → FAILED
+    days, d = [], date(2026, 8, 10)
+    while d <= date(2026, 9, 30):
+        if cal.is_session_day(d):
+            days.append(d)
+        d += timedelta(days=1)
+    bars = [{"symbol": "NVDA", "interval": "1D", "ts": f"{dd.isoformat()}T00:00:00+00:00",
+             "session_date": dd.isoformat(), "open": Decimal("0"), "high": Decimal("1"), "low": Decimal("0"),
+             "close": Decimal("0"), "volume": Decimal("1000"), "trade_count": 5, "source": "MASSIVE",
+             "adjustment_policy": policy.ADJUSTMENT_POLICY} for dd in days]
+    s.rd_create_dataset(dataset_id="ds-zero", owner="op", request_checksum="rc-zero",
+                        symbol_universe_json=json.dumps(["NVDA"]), interval="1D", provider="MASSIVE",
+                        provider_contract_version=policy.PROVIDER_CONTRACT_VERSION,
+                        adjustment_policy=policy.ADJUSTMENT_POLICY, normalization_policy=policy.NORMALIZATION_POLICY,
+                        calendar_version=policy.CALENDAR_VERSION, range_start="2026-08-10", range_end="2026-09-30")
+    s.rd_advance_status("ds-zero", "PLANNED", "RUNNING")
+    s.rd_write_and_finalize("ds-zero", expected_from="RUNNING", status="COMPLETED", bars=bars, row_count=len(bars),
+                            dataset_checksum=dck(bars), provider_adjusted_flag=True)
+    r = evaluate_pending(s, now=datetime(2026, 10, 20, 21, tzinfo=timezone.utc), commit_sha=SHA)
+    assert r["failed_count"] >= 1
+    assert any(o.failure_code == "ZERO_DECISION_PRICE" for o in s.ri_list_outcomes() if o.status == "FAILED")
 
 
 def test_outcome_terminal_db_immutable():
@@ -292,6 +388,114 @@ def test_worker_forward_only_no_backdating_and_exit_codes(monkeypatch, tmp_path)
 
 
 # --------------------------------------------------------------------- legacy reconciliation diagnostic
+def test_honest_timestamps_distinguish_target_from_capture():
+    s = _store()
+    _seed_market(s, "NVDA")
+    target = cal.session_close_utc(date(2026, 8, 14)) + timedelta(minutes=policy.SETTLE_MINUTES)
+    capture = target + timedelta(minutes=12)                  # a run 12min after the target, inside the window
+    collect_session(s, now=capture, commit_sha=SHA, symbols=["NVDA"])
+    snap = s.ri_get_snapshot(_snapshot_id("NVDA", "2026-08-14"))
+    assert snap.scheduled_target_ts == target.isoformat()     # the canonical target
+    assert snap.decision_ts == capture.isoformat()            # the ACTUAL capture — not stamped as the target
+    assert snap.scheduled_target_ts != snap.decision_ts
+
+
+def test_late_run_cannot_masquerade_as_close_plus_ten():
+    s = _store()
+    _seed_market(s, "NVDA")
+    # a run 3 hours after the target is OUTSIDE the narrow window → missed, no snapshot (§ correction 2)
+    late = cal.session_close_utc(date(2026, 8, 14)) + timedelta(hours=3)
+    r = collect_session(s, now=late, commit_sha=SHA, symbols=["NVDA"])
+    assert not r["eligible"] and r["reason"] == "AFTER_COLLECTION_WINDOW"
+    assert s.ri_list_snapshots(universe_id=policy.UNIVERSE_ID) == []
+
+
+def test_provenance_classification_rules():
+    from atp.research.intel.provenance import classify_provenance
+    cap = "2026-08-14T20:15:00+00:00"
+    fut = classify_provenance(None, None, "2026-08-15T00:00:00+00:00", cap)      # observed in the future
+    assert fut["provenance_status"] == "UNKNOWN" and fut["freshness_state"] == "INVALID_FUTURE"
+    assert fut["missing_data_reason"] == "OBSERVED_TS_IN_FUTURE"
+    absent = classify_provenance("e", "p", None, cap)                            # no observed → not OBSERVED_ONLY
+    assert absent["provenance_status"] == "UNKNOWN" and absent["missing_data_reason"] == "NO_OBSERVED_TS"
+    fresh = classify_provenance(None, "2026-08-14T18:00:00+00:00", "2026-08-14T20:00:00+00:00", cap)
+    assert fresh["provenance_status"] == "OBSERVED_ONLY" and fresh["freshness_state"] == "FRESH"
+    assert fresh["source_available_ts"] is None                                  # published != proven availability
+    stale = classify_provenance(None, None, "2026-08-10T00:00:00+00:00", cap)
+    assert stale["freshness_state"] == "STALE" and stale["provenance_status"] == "OBSERVED_ONLY"
+    pubfut = classify_provenance(None, "2026-08-20T00:00:00+00:00", "2026-08-14T20:00:00+00:00", cap)
+    assert pubfut["provenance_status"] == "OBSERVED_ONLY" and pubfut["missing_data_reason"] == "PUBLISHED_TS_IN_FUTURE"
+    for r in (fut, absent, fresh, stale, pubfut):
+        assert r["provenance_status"] != "VERIFIED"                             # never auto-VERIFIED here
+
+
+def test_commit_head_verification_all_failure_modes(tmp_path):
+    import subprocess
+    from atp.research.intel.commit import CommitVerificationError, resolve_commit_sha
+    # missing / malformed ref
+    with pytest.raises(CommitVerificationError) as e0:
+        resolve_commit_sha(env={})
+    assert e0.value.code == "COMMIT_REF_MISSING"
+    with pytest.raises(CommitVerificationError) as e1:
+        resolve_commit_sha(env={"ATP_COMMIT_REF": "short"})
+    assert e1.value.code == "COMMIT_REF_MALFORMED"
+    # unreadable repo dir → NEVER silently skipped (fail closed)
+    with pytest.raises(CommitVerificationError) as e2:
+        resolve_commit_sha(env={"ATP_COMMIT_REF": "a" * 40}, repo_dir=str(tmp_path / "no-git"))
+    assert e2.value.code == "COMMIT_HEAD_UNREADABLE"
+    # malformed injected HEAD, and stale mismatch
+    with pytest.raises(CommitVerificationError) as e3:
+        resolve_commit_sha(env={"ATP_COMMIT_REF": "a" * 40}, head_sha="not-a-sha")
+    assert e3.value.code == "COMMIT_HEAD_MALFORMED"
+    with pytest.raises(CommitVerificationError) as e4:
+        resolve_commit_sha(env={"ATP_COMMIT_REF": "a" * 40}, head_sha="b" * 40)
+    assert e4.value.code == "COMMIT_REF_STALE"
+    # a REAL git checkout whose HEAD equals the ref → verified
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
+    (repo / "f").write_text("x")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "c"], check=True)
+    head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    assert resolve_commit_sha(env={"ATP_COMMIT_REF": head}, repo_dir=str(repo)) == head
+
+
+def test_outcome_write_is_concurrency_accurate():
+    # § correction 9: only the connection that actually inserts an outcome reports it; the other reports
+    # an idempotent conflict (not a second maturation).
+    dbfile = str(Path(tempfile.mkdtemp()) / "atp.db")
+    s1, s2 = open_store(dbfile), open_store(dbfile, migrate=False)
+    _seed_market(s1, "NVDA")
+    collect_session(s1, now=_window_now(date(2026, 8, 14)), commit_sha=SHA, symbols=["NVDA"])
+    sid = _snapshot_id("NVDA", "2026-08-14")
+    row = {"snapshot_id": sid, "horizon_sessions": 1, "snapshot_checksum": "sc", "outcome_policy_version": "v",
+           "status": "MATURED", "commit_sha": SHA}
+    assert s1.ri_write_outcome(row) is True                   # first inserter wins
+    assert s2.ri_write_outcome(row) is False                  # concurrent conflict → not a second maturation
+    # and evaluate_pending on a second pass reports already-existing, not newly matured
+    _seed_dataset(s1, "NVDA", date(2026, 7, 1), date(2026, 9, 30), base=Decimal("500"))
+    a = evaluate_pending(s1, now=datetime(2026, 10, 20, 21, tzinfo=timezone.utc), commit_sha=SHA)
+    b = evaluate_pending(s1, now=datetime(2026, 10, 20, 21, tzinfo=timezone.utc), commit_sha=SHA)
+    assert a["matured_count"] >= 1 and b["matured_count"] == 0
+
+
+def test_decision_price_reconciliation_recorded():
+    s = _store()
+    _seed_market(s, "NVDA")                                   # observed decision price ~107 from live bars
+    collect_session(s, now=_window_now(date(2026, 8, 14)), commit_sha=SHA, symbols=["NVDA"])
+    # dataset decision close is ~530 (base 500 + offset) → differs from the observed 107 → MISMATCH recorded,
+    # and the return uses the DATASET price (authoritative), never a silent swap.
+    _seed_dataset(s, "NVDA", date(2026, 7, 1), date(2026, 9, 30), base=Decimal("500"))
+    evaluate_pending(s, now=datetime(2026, 10, 20, 21, tzinfo=timezone.utc), commit_sha=SHA)
+    outs = s.ri_list_outcomes()
+    assert all(o.decision_price_reconciliation == "MISMATCH_OBSERVED_VS_DATASET" for o in outs)
+    assert all(Decimal(o.decision_price) >= 500 for o in outs)   # dataset price used, not the observed 107
+    assert all(o.outcome_checksum and o.outcome_checksum.startswith("sha256:") for o in outs)
+
+
 def test_legacy_reconciliation_detects_orphan_governance():
     from atp.research.intel.legacy_diag import reconcile_legacy
     s = _store()

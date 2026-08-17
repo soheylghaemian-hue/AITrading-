@@ -12,10 +12,10 @@ from .collector import collect_session
 from .commit import CommitVerificationError, resolve_commit_sha
 from .envelope import canonical_json, inputs_checksum, snapshot_checksum
 from .outcomes import classify, evaluate_pending
-from .provenance import build_input_envelope
+from .provenance import build_envelope_from_trace, classify_provenance
 
 __all__ = [
     "policy", "collect_session", "evaluate_pending", "classify",
-    "build_input_envelope", "canonical_json", "inputs_checksum", "snapshot_checksum",
-    "resolve_commit_sha", "CommitVerificationError",
+    "build_envelope_from_trace", "classify_provenance", "canonical_json", "inputs_checksum",
+    "snapshot_checksum", "resolve_commit_sha", "CommitVerificationError",
 ]

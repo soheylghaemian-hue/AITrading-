@@ -41,19 +41,30 @@ def _accuracy_block(samples) -> dict:
 
 
 def coverage(snapshots, outcomes) -> dict:
+    """Separates the distinct evidence classes (§ correction 6): captured snapshots, matured price outcomes,
+    GRADED prediction outcomes (a real directional call verified), abstentions (NO-DATA/ABSTAIN), failures.
+    Effective samples per horizon count UNIQUE DECISION SESSIONS (not symbol×session snapshots) — three
+    symbols from one session are correlated observations of ONE effective session cluster."""
+    sess_of = {s.snapshot_id: s.decision_session_date for s in snapshots}
     matured = [o for o in outcomes if o.status == "MATURED"]
     sessions = {s.decision_session_date for s in snapshots}
     symbols = {s.symbol for s in snapshots}
     by_h = {}
     for h in policy.HORIZONS:
         mh = [o for o in matured if o.horizon_sessions == h]
+        graded = [o for o in mh if o.direction_correct is not None and o.classification != "ABSTAIN"]
+        abstained = [o for o in mh if o.classification == "ABSTAIN" or o.direction_correct is None]
         fh = [o for o in outcomes if o.status == "FAILED" and o.horizon_sessions == h]
-        # effective = one independent sample per (snapshot = symbol×session), never per hourly row
-        by_h[str(h)] = {"matured": len(mh), "failed": len(fh),
-                        "effective_samples": len({o.snapshot_id for o in mh})}
-    return {"raw_snapshot_count": len(snapshots), "effective_canonical_sessions": len(sessions),
-            "unique_symbols": len(symbols), "symbols": sorted(symbols),
-            "matured_total": len(matured),
+        by_h[str(h)] = {
+            "matured": len(mh), "graded": len(graded), "abstained": len(abstained), "failed": len(fh),
+            # effective = unique DECISION SESSIONS with a graded outcome at this horizon (session-clustered)
+            "effective_graded_sessions": len({sess_of.get(o.snapshot_id) for o in graded}),
+        }
+    return {"raw_snapshot_count": len(snapshots), "captured_snapshots": len(snapshots),
+            "effective_canonical_sessions": len(sessions), "unique_symbols": len(symbols),
+            "symbols": sorted(symbols), "matured_total": len(matured),
+            "graded_total": sum(v["graded"] for v in by_h.values()),
+            "abstained_total": sum(v["abstained"] for v in by_h.values()),
             "failed_total": len([o for o in outcomes if o.status == "FAILED"]),
             "by_horizon": by_h}
 

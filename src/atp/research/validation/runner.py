@@ -67,9 +67,10 @@ def _provenance_quality(store, snaps) -> dict:
                 unknown += 1
             if inp.missing_data_reason:
                 missing += 1
-    return {"total_inputs": total,
-            "unknown_fraction": round(unknown / total, 4) if total else 0.0,
-            "missing_fraction": round(missing / total, 4) if total else 0.0}
+    if total == 0:                     # § correction 6: zero input rows → quality UNAVAILABLE (not a false 0%)
+        return {"total_inputs": 0, "available": False, "unknown_fraction": None, "missing_fraction": None}
+    return {"total_inputs": total, "available": True,
+            "unknown_fraction": round(unknown / total, 4), "missing_fraction": round(missing / total, 4)}
 
 
 def _evaluate_gate(store, snaps, outcomes, samples, cov) -> dict:
@@ -90,26 +91,31 @@ def _evaluate_gate(store, snaps, outcomes, samples, cov) -> dict:
                      cov["effective_canonical_sessions"], g["min_unique_sessions"])
     criteria |= crit("unique_symbols", cov["unique_symbols"] >= g["min_symbols"],
                      cov["unique_symbols"], g["min_symbols"])
-    matured_ok = all(per_h[str(h)]["matured"] >= g["min_matured_outcomes_per_horizon"] for h in policy.HORIZONS)
-    criteria |= crit("matured_per_horizon", matured_ok,
-                     {str(h): per_h[str(h)]["matured"] for h in policy.HORIZONS},
+    # § correction 6: the gate requires GRADED prediction outcomes (NO-DATA/ABSTAIN never satisfy it).
+    graded_ok = all(per_h[str(h)]["graded"] >= g["min_matured_outcomes_per_horizon"] for h in policy.HORIZONS)
+    criteria |= crit("graded_per_horizon", graded_ok,
+                     {str(h): per_h[str(h)]["graded"] for h in policy.HORIZONS},
                      g["min_matured_outcomes_per_horizon"])
-    eff_ok = all(per_h[str(h)]["effective_samples"] >= g["min_effective_samples_per_horizon"]
+    eff_ok = all(per_h[str(h)]["effective_graded_sessions"] >= g["min_effective_samples_per_horizon"]
                  for h in policy.HORIZONS)
-    criteria |= crit("effective_samples_per_horizon", eff_ok,
-                     {str(h): per_h[str(h)]["effective_samples"] for h in policy.HORIZONS},
+    criteria |= crit("effective_graded_sessions_per_horizon", eff_ok,
+                     {str(h): per_h[str(h)]["effective_graded_sessions"] for h in policy.HORIZONS},
                      g["min_effective_samples_per_horizon"])
     criteria |= crit("wall_clock_months", months >= g["min_wall_clock_months"], round(months, 2),
                      g["min_wall_clock_months"])
-    criteria |= crit("full_20_session_maturity",
-                     per_h["20"]["matured"] >= g["min_matured_outcomes_per_horizon"],
-                     per_h["20"]["matured"], g["min_matured_outcomes_per_horizon"])
+    criteria |= crit("full_20_session_graded_maturity",
+                     per_h["20"]["graded"] >= g["min_matured_outcomes_per_horizon"],
+                     per_h["20"]["graded"], g["min_matured_outcomes_per_horizon"])
     criteria |= crit("distinct_regimes", len(regimes) >= g["min_distinct_regimes"], sorted(regimes),
                      g["min_distinct_regimes"])
-    criteria |= crit("unknown_provenance_fraction", prov["unknown_fraction"] <= g["max_unknown_provenance_fraction"],
-                     prov["unknown_fraction"], g["max_unknown_provenance_fraction"])
-    criteria |= crit("missing_data_fraction", prov["missing_fraction"] <= g["max_missing_data_fraction"],
-                     prov["missing_fraction"], g["max_missing_data_fraction"])
+    prov_ok = (prov["available"] and prov["unknown_fraction"] <= g["max_unknown_provenance_fraction"])
+    criteria |= crit("unknown_provenance_fraction", prov_ok,
+                     ("UNAVAILABLE" if not prov["available"] else prov["unknown_fraction"]),
+                     g["max_unknown_provenance_fraction"])
+    miss_ok = (prov["available"] and prov["missing_fraction"] <= g["max_missing_data_fraction"])
+    criteria |= crit("missing_data_fraction", miss_ok,
+                     ("UNAVAILABLE" if not prov["available"] else prov["missing_fraction"]),
+                     g["max_missing_data_fraction"])
     passed = all(c["ok"] for c in criteria.values())
     return {"gate_id": policy.GATE_ID, "passed": passed, "criteria": criteria,
             "regime_policy_version": policy.REGIME_POLICY_VERSION, "provenance_quality": prov}
@@ -118,7 +124,10 @@ def _evaluate_gate(store, snaps, outcomes, samples, cov) -> dict:
 def run_validation(store, *, commit_sha: str, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     snaps = store.ri_list_snapshots(universe_id=policy.UNIVERSE_ID)
-    outcomes = store.ri_list_outcomes()
+    # § correction 7 — universe isolation: only outcomes whose snapshot belongs to THIS universe/policy
+    # influence coverage / gate / checksums / metrics / benchmarks. Other (future) universes are excluded.
+    universe_snapshot_ids = {s.snapshot_id for s in snaps}
+    outcomes = [o for o in store.ri_list_outcomes() if o.snapshot_id in universe_snapshot_ids]
     matured = [o for o in outcomes if o.status == "MATURED"]
     snap_by_id = {s.snapshot_id: s for s in snaps}
 
@@ -146,8 +155,15 @@ def run_validation(store, *, commit_sha: str, now: datetime | None = None) -> di
     cov = mx.coverage(snaps, outcomes)
     gate = _evaluate_gate(store, snaps, outcomes, samples, cov)
     snap_ck = _sha(sorted(s.snapshot_checksum for s in snaps))
-    out_ck = _sha(sorted([o.snapshot_id + ":" + str(o.horizon_sessions) + ":" + o.status + ":" +
-                          str(o.return_pct) + ":" + str(o.direction_correct) for o in matured]))
+    # § correction 8 — bind the COMPLETE canonical outcome records (each `outcome_checksum` already binds
+    # snapshot/dataset ids+checksums, prices, directions, classification, threshold, policy, commit) plus the
+    # selected dataset ids/checksums and policy versions. Changing any decisive field flips this checksum.
+    out_ck = _sha({
+        "outcomes": sorted(o.outcome_checksum or (o.snapshot_id + ":" + str(o.horizon_sessions)) for o in matured),
+        "datasets": sorted({(o.dataset_id, o.dataset_checksum) for o in matured if o.dataset_id}),
+        "outcome_policy_version": policy.OUTCOME_POLICY_VERSION,
+        "sampling_policy_version": policy.SAMPLING_POLICY_VERSION,
+        "validation_policy_version": policy.VALIDATION_POLICY_VERSION})
 
     run_id = new_id()
     store.rv_create_run(run_id=run_id, universe_id=policy.UNIVERSE_ID, universe_version=policy.UNIVERSE_VERSION,

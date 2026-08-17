@@ -671,12 +671,15 @@ class ResearchIntelSnapshotRow:
     exchange_tz: str
     calendar_id: str
     calendar_version: str
+    scheduled_target_ts: str
+    computation_started_ts: str
     decision_ts: str
     decision_session_date: str
     is_early_close: bool | None
     decision_price: str | None
     decision_price_source: str | None
     decision_price_provenance_status: str | None
+    decision_price_bar_ts: str | None
     consensus_score: str | None
     consensus_direction: str | None
     consensus_confidence: str | None
@@ -733,6 +736,9 @@ class ResearchIntelOutcomeRow:
     classification: str | None
     neutral_threshold_pct: str | None
     outcome_policy_version: str
+    decision_price_bar_ts: str | None
+    decision_price_reconciliation: str | None
+    outcome_checksum: str | None
     status: str
     failure_code: str | None
     evaluation_ts: str
@@ -2383,12 +2389,12 @@ class SqlStore(Store):
     # ---- § R3.1A immutable point-in-time intelligence snapshots + outcomes + validation ----
     _RI_SNAP_COLS = (
         "snapshot_id,universe_id,universe_version,sampling_policy_version,outcome_policy_version,symbol,"
-        "asset_class,exchange,currency,exchange_tz,calendar_id,calendar_version,decision_ts,"
-        "decision_session_date,is_early_close,decision_price,decision_price_source,"
-        "decision_price_provenance_status,consensus_score,consensus_direction,consensus_confidence,"
-        "consensus_status,governance_status,governance_reasons_json,data_completeness,"
-        "expected_outcome_contract_json,adjustment_policy,horizons_json,inputs_checksum,snapshot_checksum,"
-        "commit_sha,supersedes_snapshot_id,status,created_at")
+        "asset_class,exchange,currency,exchange_tz,calendar_id,calendar_version,scheduled_target_ts,"
+        "computation_started_ts,decision_ts,decision_session_date,is_early_close,decision_price,"
+        "decision_price_source,decision_price_provenance_status,decision_price_bar_ts,consensus_score,"
+        "consensus_direction,consensus_confidence,consensus_status,governance_status,governance_reasons_json,"
+        "data_completeness,expected_outcome_contract_json,adjustment_policy,horizons_json,inputs_checksum,"
+        "snapshot_checksum,commit_sha,supersedes_snapshot_id,status,created_at")
     _RI_IN_COLS = (
         "snapshot_id,component_name,canonical_value_json,component_score,component_status,source_provider,"
         "source_event_ts,source_published_or_filed_ts,source_observed_ts,source_available_ts,"
@@ -2397,7 +2403,8 @@ class SqlStore(Store):
         "snapshot_id,horizon_sessions,snapshot_checksum,dataset_id,dataset_checksum,provider_contract_version,"
         "adjustment_policy,decision_bar_ts,decision_price,outcome_bar_ts,outcome_price,return_pct,"
         "direction_expected,direction_actual,direction_correct,classification,neutral_threshold_pct,"
-        "outcome_policy_version,status,failure_code,evaluation_ts,commit_sha,created_at")
+        "outcome_policy_version,decision_price_bar_ts,decision_price_reconciliation,outcome_checksum,status,"
+        "failure_code,evaluation_ts,commit_sha,created_at")
     _RV_RUN_COLS = (
         "run_id,universe_id,universe_version,validation_policy_version,outcome_policy_version,"
         "sampling_policy_version,gate_id,snapshot_set_checksum,outcome_set_checksum,dataset_ids_json,"
@@ -2411,15 +2418,16 @@ class SqlStore(Store):
         s, now = snapshot, utcnow_iso()
         with self.tx() as cur:
             self._exec(cur, f"INSERT INTO research_intel_snapshots ({self._RI_SNAP_COLS}) "
-                       f"VALUES ({','.join(['?'] * 34)}) ON CONFLICT(snapshot_id) DO NOTHING",
+                       f"VALUES ({','.join(['?'] * 37)}) ON CONFLICT(snapshot_id) DO NOTHING",
                        (s["snapshot_id"], s["universe_id"], s["universe_version"], s["sampling_policy_version"],
                         s["outcome_policy_version"], s["symbol"], s["asset_class"], s["exchange"], s["currency"],
-                        s["exchange_tz"], s["calendar_id"], s["calendar_version"], s["decision_ts"],
-                        s["decision_session_date"], (1 if s.get("is_early_close") else 0),
-                        s.get("decision_price"), s.get("decision_price_source"),
-                        s.get("decision_price_provenance_status"), s.get("consensus_score"),
-                        s.get("consensus_direction"), s.get("consensus_confidence"), s.get("consensus_status"),
-                        s.get("governance_status"), s.get("governance_reasons_json"), s.get("data_completeness"),
+                        s["exchange_tz"], s["calendar_id"], s["calendar_version"], s["scheduled_target_ts"],
+                        s["computation_started_ts"], s["decision_ts"], s["decision_session_date"],
+                        (1 if s.get("is_early_close") else 0), s.get("decision_price"),
+                        s.get("decision_price_source"), s.get("decision_price_provenance_status"),
+                        s.get("decision_price_bar_ts"), s.get("consensus_score"), s.get("consensus_direction"),
+                        s.get("consensus_confidence"), s.get("consensus_status"), s.get("governance_status"),
+                        s.get("governance_reasons_json"), s.get("data_completeness"),
                         s["expected_outcome_contract_json"], s["adjustment_policy"], s["horizons_json"],
                         s["inputs_checksum"], s["snapshot_checksum"], s["commit_sha"],
                         s.get("supersedes_snapshot_id"), s.get("status", "COLLECTED"), now))
@@ -2450,7 +2458,7 @@ class SqlStore(Store):
 
     def _snap_row(self, r) -> ResearchIntelSnapshotRow:
         r = list(r)
-        r[14] = None if r[14] is None else bool(r[14])
+        r[16] = None if r[16] is None else bool(r[16])   # is_early_close → bool
         return ResearchIntelSnapshotRow(*r)
 
     def ri_get_snapshot(self, snapshot_id: str) -> ResearchIntelSnapshotRow | None:
@@ -2482,7 +2490,7 @@ class SqlStore(Store):
         o, now = outcome, utcnow_iso()
         with self.tx() as cur:
             self._exec(cur, f"INSERT INTO research_intel_outcomes ({self._RI_OUT_COLS}) "
-                       f"VALUES ({','.join(['?'] * 23)}) ON CONFLICT(snapshot_id,horizon_sessions) DO NOTHING",
+                       f"VALUES ({','.join(['?'] * 26)}) ON CONFLICT(snapshot_id,horizon_sessions) DO NOTHING",
                        (o["snapshot_id"], int(o["horizon_sessions"]), o["snapshot_checksum"], o.get("dataset_id"),
                         o.get("dataset_checksum"), o.get("provider_contract_version"), o.get("adjustment_policy"),
                         o.get("decision_bar_ts"), o.get("decision_price"), o.get("outcome_bar_ts"),
@@ -2490,7 +2498,8 @@ class SqlStore(Store):
                         o.get("direction_actual"),
                         (None if o.get("direction_correct") is None else (1 if o["direction_correct"] else 0)),
                         o.get("classification"), o.get("neutral_threshold_pct"), o["outcome_policy_version"],
-                        o["status"], o.get("failure_code"), now, o["commit_sha"], now))
+                        o.get("decision_price_bar_ts"), o.get("decision_price_reconciliation"),
+                        o.get("outcome_checksum"), o["status"], o.get("failure_code"), now, o["commit_sha"], now))
             return cur.rowcount > 0
 
     def _out_row(self, r) -> ResearchIntelOutcomeRow:

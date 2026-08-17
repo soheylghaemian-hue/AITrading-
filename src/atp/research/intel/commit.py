@@ -13,6 +13,7 @@ import re
 import subprocess
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+DEFAULT_REPO_DIR = "/opt/atp/app"        # the documented production Git/systemd checkout
 
 
 class CommitVerificationError(Exception):
@@ -28,27 +29,30 @@ def _git_head(repo_dir: str) -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     sha = (out.stdout or "").strip()
-    return sha if out.returncode == 0 and _SHA_RE.match(sha) else None
+    return sha if out.returncode == 0 and sha else None
 
 
 def resolve_commit_sha(*, env: dict | None = None, repo_dir: str | None = None,
                        head_sha: str | None = None) -> str:
-    """Return the verified 40-hex deployed commit SHA, or raise CommitVerificationError. `head_sha` (or a
-    resolvable `repo_dir`) is compared against `ATP_COMMIT_REF`; a mismatch is a STALE deploy and fails
-    closed. Tests may inject `env`/`head_sha`; production passes neither and reads the real environment +
-    the /opt/atp/app checkout."""
+    """Return the verified 40-hex deployed commit SHA, or raise CommitVerificationError (fail closed). The Git
+    HEAD comparison is NEVER silently skipped: unless a test injects `head_sha`, HEAD is read from
+    `repo_dir` → `ATP_REPO_DIR` → the documented `/opt/atp/app` checkout, and an unresolvable/unreadable repo,
+    an invalid HEAD, a missing ref or a stale mismatch ALL fail closed before any row is written."""
     env = os.environ if env is None else env
     ref = (env.get("ATP_COMMIT_REF") or "").strip()
     if not ref:
         raise CommitVerificationError("ATP_COMMIT_REF is not set", code="COMMIT_REF_MISSING")
     if not _SHA_RE.match(ref):
-        raise CommitVerificationError("ATP_COMMIT_REF is not a 40-hex commit SHA",
-                                      code="COMMIT_REF_MALFORMED")
-    head = head_sha if head_sha is not None else (_git_head(repo_dir) if repo_dir else None)
-    if head is not None:
-        if not _SHA_RE.match(head):
-            raise CommitVerificationError("git HEAD is not a 40-hex SHA", code="COMMIT_HEAD_MALFORMED")
-        if head != ref:
-            raise CommitVerificationError("ATP_COMMIT_REF does not match the checked-out HEAD (stale deploy)",
-                                          code="COMMIT_REF_STALE")
+        raise CommitVerificationError("ATP_COMMIT_REF is not a 40-hex commit SHA", code="COMMIT_REF_MALFORMED")
+    if head_sha is None:                                 # production: MUST resolve + read HEAD (no skip)
+        rd = repo_dir or env.get("ATP_REPO_DIR") or DEFAULT_REPO_DIR
+        head_sha = _git_head(rd)
+        if head_sha is None:
+            raise CommitVerificationError(f"could not read git HEAD from repo dir '{rd}'",
+                                          code="COMMIT_HEAD_UNREADABLE")
+    if not _SHA_RE.match(head_sha):
+        raise CommitVerificationError("git HEAD is not a 40-hex SHA", code="COMMIT_HEAD_MALFORMED")
+    if head_sha != ref:
+        raise CommitVerificationError("ATP_COMMIT_REF does not match the checked-out HEAD (stale deploy)",
+                                      code="COMMIT_REF_STALE")
     return ref
