@@ -19,6 +19,7 @@ import type { Completeness } from "./completeness";
 import type { Macro, MacroContext } from "./macro";
 import type { InstitutionalFlow, InsiderCluster } from "./institutional";
 import type { RiskStatus, RiskConfigView, RiskEvents } from "./risk";
+import type { BacktestRun, BacktestMetrics, BacktestTrade, EquityPoint, BacktestEvent } from "./backtest";
 
 // Where the browser sends dashboard calls. Default: the SAME-ORIGIN server proxy ("/api"), which
 // forwards to the private backend and injects the read token server-side — so no token ever
@@ -467,4 +468,75 @@ export async function resumeTrading(token = ""): Promise<{ ok: boolean; detail: 
   const res = await fetch(`${API_BASE}/dashboard/resume`, { method: "POST", headers: mutHeaders(token) });
   const body = await res.json().catch(() => ({}));
   return { ok: res.ok, detail: body.reason || body.detail || `${res.status}` };
+}
+
+// § R3.0 — Backtesting research (read-only over the same-origin proxy; POST is authorized server-side).
+// Creating a backtest starts an INTERNAL historical research run — it never enables trading, never
+// creates a broker order. On no backend / non-OK the caller renders NO DATA (never fabricates results).
+export interface BacktestCreateReq {
+  strategy_id?: string; strategy_version?: number; symbols: string[]; interval: string;
+  start: string; end: string; starting_capital?: string; currency?: string;
+  costs?: Record<string, string>; risk?: Record<string, string>; max_concurrent_positions?: number;
+}
+
+export async function createBacktest(
+  req: BacktestCreateReq, token = "",
+): Promise<{ ok: boolean; detail: string; errors?: string[]; conflict?: boolean; data?: BacktestRun }> {
+  if (!API_BASE) return { ok: false, detail: "no backend configured" };
+  const res = await fetch(`${API_BASE}/dashboard/backtests`, {
+    method: "POST", headers: mutHeaders(token, true), body: JSON.stringify(req),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (res.ok) return { ok: true, detail: "created", data: body as BacktestRun };
+  const errors: string[] | undefined = Array.isArray(body?.detail?.errors) ? body.detail.errors : undefined;
+  const detail = errors ? errors.join("; ")
+    : (typeof body?.detail === "string" ? body.detail
+      : body?.detail?.detail || body?.detail?.message || (res.status === 401 ? "not authorized" : `${res.status}`));
+  return { ok: false, detail, errors, conflict: res.status === 409, data: body };
+}
+
+export async function fetchBacktests(signal?: AbortSignal): Promise<{ count: number; runs: BacktestRun[] }> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/backtests`, { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = await res.json();
+  return { count: b.count ?? 0, runs: Array.isArray(b.runs) ? b.runs : [] };
+}
+
+export async function fetchBacktest(runId: string, signal?: AbortSignal): Promise<BacktestRun> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/backtests/${encodeURIComponent(runId)}`, { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  return res.json();
+}
+
+export async function fetchBacktestMetrics(runId: string, signal?: AbortSignal): Promise<BacktestMetrics> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/backtests/${encodeURIComponent(runId)}/metrics`, { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  return res.json();
+}
+
+export async function fetchBacktestTrades(runId: string, signal?: AbortSignal): Promise<BacktestTrade[]> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/backtests/${encodeURIComponent(runId)}/trades`, { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = await res.json();
+  return Array.isArray(b.trades) ? b.trades : [];
+}
+
+export async function fetchBacktestEquity(runId: string, signal?: AbortSignal): Promise<EquityPoint[]> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/backtests/${encodeURIComponent(runId)}/equity`, { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = await res.json();
+  return Array.isArray(b.equity) ? b.equity : [];
+}
+
+export async function fetchBacktestEvents(runId: string, signal?: AbortSignal): Promise<BacktestEvent[]> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/backtests/${encodeURIComponent(runId)}/events`, { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = await res.json();
+  return Array.isArray(b.events) ? b.events : [];
 }

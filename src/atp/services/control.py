@@ -31,6 +31,8 @@ from ..institutional.readmodel import build_institutional_flow
 from ..macrodata.readmodel import build_macro, build_macro_context
 from ..news.analysis import sentiment_label
 from ..riskcontrol import build_risk_config_view, build_risk_events, build_risk_status, validate_config
+from ..research import readmodel as bt_read
+from ..research.runner import OneActiveRunError, ValidationError as BtValidationError, run_backtest
 from ..optflow.diagnostics import audit_options_provider
 from ..optflow.provider import resolve_provider as resolve_options_provider
 from ..optflow.readmodel import build_options
@@ -415,6 +417,99 @@ def risk_config_update(body: RiskConfigUpdate, authorization: str | None = Heade
                                       "current_version_token": r.get("current_token")})
         view = build_risk_config_view(ctx.store)
     return {"ok": True, "configuration_version": r["version"], **view}
+
+
+# ---------------------------------------------------------------- § R3.0 backtesting (RESEARCH ONLY)
+class BacktestCreate(BaseModel):
+    """POST /backtests body. Starts an INTERNAL historical research run — no trading fields, no order,
+    no execution. All values are validated + bounded before persistence."""
+    strategy_id: str = "OHLC_TREND_BASELINE"
+    strategy_version: int = 1
+    symbols: list[str] = []
+    interval: str = "1D"
+    start: str | None = None
+    end: str | None = None
+    starting_capital: float | str = "100000"
+    currency: str = "USD"
+    costs: dict | None = None
+    risk: dict | None = None
+    max_concurrent_positions: int = 3
+
+
+@app.post("/backtests")
+def create_backtest(body: BacktestCreate, authorization: str | None = Header(default=None)) -> dict:
+    """§ R3.0 — start a deterministic, bounded, INTERNAL historical research run. RESEARCH ONLY: it never
+    enables trading, never creates or submits a broker/order/execution object, never touches the kill
+    switch. Auth + strict validation (≤5 symbols, 1h/1D, bounded range) before any persistence; a data
+    problem fails the RUN (persisted FAILED with a code + audit), never crashes."""
+    _auth(authorization)
+    try:
+        with ctx.lock:
+            run_id = run_backtest(ctx.store, owner="operator", req=body.model_dump(),
+                                  commit_ref=os.environ.get("ATP_COMMIT_REF"))
+    except BtValidationError as e:
+        raise HTTPException(422, {"detail": "validation failed", "errors": e.errors})
+    except OneActiveRunError:
+        raise HTTPException(409, {"detail": "ONE_ACTIVE_RUN", "message": "an active research run already exists"})
+    with ctx.lock:
+        row = ctx.store.bt_get_run(run_id)
+    return bt_read.run_detail(row)
+
+
+@app.get("/backtests")
+def list_backtests(status: str | None = None, limit: int = 50, offset: int = 0) -> dict:
+    """Read-only list of research runs (bounded page)."""
+    with ctx.lock:
+        rows = ctx.store.bt_list_runs(owner="operator", status=status, limit=limit, offset=offset)
+    page = min(100, max(1, int(limit)))
+    return {"count": len(rows), "runs": [bt_read.run_summary(r) for r in rows],
+            "next_offset": (int(offset) + len(rows)) if len(rows) >= page else None}
+
+
+@app.get("/backtests/{run_id}")
+def get_backtest(run_id: str) -> dict:
+    with ctx.lock:
+        row = ctx.store.bt_get_run(run_id)
+    if row is None:
+        raise HTTPException(404, {"detail": "not found"})
+    return bt_read.run_detail(row)
+
+
+@app.get("/backtests/{run_id}/metrics")
+def get_backtest_metrics(run_id: str) -> dict:
+    with ctx.lock:
+        row = ctx.store.bt_get_run(run_id)
+        if row is None:
+            raise HTTPException(404, {"detail": "not found"})
+        m = ctx.store.bt_get_metrics(run_id)
+    return {"run_id": run_id, "run_status": row.status, **bt_read.metrics_view(m)}
+
+
+@app.get("/backtests/{run_id}/trades")
+def get_backtest_trades(run_id: str, limit: int = 1000, offset: int = 0) -> dict:
+    with ctx.lock:
+        if ctx.store.bt_get_run(run_id) is None:
+            raise HTTPException(404, {"detail": "not found"})
+        rows = ctx.store.bt_list_trades(run_id, limit=limit, offset=offset)
+    return {"run_id": run_id, "count": len(rows), "trades": bt_read.trades_view(rows)}
+
+
+@app.get("/backtests/{run_id}/equity")
+def get_backtest_equity(run_id: str, limit: int = 50000) -> dict:
+    with ctx.lock:
+        if ctx.store.bt_get_run(run_id) is None:
+            raise HTTPException(404, {"detail": "not found"})
+        rows = ctx.store.bt_list_equity(run_id, limit=limit)
+    return {"run_id": run_id, "count": len(rows), "equity": bt_read.equity_view(rows)}
+
+
+@app.get("/backtests/{run_id}/events")
+def get_backtest_events(run_id: str, limit: int = 500, offset: int = 0) -> dict:
+    with ctx.lock:
+        if ctx.store.bt_get_run(run_id) is None:
+            raise HTTPException(404, {"detail": "not found"})
+        rows = ctx.store.bt_list_events(run_id, limit=limit, offset=offset)
+    return {"run_id": run_id, "count": len(rows), "events": bt_read.events_view(rows)}
 
 
 @app.get("/macro/current")

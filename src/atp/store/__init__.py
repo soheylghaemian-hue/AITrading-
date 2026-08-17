@@ -36,6 +36,12 @@ from .base import (
     RiskEventRow,
     RiskStateRow,
     RuntimeStateRow,
+    BacktestRunRow,
+    BacktestDecisionRow,
+    BacktestTradeRow,
+    BacktestEquityPointRow,
+    BacktestEventRow,
+    BacktestMetricsRow,
     SqlStore,
     Store,
     risk_config_token,
@@ -61,6 +67,8 @@ __all__ = [
     "AiPredictionRow", "AiPredictionOutcomeRow", "AiGovernanceResultRow", "DataCompletenessRow",
     "MacroSnapshotRow", "InstitutionalChangeRow", "InsiderTransactionRow", "InsiderClusterRow",
     "RiskControlPolicyRow", "RiskEventRow", "risk_config_token",
+    "BacktestRunRow", "BacktestDecisionRow", "BacktestTradeRow", "BacktestEquityPointRow",
+    "BacktestEventRow", "BacktestMetricsRow",
 ]
 
 

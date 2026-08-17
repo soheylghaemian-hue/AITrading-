@@ -363,6 +363,136 @@ def _migration_017(dialect: str) -> list[str]:
     ]
 
 
+# ---- § Phase R3.0 — Deterministic Backtesting (RESEARCH ONLY; no execution/broker/order) ----
+_BT_TERMINAL = "('COMPLETED','FAILED','CANCELLED')"
+_BT_CHILD_TABLES = (
+    "backtest_decisions", "backtest_trades", "backtest_equity_points", "backtest_metrics", "backtest_events",
+)
+
+
+def _bt_triggers_sqlite() -> list[str]:
+    """SQLite BEFORE-triggers that make terminal runs and all their child rows immutable at the DATABASE
+    level (not just application code). A run may still transition while non-terminal; child rows are
+    insert-only and only while the parent is non-terminal. RAISE(ABORT) rejects any violating write."""
+    out = [
+        f"""CREATE TRIGGER IF NOT EXISTS trg_bt_runs_no_update_terminal
+            BEFORE UPDATE ON backtest_runs WHEN OLD.status IN {_BT_TERMINAL}
+            BEGIN SELECT RAISE(ABORT, 'backtest_runs: terminal run is immutable'); END""",
+        """CREATE TRIGGER IF NOT EXISTS trg_bt_runs_no_delete
+            BEFORE DELETE ON backtest_runs
+            BEGIN SELECT RAISE(ABORT, 'backtest_runs: runs cannot be deleted'); END""",
+    ]
+    for tbl in _BT_CHILD_TABLES:
+        out += [
+            f"""CREATE TRIGGER IF NOT EXISTS trg_{tbl}_no_insert_terminal
+                BEFORE INSERT ON {tbl}
+                WHEN (SELECT status FROM backtest_runs WHERE run_id = NEW.run_id) IN {_BT_TERMINAL}
+                BEGIN SELECT RAISE(ABORT, '{tbl}: parent run is terminal (immutable)'); END""",
+            f"""CREATE TRIGGER IF NOT EXISTS trg_{tbl}_no_update
+                BEFORE UPDATE ON {tbl}
+                BEGIN SELECT RAISE(ABORT, '{tbl}: rows are immutable (insert-only)'); END""",
+            f"""CREATE TRIGGER IF NOT EXISTS trg_{tbl}_no_delete
+                BEFORE DELETE ON {tbl}
+                BEGIN SELECT RAISE(ABORT, '{tbl}: rows cannot be deleted'); END""",
+        ]
+    return out
+
+
+def _bt_triggers_postgres() -> list[str]:
+    """PostgreSQL equivalent: BEFORE-trigger functions enforcing the same terminal immutability."""
+    out = [
+        """CREATE OR REPLACE FUNCTION atp_bt_block_run_update() RETURNS trigger AS $$
+           BEGIN IF OLD.status IN ('COMPLETED','FAILED','CANCELLED') THEN
+             RAISE EXCEPTION 'backtest_runs: terminal run is immutable'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql""",
+        """CREATE OR REPLACE FUNCTION atp_bt_block_run_delete() RETURNS trigger AS $$
+           BEGIN RAISE EXCEPTION 'backtest_runs: runs cannot be deleted'; END; $$ LANGUAGE plpgsql""",
+        """CREATE OR REPLACE FUNCTION atp_bt_block_child_insert() RETURNS trigger AS $$
+           BEGIN IF (SELECT status FROM backtest_runs WHERE run_id = NEW.run_id) IN ('COMPLETED','FAILED','CANCELLED')
+             THEN RAISE EXCEPTION '%: parent run is terminal (immutable)', TG_TABLE_NAME; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql""",
+        """CREATE OR REPLACE FUNCTION atp_bt_block_child_mutate() RETURNS trigger AS $$
+           BEGIN RAISE EXCEPTION '%: rows are immutable', TG_TABLE_NAME; END; $$ LANGUAGE plpgsql""",
+        "DROP TRIGGER IF EXISTS trg_bt_runs_no_update ON backtest_runs",
+        "CREATE TRIGGER trg_bt_runs_no_update BEFORE UPDATE ON backtest_runs FOR EACH ROW EXECUTE FUNCTION atp_bt_block_run_update()",
+        "DROP TRIGGER IF EXISTS trg_bt_runs_no_delete ON backtest_runs",
+        "CREATE TRIGGER trg_bt_runs_no_delete BEFORE DELETE ON backtest_runs FOR EACH ROW EXECUTE FUNCTION atp_bt_block_run_delete()",
+    ]
+    for tbl in _BT_CHILD_TABLES:
+        out += [
+            f"DROP TRIGGER IF EXISTS trg_{tbl}_no_insert ON {tbl}",
+            f"CREATE TRIGGER trg_{tbl}_no_insert BEFORE INSERT ON {tbl} FOR EACH ROW EXECUTE FUNCTION atp_bt_block_child_insert()",
+            f"DROP TRIGGER IF EXISTS trg_{tbl}_no_upd ON {tbl}",
+            f"CREATE TRIGGER trg_{tbl}_no_upd BEFORE UPDATE ON {tbl} FOR EACH ROW EXECUTE FUNCTION atp_bt_block_child_mutate()",
+            f"DROP TRIGGER IF EXISTS trg_{tbl}_no_del ON {tbl}",
+            f"CREATE TRIGGER trg_{tbl}_no_del BEFORE DELETE ON {tbl} FOR EACH ROW EXECUTE FUNCTION atp_bt_block_child_mutate()",
+        ]
+    return out
+
+
+def _migration_018(dialect: str) -> list[str]:
+    """§ Phase R3.0 — Deterministic backtesting & strategy validation (RESEARCH ONLY). Six additive,
+    immutable-on-terminal tables for internal historical research runs. NOTHING here creates, submits,
+    routes, or simulates through a broker/order/execution path — a run only produces internal backtest
+    records. Completed/failed/cancelled runs and all their children are frozen by DATABASE triggers
+    (see _bt_triggers_*), not by application code alone, plus a deterministic result checksum."""
+    t = _types(dialect)
+    ts, txt, i, m, b = t["TS"], t["TXT"], t["INT"], t["MONEY"], t["BOOL"]
+    tables = [
+        f"""CREATE TABLE IF NOT EXISTS backtest_runs (
+            run_id {txt} PRIMARY KEY, owner {txt} NOT NULL, strategy_id {txt} NOT NULL,
+            strategy_version {i} NOT NULL, strategy_config_json {txt} NOT NULL, strategy_checksum {txt} NOT NULL,
+            engine_version {txt} NOT NULL, symbol_universe_json {txt} NOT NULL, interval {txt} NOT NULL,
+            start_ts {ts} NOT NULL, end_ts {ts} NOT NULL, asset_class {txt} NOT NULL,
+            timestamp_policy_id {txt} NOT NULL, timestamp_policy_version {i} NOT NULL,
+            exchange_calendar_id {txt} NOT NULL, exchange_calendar_version {txt} NOT NULL,
+            exchange_tz {txt} NOT NULL, session_calendar {txt} NOT NULL, data_source {txt} NOT NULL,
+            config_snapshot_json {txt} NOT NULL, risk_config_snapshot_json {txt} NOT NULL,
+            status {txt} NOT NULL CHECK (status IN ('QUEUED','RUNNING','COMPLETED','FAILED','CANCELLED')),
+            failure_code {txt}, failure_reason {txt}, warnings_json {txt}, missing_data_json {txt},
+            commit_ref {txt}, result_checksum {txt},
+            created_at {ts} NOT NULL, started_at {ts}, ended_at {ts}, updated_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS backtest_decisions (
+            id {txt} PRIMARY KEY, run_id {txt} NOT NULL REFERENCES backtest_runs(run_id),
+            seq {i} NOT NULL, ts {ts} NOT NULL, symbol {txt} NOT NULL, strategy_id {txt} NOT NULL,
+            strategy_version {i} NOT NULL,
+            action {txt} NOT NULL CHECK (action IN ('ENTER_LONG','EXIT','HOLD','NO_DECISION')),
+            confidence {txt}, evidence_json {txt}, missing_inputs_json {txt}, reason {txt},
+            decision_checksum {txt} NOT NULL, created_at {ts} NOT NULL, UNIQUE (run_id, seq))""",
+        f"""CREATE TABLE IF NOT EXISTS backtest_trades (
+            id {txt} PRIMARY KEY, run_id {txt} NOT NULL REFERENCES backtest_runs(run_id),
+            symbol {txt} NOT NULL, side {txt} NOT NULL CHECK (side = 'LONG'),
+            entry_decision_id {txt}, exit_decision_id {txt},
+            entry_ts {ts} NOT NULL, entry_fill_ts {ts} NOT NULL, entry_price {m} NOT NULL,
+            initial_stop_price {m}, exit_ts {ts}, exit_fill_ts {ts}, exit_price {m},
+            quantity {m} NOT NULL CHECK (quantity > 0),
+            gross_pnl {m}, commission {m} NOT NULL, slippage {m} NOT NULL, net_pnl {m}, return_pct {txt},
+            bars_held {i}, exit_reason {txt} CHECK (exit_reason IS NULL OR exit_reason IN
+                ('SIGNAL_EXIT','STOP','TARGET','EOT_LIQUIDATION','AMBIGUOUS_INTRABAR_STOP_FIRST')),
+            ambiguous {b} NOT NULL DEFAULT 0, created_at {ts} NOT NULL, UNIQUE (run_id, id))""",
+        f"""CREATE TABLE IF NOT EXISTS backtest_equity_points (
+            run_id {txt} NOT NULL REFERENCES backtest_runs(run_id), seq {i} NOT NULL, ts {ts} NOT NULL,
+            cash {m} NOT NULL, equity {m} NOT NULL, realized_pnl {m} NOT NULL, unrealized_pnl {m} NOT NULL,
+            daily_pnl {m}, gross_exposure_pct {txt}, net_exposure_pct {txt}, drawdown_pct {txt},
+            PRIMARY KEY (run_id, seq))""",
+        f"""CREATE TABLE IF NOT EXISTS backtest_metrics (
+            run_id {txt} PRIMARY KEY REFERENCES backtest_runs(run_id),
+            metrics_json {txt} NOT NULL, computed_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS backtest_events (
+            id {txt} PRIMARY KEY, run_id {txt} NOT NULL REFERENCES backtest_runs(run_id),
+            seq {i}, ts {ts}, event_type {txt} NOT NULL, severity {txt}, symbol {txt},
+            details_json {txt}, created_at {ts} NOT NULL)""",
+    ]
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS ix_bt_runs_owner_status ON backtest_runs(owner, status)",
+        "CREATE INDEX IF NOT EXISTS ix_bt_runs_created ON backtest_runs(created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_bt_decisions_run_ts ON backtest_decisions(run_id, ts)",
+        "CREATE INDEX IF NOT EXISTS ix_bt_trades_run ON backtest_trades(run_id, symbol, entry_ts)",
+        "CREATE INDEX IF NOT EXISTS ix_bt_equity_run_ts ON backtest_equity_points(run_id, ts)",
+        "CREATE INDEX IF NOT EXISTS ix_bt_events_run_type ON backtest_events(run_id, event_type)",
+    ]
+    triggers = _bt_triggers_postgres() if dialect == "postgres" else _bt_triggers_sqlite()
+    return tables + indexes + triggers
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -382,6 +512,7 @@ MIGRATIONS = [
     (15, "insider_clusters", _migration_015),
     (16, "macro_core_cpi", _migration_016),
     (17, "risk_control_center", _migration_017),
+    (18, "research_backtesting", _migration_018),
 ]
 
 

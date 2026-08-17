@@ -22,10 +22,12 @@ const READ_PATHS = new Set([
   "ai-history", "ai-performance", "ai-outcomes", "ai-governance", "data-completeness",
   "macro", "macro-context", "institutional-flow", "insider-cluster",
   "risk-status", "risk-config", "risk-events",   // § R2.0 Risk Control Center (read-only)
+  "backtests",                                    // § R3.0 backtesting research (read-only list/detail)
 ]);
 // Mutations require the OWNER token, supplied by the user (not stored) and enforced by the backend.
 // "autonomous" covers the token-gated /dashboard/autonomous/{arm,start,stop,disarm,kill,reset}.
-const WRITE_PATHS = new Set(["emergency-stop", "resume", "risk-config", "autonomous"]);
+// "backtests" (POST) starts an INTERNAL historical research run — it never creates a broker order.
+const WRITE_PATHS = new Set(["emergency-stop", "resume", "risk-config", "autonomous", "backtests"]);
 
 async function forward(req: NextRequest, path: string[], method: "GET" | "POST") {
   // Enforce the path whitelist FIRST — a non-allowed path is 404 regardless of configuration.
@@ -82,7 +84,9 @@ async function forward(req: NextRequest, path: string[], method: "GET" | "POST")
   };
   const sym = encodeURIComponent(path[1] ?? "");
   const target =
-    RISK_MAP[top] ? `${BACKEND}/${RISK_MAP[top]}${req.nextUrl.search}`
+    // § R3.0: /backtests, /backtests/{id}, /backtests/{id}/{metrics|trades|equity|events} + POST /backtests.
+    top === "backtests" ? `${BACKEND}/${path.map(encodeURIComponent).join("/")}${req.nextUrl.search}`
+    : RISK_MAP[top] ? `${BACKEND}/${RISK_MAP[top]}${req.nextUrl.search}`
     : (top === "ohlc" || top === "news" || top === "traders" || top === "fundamentals" || top === "options"
       || top === "ai-consensus" || top === "ai-history" || top === "data-completeness"
       || top === "macro-context" || top === "institutional-flow" || top === "insider-cluster")

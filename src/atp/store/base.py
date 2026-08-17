@@ -479,6 +479,123 @@ class Store(abc.ABC):
     def close(self) -> None: ...
 
 
+# --------------------------------------------------------------------------- § R3.0 backtest rows
+@dataclass(slots=True)
+class BacktestRunRow:
+    run_id: str
+    owner: str
+    strategy_id: str
+    strategy_version: int
+    strategy_config_json: str
+    strategy_checksum: str
+    engine_version: str
+    symbol_universe_json: str
+    interval: str
+    start_ts: str
+    end_ts: str
+    asset_class: str
+    timestamp_policy_id: str
+    timestamp_policy_version: int
+    exchange_calendar_id: str
+    exchange_calendar_version: str
+    exchange_tz: str
+    session_calendar: str
+    data_source: str
+    config_snapshot_json: str
+    risk_config_snapshot_json: str
+    status: str
+    failure_code: str | None
+    failure_reason: str | None
+    warnings_json: str | None
+    missing_data_json: str | None
+    commit_ref: str | None
+    result_checksum: str | None
+    created_at: str
+    started_at: str | None
+    ended_at: str | None
+    updated_at: str
+
+
+@dataclass(slots=True)
+class BacktestDecisionRow:
+    id: str
+    run_id: str
+    seq: int
+    ts: str
+    symbol: str
+    strategy_id: str
+    strategy_version: int
+    action: str
+    confidence: str | None
+    evidence_json: str | None
+    missing_inputs_json: str | None
+    reason: str | None
+    decision_checksum: str
+    created_at: str
+
+
+@dataclass(slots=True)
+class BacktestTradeRow:
+    id: str
+    run_id: str
+    symbol: str
+    side: str
+    entry_decision_id: str | None
+    exit_decision_id: str | None
+    entry_ts: str
+    entry_fill_ts: str
+    entry_price: str
+    initial_stop_price: str | None
+    exit_ts: str | None
+    exit_fill_ts: str | None
+    exit_price: str | None
+    quantity: str
+    gross_pnl: str | None
+    commission: str
+    slippage: str
+    net_pnl: str | None
+    return_pct: str | None
+    bars_held: int | None
+    exit_reason: str | None
+    ambiguous: bool
+    created_at: str
+
+
+@dataclass(slots=True)
+class BacktestEquityPointRow:
+    run_id: str
+    seq: int
+    ts: str
+    cash: str
+    equity: str
+    realized_pnl: str
+    unrealized_pnl: str
+    daily_pnl: str | None
+    gross_exposure_pct: str | None
+    net_exposure_pct: str | None
+    drawdown_pct: str | None
+
+
+@dataclass(slots=True)
+class BacktestEventRow:
+    id: str
+    run_id: str
+    seq: int | None
+    ts: str | None
+    event_type: str
+    severity: str | None
+    symbol: str | None
+    details_json: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
+class BacktestMetricsRow:
+    run_id: str
+    metrics_json: str
+    computed_at: str
+
+
 # --------------------------------------------------------------------------- shared SQL impl
 class SqlStore(Store):
     """DB-agnostic SQL implementation. Subclasses supply a DB-API connection, the parameter
@@ -1634,3 +1751,246 @@ class SqlStore(Store):
     def list_md_health(self) -> list[tuple]:
         return self._all("SELECT symbol,source,status,latency_ms,updated_at FROM market_data_health "
                          "ORDER BY symbol")
+
+    # ---- § R3.0 backtesting (RESEARCH ONLY; terminal-immutable via DB triggers) -----------------
+    def list_ohlc_bars_range(self, symbol: str, interval: str, start_ts: str, end_ts: str,
+                             limit: int = 60000) -> list[OhlcBarRow]:
+        """Bars for (symbol, interval) with event-time ts in [start_ts, end_ts], oldest→newest. Both
+        the event time (ts) and the ingest time (created_at) are returned so the caller can enforce a
+        point-in-time availability policy. Read-only."""
+        n = max(1, min(60000, int(limit)))
+        rows = self._all(
+            "SELECT symbol,interval,ts,open,high,low,close,volume,source,created_at FROM ohlc_bars "
+            "WHERE symbol=? AND interval=? AND ts>=? AND ts<=? ORDER BY ts ASC LIMIT ?",
+            (symbol, interval, start_ts, end_ts, n))
+        return [OhlcBarRow(r[0], r[1], r[2], to_decimal(r[3]), to_decimal(r[4]), to_decimal(r[5]),
+                           to_decimal(r[6]), to_decimal(r[7]), r[8], r[9]) for r in rows]
+
+    _BT_RUN_COLS = (
+        "run_id,owner,strategy_id,strategy_version,strategy_config_json,strategy_checksum,engine_version,"
+        "symbol_universe_json,interval,start_ts,end_ts,asset_class,timestamp_policy_id,"
+        "timestamp_policy_version,exchange_calendar_id,exchange_calendar_version,exchange_tz,"
+        "session_calendar,data_source,config_snapshot_json,risk_config_snapshot_json,status,failure_code,"
+        "failure_reason,warnings_json,missing_data_json,commit_ref,result_checksum,created_at,started_at,"
+        "ended_at,updated_at")
+
+    def bt_create_run(self, *, run_id, owner, strategy_id, strategy_version, strategy_config_json,
+                      strategy_checksum, engine_version, symbol_universe_json, interval, start_ts, end_ts,
+                      asset_class, timestamp_policy_id, timestamp_policy_version, exchange_calendar_id,
+                      exchange_calendar_version, exchange_tz, session_calendar, data_source,
+                      config_snapshot_json, risk_config_snapshot_json, commit_ref=None) -> None:
+        """Create a run in QUEUED. The run row is never deleted (DB trigger); it only transitions."""
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO backtest_runs ({self._BT_RUN_COLS}) VALUES ({','.join(['?'] * 32)})",
+                       (run_id, owner, strategy_id, int(strategy_version), strategy_config_json,
+                        strategy_checksum, engine_version, symbol_universe_json, interval, start_ts, end_ts,
+                        asset_class, timestamp_policy_id, int(timestamp_policy_version), exchange_calendar_id,
+                        exchange_calendar_version, exchange_tz, session_calendar, data_source,
+                        config_snapshot_json, risk_config_snapshot_json, "QUEUED", None, None, None, None,
+                        commit_ref, None, now, None, None, now))
+
+    def bt_advance_status(self, run_id: str, expected_from: str, to: str) -> bool:
+        """Optimistic state transition. Returns False if the run is not in `expected_from` (or the DB
+        trigger rejected a terminal mutation). The legal-transition map is validated by the caller."""
+        now = utcnow_iso()
+        with self.tx() as cur:
+            if to == "RUNNING":
+                self._exec(cur, "UPDATE backtest_runs SET status=?, started_at=?, updated_at=? "
+                           "WHERE run_id=? AND status=?", (to, now, now, run_id, expected_from))
+            else:
+                self._exec(cur, "UPDATE backtest_runs SET status=?, updated_at=? WHERE run_id=? AND status=?",
+                           (to, now, run_id, expected_from))
+            return cur.rowcount > 0
+
+    def bt_finalize_run(self, run_id: str, expected_from: str, status: str, *, result_checksum=None,
+                        warnings_json=None, missing_data_json=None, failure_code=None,
+                        failure_reason=None) -> bool:
+        """Terminal transition (→ COMPLETED / FAILED / CANCELLED) with result fields, atomically."""
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "UPDATE backtest_runs SET status=?, result_checksum=?, warnings_json=?, "
+                       "missing_data_json=?, failure_code=?, failure_reason=?, ended_at=?, updated_at=? "
+                       "WHERE run_id=? AND status=?",
+                       (status, result_checksum, warnings_json, missing_data_json, failure_code,
+                        failure_reason, now, now, run_id, expected_from))
+            return cur.rowcount > 0
+
+    def bt_insert_decision(self, *, id, run_id, seq, ts, symbol, strategy_id, strategy_version, action,
+                           confidence=None, evidence_json=None, missing_inputs_json=None, reason=None,
+                           decision_checksum) -> None:
+        with self.tx() as cur:
+            self._exec(cur, "INSERT INTO backtest_decisions (id,run_id,seq,ts,symbol,strategy_id,"
+                       "strategy_version,action,confidence,evidence_json,missing_inputs_json,reason,"
+                       "decision_checksum,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                       (id, run_id, int(seq), ts, symbol, strategy_id, int(strategy_version), action,
+                        confidence, evidence_json, missing_inputs_json, reason, decision_checksum, utcnow_iso()))
+
+    def bt_insert_trade(self, *, id, run_id, symbol, entry_decision_id, exit_decision_id, entry_ts,
+                        entry_fill_ts, entry_price, initial_stop_price, exit_ts, exit_fill_ts, exit_price,
+                        quantity, gross_pnl, commission, slippage, net_pnl, return_pct, bars_held,
+                        exit_reason, ambiguous) -> None:
+        def om(v):
+            return None if v is None else money_str(v)
+        with self.tx() as cur:
+            self._exec(cur, "INSERT INTO backtest_trades (id,run_id,symbol,side,entry_decision_id,"
+                       "exit_decision_id,entry_ts,entry_fill_ts,entry_price,initial_stop_price,exit_ts,"
+                       "exit_fill_ts,exit_price,quantity,gross_pnl,commission,slippage,net_pnl,return_pct,"
+                       "bars_held,exit_reason,ambiguous,created_at) "
+                       "VALUES (?,?,?,'LONG',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                       (id, run_id, symbol, entry_decision_id, exit_decision_id, entry_ts, entry_fill_ts,
+                        money_str(entry_price), om(initial_stop_price), exit_ts, exit_fill_ts, om(exit_price),
+                        money_str(quantity), om(gross_pnl), money_str(commission), money_str(slippage),
+                        om(net_pnl), (None if return_pct is None else str(return_pct)),
+                        (None if bars_held is None else int(bars_held)), exit_reason,
+                        1 if ambiguous else 0, utcnow_iso()))
+
+    def bt_insert_equity(self, *, run_id, seq, ts, cash, equity, realized_pnl, unrealized_pnl,
+                         daily_pnl=None, gross_exposure_pct=None, net_exposure_pct=None,
+                         drawdown_pct=None) -> None:
+        def om(v):
+            return None if v is None else money_str(v)
+        with self.tx() as cur:
+            self._exec(cur, "INSERT INTO backtest_equity_points (run_id,seq,ts,cash,equity,realized_pnl,"
+                       "unrealized_pnl,daily_pnl,gross_exposure_pct,net_exposure_pct,drawdown_pct) "
+                       "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                       (run_id, int(seq), ts, money_str(cash), money_str(equity), money_str(realized_pnl),
+                        money_str(unrealized_pnl), om(daily_pnl),
+                        (None if gross_exposure_pct is None else str(gross_exposure_pct)),
+                        (None if net_exposure_pct is None else str(net_exposure_pct)),
+                        (None if drawdown_pct is None else str(drawdown_pct))))
+
+    def bt_insert_event(self, *, id, run_id, seq=None, ts=None, event_type, severity=None, symbol=None,
+                        details_json=None) -> None:
+        with self.tx() as cur:
+            self._exec(cur, "INSERT INTO backtest_events (id,run_id,seq,ts,event_type,severity,symbol,"
+                       "details_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                       (id, run_id, (None if seq is None else int(seq)), ts, event_type, severity, symbol,
+                        details_json, utcnow_iso()))
+
+    def bt_insert_metrics(self, *, run_id, metrics_json) -> None:
+        with self.tx() as cur:
+            self._exec(cur, "INSERT INTO backtest_metrics (run_id,metrics_json,computed_at) VALUES (?,?,?)",
+                       (run_id, metrics_json, utcnow_iso()))
+
+    def bt_get_run(self, run_id: str) -> BacktestRunRow | None:
+        r = self._one(f"SELECT {self._BT_RUN_COLS} FROM backtest_runs WHERE run_id=?", (run_id,))
+        return BacktestRunRow(*r) if r else None
+
+    def bt_count_active(self, owner: str) -> int:
+        r = self._one("SELECT COUNT(*) FROM backtest_runs WHERE owner=? AND status IN ('QUEUED','RUNNING')",
+                      (owner,))
+        return int(r[0]) if r else 0
+
+    def bt_list_runs(self, *, owner: str | None = None, status: str | None = None, limit: int = 50,
+                     offset: int = 0) -> list[BacktestRunRow]:
+        n, off = max(1, min(100, int(limit))), max(0, int(offset))
+        where, params = [], []
+        if owner:
+            where.append("owner=?"); params.append(owner)
+        if status:
+            where.append("status=?"); params.append(status)
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        rows = self._all(f"SELECT {self._BT_RUN_COLS} FROM backtest_runs{clause} "
+                         "ORDER BY created_at DESC LIMIT ? OFFSET ?", (*params, n, off))
+        return [BacktestRunRow(*r) for r in rows]
+
+    def bt_list_decisions(self, run_id: str, limit: int = 500, offset: int = 0) -> list[BacktestDecisionRow]:
+        n, off = max(1, min(2000, int(limit))), max(0, int(offset))
+        rows = self._all("SELECT id,run_id,seq,ts,symbol,strategy_id,strategy_version,action,confidence,"
+                         "evidence_json,missing_inputs_json,reason,decision_checksum,created_at "
+                         "FROM backtest_decisions WHERE run_id=? ORDER BY seq ASC LIMIT ? OFFSET ?",
+                         (run_id, n, off))
+        return [BacktestDecisionRow(*r) for r in rows]
+
+    def bt_list_trades(self, run_id: str, limit: int = 1000, offset: int = 0) -> list[BacktestTradeRow]:
+        n, off = max(1, min(2000, int(limit))), max(0, int(offset))
+        rows = self._all("SELECT id,run_id,symbol,side,entry_decision_id,exit_decision_id,entry_ts,"
+                         "entry_fill_ts,entry_price,initial_stop_price,exit_ts,exit_fill_ts,exit_price,"
+                         "quantity,gross_pnl,commission,slippage,net_pnl,return_pct,bars_held,exit_reason,"
+                         "ambiguous,created_at FROM backtest_trades WHERE run_id=? "
+                         "ORDER BY entry_ts ASC LIMIT ? OFFSET ?", (run_id, n, off))
+        return [BacktestTradeRow(*r[:21], bool(r[21]), r[22]) for r in rows]
+
+    def bt_list_equity(self, run_id: str, limit: int = 50000) -> list[BacktestEquityPointRow]:
+        n = max(1, min(50000, int(limit)))
+        rows = self._all("SELECT run_id,seq,ts,cash,equity,realized_pnl,unrealized_pnl,daily_pnl,"
+                         "gross_exposure_pct,net_exposure_pct,drawdown_pct FROM backtest_equity_points "
+                         "WHERE run_id=? ORDER BY seq ASC LIMIT ?", (run_id, n))
+        return [BacktestEquityPointRow(*r) for r in rows]
+
+    def bt_list_events(self, run_id: str, limit: int = 500, offset: int = 0) -> list[BacktestEventRow]:
+        n, off = max(1, min(2000, int(limit))), max(0, int(offset))
+        rows = self._all("SELECT id,run_id,seq,ts,event_type,severity,symbol,details_json,created_at "
+                         "FROM backtest_events WHERE run_id=? ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?",
+                         (run_id, n, off))
+        return [BacktestEventRow(*r) for r in rows]
+
+    def bt_get_metrics(self, run_id: str) -> BacktestMetricsRow | None:
+        r = self._one("SELECT run_id,metrics_json,computed_at FROM backtest_metrics WHERE run_id=?", (run_id,))
+        return BacktestMetricsRow(*r) if r else None
+
+    def bt_write_results(self, run_id: str, *, expected_from: str, status: str, decisions=(), trades=(),
+                         equity_points=(), events=(), metrics_json=None, result_checksum=None,
+                         warnings_json=None, missing_data_json=None, failure_code=None,
+                         failure_reason=None) -> bool:
+        """Persist ALL result rows + finalize the run in ONE transaction. Child inserts run while the
+        parent is still `expected_from` (non-terminal → DB triggers allow); the terminal transition is
+        the last statement (RUNNING→terminal → allowed), so the whole result set + failure info commit
+        atomically and are frozen thereafter. Returns True iff the run was in `expected_from`."""
+        now = utcnow_iso()
+
+        def om(v):
+            return None if v is None else money_str(v)
+
+        def scoped(local):
+            return None if local is None else f"{run_id}:{local}"
+
+        with self.tx() as cur:
+            for d in decisions:
+                self._exec(cur, "INSERT INTO backtest_decisions (id,run_id,seq,ts,symbol,strategy_id,"
+                           "strategy_version,action,confidence,evidence_json,missing_inputs_json,reason,"
+                           "decision_checksum,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                           (scoped(d["id"]), run_id, int(d["seq"]), d["ts"], d["symbol"], d["strategy_id"],
+                            int(d["strategy_version"]), d["action"],
+                            (None if d.get("confidence") is None else str(d["confidence"])),
+                            json.dumps(d.get("evidence") or {}), json.dumps(d.get("missing_inputs") or []),
+                            d.get("reason"), d["checksum"], now))
+            for t in trades:
+                self._exec(cur, "INSERT INTO backtest_trades (id,run_id,symbol,side,entry_decision_id,"
+                           "exit_decision_id,entry_ts,entry_fill_ts,entry_price,initial_stop_price,exit_ts,"
+                           "exit_fill_ts,exit_price,quantity,gross_pnl,commission,slippage,net_pnl,return_pct,"
+                           "bars_held,exit_reason,ambiguous,created_at) "
+                           "VALUES (?,?,?,'LONG',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                           (scoped(t["id"]), run_id, t["symbol"], scoped(t.get("entry_decision_id")),
+                            scoped(t.get("exit_decision_id")),
+                            t["entry_ts"], t["entry_fill_ts"], money_str(t["entry_price"]),
+                            om(t.get("initial_stop_price")), t.get("exit_ts"), t.get("exit_fill_ts"),
+                            om(t.get("exit_price")), money_str(t["quantity"]), om(t.get("gross_pnl")),
+                            money_str(t["commission"]), money_str(t["slippage"]), om(t.get("net_pnl")),
+                            (None if t.get("return_pct") is None else str(t["return_pct"])),
+                            (None if t.get("bars_held") is None else int(t["bars_held"])), t.get("exit_reason"),
+                            1 if t.get("ambiguous") else 0, now))
+            for e in equity_points:
+                self._exec(cur, "INSERT INTO backtest_equity_points (run_id,seq,ts,cash,equity,realized_pnl,"
+                           "unrealized_pnl,daily_pnl,gross_exposure_pct,net_exposure_pct,drawdown_pct) "
+                           "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                           (run_id, int(e["seq"]), e["ts"], money_str(e["cash"]), money_str(e["equity"]),
+                            money_str(e["realized_pnl"]), money_str(e["unrealized_pnl"]), om(e.get("daily_pnl")),
+                            (None if e.get("gross_exposure_pct") is None else str(e["gross_exposure_pct"])),
+                            (None if e.get("net_exposure_pct") is None else str(e["net_exposure_pct"])),
+                            (None if e.get("drawdown_pct") is None else str(e["drawdown_pct"]))))
+            for ev in events:
+                self._exec(cur, "INSERT INTO backtest_events (id,run_id,seq,ts,event_type,severity,symbol,"
+                           "details_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                           (f"{run_id}-e{ev['seq']}", run_id, int(ev["seq"]), ev.get("ts"), ev["event_type"],
+                            ev.get("severity"), ev.get("symbol"), json.dumps(ev.get("details") or {}), now))
+            if metrics_json is not None:
+                self._exec(cur, "INSERT INTO backtest_metrics (run_id,metrics_json,computed_at) VALUES (?,?,?)",
+                           (run_id, metrics_json, now))
+            self._exec(cur, "UPDATE backtest_runs SET status=?, result_checksum=?, warnings_json=?, "
+                       "missing_data_json=?, failure_code=?, failure_reason=?, ended_at=?, updated_at=? "
+                       "WHERE run_id=? AND status=?",
+                       (status, result_checksum, warnings_json, missing_data_json, failure_code,
+                        failure_reason, now, now, run_id, expected_from))
+            return cur.rowcount > 0
