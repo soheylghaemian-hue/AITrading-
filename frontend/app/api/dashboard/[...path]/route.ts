@@ -21,6 +21,7 @@ const READ_PATHS = new Set([
   "trading-risk", "ohlc", "news", "traders", "trader", "fundamentals", "options", "ai-consensus",
   "ai-history", "ai-performance", "ai-outcomes", "ai-governance", "data-completeness",
   "macro", "macro-context", "institutional-flow", "insider-cluster",
+  "risk-status", "risk-config", "risk-events",   // § R2.0 Risk Control Center (read-only)
 ]);
 // Mutations require the OWNER token, supplied by the user (not stored) and enforced by the backend.
 // "autonomous" covers the token-gated /dashboard/autonomous/{arm,start,stop,disarm,kill,reset}.
@@ -74,9 +75,15 @@ async function forward(req: NextRequest, path: string[], method: "GET" | "POST")
   // OHLC / News / Traders consensus live on the Control API at /market/{symbol}/{ohlc,news,traders};
   // a single-trader profile is /traders/{id}; everything else is /dashboard/*. Query params are
   // forwarded. Same DASHBOARD_API_URL + token.
+  // § R2.0 Risk Control Center: risk-status → /risk/status, risk-config → /risk/config (GET read-model
+  // + POST authenticated update), risk-events → /risk/events. Query params (e.g. ?limit=) forwarded.
+  const RISK_MAP: Record<string, string> = {
+    "risk-status": "risk/status", "risk-config": "risk/config", "risk-events": "risk/events",
+  };
   const sym = encodeURIComponent(path[1] ?? "");
   const target =
-    (top === "ohlc" || top === "news" || top === "traders" || top === "fundamentals" || top === "options"
+    RISK_MAP[top] ? `${BACKEND}/${RISK_MAP[top]}${req.nextUrl.search}`
+    : (top === "ohlc" || top === "news" || top === "traders" || top === "fundamentals" || top === "options"
       || top === "ai-consensus" || top === "ai-history" || top === "data-completeness"
       || top === "macro-context" || top === "institutional-flow" || top === "insider-cluster")
       ? `${BACKEND}/market/${sym}/${top}${req.nextUrl.search}`

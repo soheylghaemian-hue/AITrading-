@@ -30,6 +30,7 @@ from ..institutional.clusters import build_insider_cluster
 from ..institutional.readmodel import build_institutional_flow
 from ..macrodata.readmodel import build_macro, build_macro_context
 from ..news.analysis import sentiment_label
+from ..riskcontrol import build_risk_config_view, build_risk_events, build_risk_status, validate_config
 from ..optflow.diagnostics import audit_options_provider
 from ..optflow.provider import resolve_provider as resolve_options_provider
 from ..optflow.readmodel import build_options
@@ -115,6 +116,20 @@ app = FastAPI(title="ATP Control / Observability", lifespan=lifespan)
 
 class Confirm(BaseModel):
     confirm: str | None = None
+
+
+class RiskConfigUpdate(BaseModel):
+    """§ R2.0 Risk Control config update body. `expected_version` is the version_token from GET
+    /risk/config (optimistic concurrency). No secrets, no trading fields."""
+    expected_version: str | None = None
+    capital: float | str | None = None
+    currency: str | None = None
+    max_daily_loss_pct: float | str | None = None
+    max_position_risk_pct: float | str | None = None
+    max_portfolio_exposure_pct: float | str | None = None
+    max_drawdown_pct: float | str | None = None
+    warning_threshold_pct: float | str | None = None
+    max_daily_loss_amount: float | str | None = None   # optional; validated for consistency, never stored
 
 
 # ---------------------------------------------------------------- health / readiness / status
@@ -275,9 +290,13 @@ def market_ai_governance(symbol: str) -> dict:
     """Read-only AI Decision Governance verdict (§ Phase G3.3) for the CURRENT view: APPROVED / PARTIAL /
     CONFLICT / BLOCKED with the score, confidence, data completeness and reason codes it was based on.
     This EVALUATES decision quality/readiness only — it is NOT a trade, order, or broker/IBKR action.
-    Missing inputs -> BLOCKED (INSUFFICIENT_DATA), never fabricated. No secrets. Public read-model."""
+    Missing inputs -> BLOCKED (INSUFFICIENT_DATA), never fabricated. No secrets. Public read-model.
+    § R2.0: the LIVE Risk Control state is a mandatory input — Risk BLOCKED forces BLOCKED, Risk NO DATA
+    prevents APPROVED (never a false BLOCKED). This applies to the current verdict only."""
     with ctx.lock:
-        return evaluate_governance(build_ai_consensus(ctx.store, symbol.upper()))
+        consensus = build_ai_consensus(ctx.store, symbol.upper())
+        risk_status = build_risk_status(ctx.store).get("status")
+        return evaluate_governance(consensus, risk_status=risk_status)
 
 
 @app.get("/ai/governance")
@@ -339,6 +358,63 @@ def traders_audit() -> dict:
     holdings / insider / Darwinex / Collective2 / eToro / TradingView), which one is selected (SEC 13F),
     and whether it is active. Data only — no copy-trading, no broker, no IBKR, no execution. No secrets."""
     return audit_trader_providers()
+
+
+@app.get("/risk/status")
+def risk_status() -> dict:
+    """Read-only Risk Control state (§ Phase R2.0): READY / WARNING / BLOCKED / NO DATA + reason codes,
+    capital, daily-loss usage, position/exposure/drawdown vs limits, the authoritative kill switch and
+    configuration version. OBSERVABILITY + governance gate only — never a trade/order/broker action, and
+    it never enables execution. Missing data → null / NO DATA (never zero, never READY). Side-effect free."""
+    with ctx.lock:
+        return build_risk_status(ctx.store)
+
+
+@app.get("/risk/config")
+def risk_config() -> dict:
+    """Read-only current Risk Control configuration (§ R2.0) — the canonical risk_config values +
+    risk_control_policy companion + the DERIVED max_daily_loss_amount, with the concurrency version
+    token. NO secrets. NO DATA until a complete validated configuration exists. Side-effect free."""
+    with ctx.lock:
+        return build_risk_config_view(ctx.store)
+
+
+@app.get("/risk/events")
+def risk_events(limit: int = 50) -> dict:
+    """Read-only immutable risk-event history (§ R2.0): CONFIGURATION_UPDATED events + the existing
+    authoritative kill-switch audit events (surfaced, not duplicated). Side-effect free. No secrets."""
+    try:
+        n = max(1, min(500, int(limit)))
+    except (TypeError, ValueError):
+        n = 50
+    with ctx.lock:
+        return build_risk_events(ctx.store, n)
+
+
+@app.post("/risk/config")
+def risk_config_update(body: RiskConfigUpdate, authorization: str | None = Header(default=None)) -> dict:
+    """Authenticated Risk Control configuration update (§ R2.0). Control-token auth + validation +
+    optimistic version check (rejects a stale update, incl. an out-of-band canonical change) + one atomic
+    transaction that writes the canonical risk_config + the policy + an immutable CONFIGURATION_UPDATED
+    event (rolled back together on failure). It NEVER mutates the kill switch and calls NO broker /
+    execution / order / RiskEngine code — changing limits here does NOT enable trading."""
+    _auth(authorization)
+    normalized, errors = validate_config(body.model_dump())
+    if errors:
+        raise HTTPException(422, {"detail": "validation failed", "errors": errors})
+    with ctx.lock:
+        r = ctx.store.apply_risk_control_update(
+            expected_token=body.expected_version or "", capital=normalized["capital"],
+            risk_per_trade_pct=normalized["max_position_risk_pct"],
+            max_daily_loss_pct=normalized["max_daily_loss_pct"], currency=normalized["currency"],
+            warning_threshold_pct=normalized["warning_threshold_pct"],
+            max_portfolio_exposure_pct=normalized["max_portfolio_exposure_pct"],
+            max_drawdown_pct=normalized["max_drawdown_pct"], actor="operator")
+        if not r.get("ok"):
+            raise HTTPException(409, {"detail": "version conflict — reload /risk/config and retry",
+                                      "current_version_token": r.get("current_token")})
+        view = build_risk_config_view(ctx.store)
+    return {"ok": True, "configuration_version": r["version"], **view}
 
 
 @app.get("/macro/current")

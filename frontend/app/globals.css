@@ -540,3 +540,93 @@ a.newsrow:hover{background:var(--line-soft)}
 .smf-empty{font-family:var(--mono);font-size:11px;letter-spacing:1px;color:var(--faint);padding:6px 0}
 .smf-clustersum{font-size:12.5px;color:var(--dim);margin:0;padding:2px 0}
 @media (max-width:900px){.smf-summary{grid-template-columns:repeat(2,1fr)}.smf-lists{grid-template-columns:1fr}}
+
+/* ---- Risk Control Center (§ R2.0) ---------------------------------------- */
+.riskstate{display:flex;align-items:center;gap:16px;padding:18px;border-radius:var(--r);
+  border:1px solid var(--line);background:var(--surface);margin-bottom:16px}
+.riskstate.ready{border-color:rgba(52,211,153,.4);background:var(--pos-bg);color:var(--pos)}
+.riskstate.warning{border-color:rgba(245,158,11,.4);background:var(--warn-bg);color:var(--warn)}
+.riskstate.blocked{border-color:rgba(248,113,113,.4);background:var(--neg-bg);color:var(--neg)}
+.riskstate.nodata{border-color:var(--line);color:var(--faint)}
+.riskstate .hi{font-size:26px;font-weight:700;letter-spacing:.5px}
+.riskstate .rs-sub{font-size:13px;font-weight:600;letter-spacing:1px;opacity:.8}
+.riskstate .label{color:currentColor;opacity:.75}
+.rs-meta{display:flex;gap:22px}
+.rs-meta span{display:flex;flex-direction:column;gap:3px;font-size:10.5px;letter-spacing:1.2px;
+  text-transform:uppercase;color:var(--faint);font-weight:600}
+.rs-meta b{font-family:var(--mono);font-size:15px;letter-spacing:0;color:var(--ink);font-weight:600}
+.rs-meta b.up{color:var(--pos)} .rs-meta b.down{color:var(--neg)}
+
+.riskreasons{display:flex;flex-wrap:wrap;gap:8px 16px;padding:12px 16px;margin-bottom:16px;
+  border-radius:var(--r-sm);border:1px solid var(--line-soft);background:var(--panel)}
+.riskreasons.blocked{border-color:rgba(248,113,113,.3)}
+.riskreasons.warning{border-color:rgba(245,158,11,.3)}
+.riskreasons .rr{font-size:12.5px;color:var(--ink)}
+.riskreasons.blocked .rr{color:var(--neg)} .riskreasons.warning .rr{color:var(--warn)}
+.rr-missing{font-size:12px;color:var(--faint);width:100%}
+
+.risklimits{display:flex;flex-direction:column;gap:2px}
+.rl{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;
+  border-bottom:1px solid var(--line-soft)}
+.rl:last-child{border-bottom:0}
+.rl-v{font-size:16px;font-weight:600;color:var(--ink)}
+.rl-sub{font-size:12px;color:var(--faint);font-weight:400}
+.rl-nd{font-size:12.5px;color:var(--dim);margin:14px 0 0;padding-top:12px;border-top:1px solid var(--line-soft)}
+
+.riskform{display:flex;flex-direction:column;gap:12px}
+.rf-toggle{align-self:flex-start;background:none;border:0;color:var(--accent);font-family:var(--ui);
+  font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;padding:0}
+.rf-toggle .chev{color:var(--dim)}
+.rf-note{font-size:12.5px;color:var(--dim);margin:0}
+.rf-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.rf-f{display:flex;flex-direction:column;gap:6px}
+.rf-f input,.rf-f select{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;
+  color:var(--ink);font-family:var(--mono);font-size:14px;padding:9px 11px;width:100%}
+.rf-f input:focus,.rf-f select:focus{outline:2px solid var(--accent-glow);border-color:var(--accent)}
+.rf-errs{list-style:none;margin:0;padding:10px 12px;border-radius:var(--r-sm);
+  border:1px solid rgba(248,113,113,.3);background:var(--neg-bg);display:flex;flex-direction:column;gap:5px}
+.rf-errs li{font-size:12.5px;color:var(--neg)}
+.rf-msg{font-size:13px;padding:10px 12px;border-radius:var(--r-sm)}
+.rf-msg.ok{color:var(--pos);background:var(--pos-bg);border:1px solid rgba(52,211,153,.3)}
+.rf-msg.err{color:var(--neg);background:var(--neg-bg);border:1px solid rgba(248,113,113,.3)}
+.rf-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.rf-apply{background:var(--accent);color:#04120F;border:0;border-radius:9px;font-weight:700;
+  font-size:14px;padding:10px 20px;cursor:pointer}
+.rf-apply:disabled{opacity:.5;cursor:not-allowed}
+.rf-safe{font-size:11.5px;color:var(--faint);letter-spacing:.3px}
+
+.riskevents{display:flex;flex-direction:column;gap:2px}
+.re{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--line-soft)}
+.re:last-child{border-bottom:0}
+.re-dot{width:9px;height:9px;border-radius:50%;margin-top:5px;flex:0 0 auto;background:var(--faint)}
+.re.blocked .re-dot{background:var(--neg)} .re.warning .re-dot{background:var(--warn)}
+.re.ready .re-dot{background:var(--pos)}
+.re-body{display:flex;flex-direction:column;gap:3px;min-width:0}
+.re-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.re-head b{font-size:13.5px;color:var(--ink)}
+.re-ver{font-family:var(--mono);font-size:10.5px;color:var(--accent);background:var(--accent-glow);
+  padding:1px 7px;border-radius:5px}
+.re-src{font-family:var(--mono);font-size:10px;letter-spacing:.8px;text-transform:uppercase;color:var(--faint)}
+.re-desc{font-size:12.5px;color:var(--dim)}
+.re-ts{font-size:11px;color:var(--faint)}
+
+/* compact terminal Risk card */
+.riskcard{display:flex;flex-direction:column;gap:8px}
+.riskcard.ready{border-left:3px solid var(--pos)} .riskcard.warning{border-left:3px solid var(--warn)}
+.riskcard.blocked{border-left:3px solid var(--neg)} .riskcard.nodata{border-left:3px solid var(--line)}
+.rc-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.rc-state{font-family:var(--mono);font-size:10.5px;font-weight:700;letter-spacing:1px;padding:2px 8px;border-radius:5px}
+.rc-state.ready{color:var(--pos);background:var(--pos-bg)} .rc-state.warning{color:var(--warn);background:var(--warn-bg)}
+.rc-state.blocked{color:var(--neg);background:var(--neg-bg)} .rc-state.nodata{color:var(--dim);background:var(--line-soft)}
+.rc-kill{font-family:var(--mono);font-size:11px;color:var(--dim)}
+.rc-kill.down{color:var(--neg)} .rc-kill.up{color:var(--pos)}
+.rc-used{font-family:var(--mono);font-size:12px;color:var(--dim);margin-left:auto}
+.rc-nd{font-family:var(--mono);font-size:11px;letter-spacing:1px;color:var(--faint)}
+.rc-note{font-size:12.5px;color:var(--dim);margin:0}
+.rc-reasons{display:flex;flex-direction:column;gap:4px}
+.rc-r{font-size:12px;color:var(--warn)}
+.riskcard.blocked .rc-r{color:var(--neg)}
+.rc-link{font-size:12px;color:var(--accent);text-decoration:none;align-self:flex-start}
+.rc-link:hover{text-decoration:underline}
+@media (max-width:900px){.rf-grid{grid-template-columns:1fr 1fr}}
+@media (max-width:640px){.rf-grid{grid-template-columns:1fr}.rs-meta{gap:14px}}

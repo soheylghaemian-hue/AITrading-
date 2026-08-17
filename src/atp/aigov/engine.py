@@ -94,8 +94,17 @@ def _risk_blocked(assessment: dict) -> bool:
     return False
 
 
-def evaluate_governance(assessment: dict) -> dict:
-    """Deterministic governance verdict for an AI assessment. Read-only; never executes anything."""
+def evaluate_governance(assessment: dict, risk_status: str | None = None) -> dict:
+    """Deterministic governance verdict for an AI assessment. Read-only; never executes anything.
+
+    § R2.0: `risk_status` is the Risk Control Center state (READY/WARNING/BLOCKED/NO DATA) or None.
+    Backward-compatible — when OMITTED (None) the behaviour is identical to before. Otherwise:
+      * Risk BLOCKED  → forces Governance BLOCKED (RISK_BLOCK), intelligence assessment still visible.
+      * Risk NO DATA  → prevents APPROVED / capital readiness (RISK_DATA_MISSING); does NOT force a false
+                        BLOCKED — the intelligence verdict (PARTIAL/CONFLICT) stays visible.
+      * Risk WARNING  → visible, non-blocking reason (RISK_WARNING).
+      * Risk READY    → allows APPROVED (which still never implies execution readiness).
+    """
     sym = str(assessment.get("symbol") or "").upper()
     score = assessment.get("score")
     confidence = assessment.get("confidence")
@@ -104,19 +113,19 @@ def evaluate_governance(assessment: dict) -> dict:
     present = _present_sources(assessment)
     missing = [s for s in CRITICAL_SOURCES if s not in present]
     conflicts = _critical_conflicts(assessment)
-    risk_blocked = _risk_blocked(assessment)
+    risk_blocked = _risk_blocked(assessment) or risk_status == "BLOCKED"
 
     def result(state: str, reasons: list[str]) -> dict:
         return {
             "symbol": sym, "status": state, "score": score, "confidence": confidence,
             "data_completeness": completeness, "reasons": _dedupe(reasons),
             "approved": state == "APPROVED", "direction": _norm_dir(assessment.get("direction")),
-            "missing": list(missing), "conflicts": conflicts,
+            "missing": list(missing), "conflicts": conflicts, "risk_status": risk_status,
         }
 
     # ---- HARD BLOCK (can't even judge): no data, a risk failure, or too little data ----
     if score is None or status_in == "NO DATA":
-        return result("BLOCKED", ["INSUFFICIENT_DATA"])
+        return result("BLOCKED", ["INSUFFICIENT_DATA"] + (["RISK_BLOCK"] if risk_status == "BLOCKED" else []))
     hard: list[str] = []
     if risk_blocked:
         hard.append("RISK_BLOCK")
@@ -135,12 +144,14 @@ def evaluate_governance(assessment: dict) -> dict:
     if confidence is None or float(confidence) < BLOCK_CONFIDENCE:
         return result("BLOCKED", ["LOW_CONFIDENCE"])
 
-    # ---- APPROVED: every rule satisfied ----
+    # ---- APPROVED: every rule satisfied AND risk permits capital readiness (READY/WARNING/omitted) ----
+    risk_ok_for_approval = risk_status not in ("NO DATA", "BLOCKED")
     if (float(score) >= APPROVE_SCORE and float(confidence) >= APPROVE_CONFIDENCE
-            and completeness >= APPROVE_COMPLETENESS and not missing and not risk_blocked):
-        return result("APPROVED", [])
+            and completeness >= APPROVE_COMPLETENESS and not missing and not risk_blocked
+            and risk_ok_for_approval):
+        return result("APPROVED", ["RISK_WARNING"] if risk_status == "WARNING" else [])
 
-    # ---- PARTIAL: a score exists but it is not approvable (missing sources / below bar) ----
+    # ---- PARTIAL: a score exists but it is not approvable (missing sources / below bar / risk) ----
     reasons = [f"MISSING_{s.upper().replace(' ', '_')}" for s in missing]
     if float(score) < APPROVE_SCORE:
         reasons.append("LOW_SCORE")
@@ -148,6 +159,10 @@ def evaluate_governance(assessment: dict) -> dict:
         reasons.append("LOW_CONFIDENCE")
     if completeness < APPROVE_COMPLETENESS:
         reasons.append("LOW_COMPLETENESS")
+    if risk_status == "NO DATA":
+        reasons.append("RISK_DATA_MISSING")
+    if risk_status == "WARNING":
+        reasons.append("RISK_WARNING")
     return result("PARTIAL", reasons or ["INCOMPLETE"])
 
 

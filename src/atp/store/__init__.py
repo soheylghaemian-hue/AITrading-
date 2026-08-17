@@ -32,10 +32,13 @@ from .base import (
     OrderRow,
     PositionRow,
     RiskConfigRow,
+    RiskControlPolicyRow,
+    RiskEventRow,
     RiskStateRow,
     RuntimeStateRow,
     SqlStore,
     Store,
+    risk_config_token,
     ValuationRow,
     TraderPerformanceRow,
     TraderPositionRow,
@@ -57,6 +60,7 @@ __all__ = [
     "OptionsSnapshotRow", "OptionsFlowRow", "AiAssessmentRow", "AiAssessmentComponentRow",
     "AiPredictionRow", "AiPredictionOutcomeRow", "AiGovernanceResultRow", "DataCompletenessRow",
     "MacroSnapshotRow", "InstitutionalChangeRow", "InsiderTransactionRow", "InsiderClusterRow",
+    "RiskControlPolicyRow", "RiskEventRow", "risk_config_token",
 ]
 
 

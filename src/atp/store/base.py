@@ -15,6 +15,8 @@ Design rules honored here:
 from __future__ import annotations
 
 import abc
+import hashlib
+import json
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -22,6 +24,20 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from .money import D, money_str, opt_money_str, to_decimal
+
+
+def risk_config_token(*, capital, risk_per_trade_pct, max_daily_loss_pct, rc_updated_at, config_version,
+                      currency, warning_threshold_pct, max_portfolio_exposure_pct, max_drawdown_pct) -> str:
+    """§ R2.0 optimistic-concurrency token over the FULL combined canonical config view (canonical
+    risk_config + risk_control_policy). Deterministic. ANY change to ANY field — including an out-of-band
+    risk_config write (which bumps rc_updated_at) — changes the token, so a stale Risk Control Center
+    update is rejected. Read-only; no trading."""
+    def n(v):
+        return "∅" if v is None else money_str(v) if isinstance(v, Decimal) else str(v)
+    payload = {"capital": n(capital), "rpt": n(risk_per_trade_pct), "mdl": n(max_daily_loss_pct),
+               "rc_updated_at": n(rc_updated_at), "version": n(config_version), "currency": n(currency),
+               "warn": n(warning_threshold_pct), "expo": n(max_portfolio_exposure_pct), "dd": n(max_drawdown_pct)}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:20]
 
 
 def utcnow_iso() -> str:
@@ -81,6 +97,37 @@ class RiskStateRow:
     halted: bool
     killed: bool
     updated_at: str
+
+
+@dataclass(slots=True)
+class RiskControlPolicyRow:
+    # § R2.0 — ONLY the Risk-Control fields not already in the canonical risk_config. References the
+    # canonical singleton via risk_config_id. Never stores capital / risk_per_trade_pct /
+    # max_daily_loss_pct (those stay canonical) nor the kill switch (that stays in KillSwitchRow).
+    id: str
+    risk_config_id: int
+    currency: str | None
+    warning_threshold_pct: Decimal | None
+    max_portfolio_exposure_pct: Decimal | None
+    max_drawdown_pct: Decimal | None
+    config_version: int
+    updated_at: str | None
+    updated_by: str | None
+
+
+@dataclass(slots=True)
+class RiskEventRow:
+    id: str
+    timestamp: str | None
+    event_type: str
+    severity: str | None
+    description: str | None
+    reason_code: str | None
+    observed_value: str | None
+    configured_limit: str | None
+    configuration_version: str | None
+    details_json: str | None
+    created_at: str
 
 
 @dataclass(slots=True)
@@ -659,6 +706,111 @@ class SqlStore(Store):
                 "updated_at=excluded.updated_at",
                 (self._m(day_start_equity), self._m(peak_equity), 1 if halted else 0,
                  1 if killed else 0, now))
+
+    # -- Risk Control Center (§ R2.0): policy companion + immutable events. Canonical capital /
+    #    risk_per_trade_pct / max_daily_loss_pct stay in risk_config; kill switch stays in kill_switch.
+    _RCP_COLS = ("id,risk_config_id,currency,warning_threshold_pct,max_portfolio_exposure_pct,"
+                 "max_drawdown_pct,config_version,updated_at,updated_by")
+    _RISK_EVENT_COLS = ("id,timestamp,event_type,severity,description,reason_code,observed_value,"
+                        "configured_limit,configuration_version,details_json,created_at")
+
+    def get_risk_control_policy(self) -> RiskControlPolicyRow | None:
+        r = self._one(f"SELECT {self._RCP_COLS} FROM risk_control_policy WHERE id='policy'")
+        if not r:
+            return None
+        g = lambda v: None if v is None else to_decimal(v)  # noqa: E731
+        return RiskControlPolicyRow(r[0], int(r[1]), r[2], g(r[3]), g(r[4]), g(r[5]), int(r[6]), r[7], r[8])
+
+    def insert_risk_event(self, *, id: str, timestamp, event_type: str, severity: str | None = None,
+                          description: str | None = None, reason_code: str | None = None,
+                          observed_value: str | None = None, configured_limit: str | None = None,
+                          configuration_version: str | None = None, details_json: str | None = None) -> None:
+        """Append an immutable risk event. ON CONFLICT DO NOTHING → never rewritten (never fabricated)."""
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur,
+                f"INSERT INTO risk_events ({self._RISK_EVENT_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(id) DO NOTHING",
+                (id, timestamp, event_type, severity, description, reason_code, observed_value,
+                 configured_limit, configuration_version, details_json, now))
+
+    def list_risk_events(self, limit: int = 100) -> list[RiskEventRow]:
+        n = max(1, min(1000, int(limit)))
+        rows = self._all(f"SELECT {self._RISK_EVENT_COLS} FROM risk_events ORDER BY created_at DESC LIMIT ?", (n,))
+        return [RiskEventRow(*r) for r in rows]
+
+    def count_risk_events(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM risk_events")
+        return int(r[0]) if r else 0
+
+    def apply_risk_control_update(self, *, expected_token: str, capital, risk_per_trade_pct,
+                                  max_daily_loss_pct, currency, warning_threshold_pct,
+                                  max_portfolio_exposure_pct, max_drawdown_pct, actor: str,
+                                  event_id: str | None = None) -> dict:
+        """§ R2.0 atomic, version-checked Risk-Control config update. In ONE transaction it (1) locks BOTH
+        singleton rows and verifies the optimistic token (rejecting a stale update, incl. an out-of-band
+        risk_config change), (2) writes the canonical risk_config + the risk_control_policy, and (3)
+        appends an immutable CONFIGURATION_UPDATED risk_event with structured before/after details_json.
+        If the event write fails the whole tx rolls back. It calls NO order/execution/broker code and
+        NEVER mutates the kill switch. Returns {ok, reason, version, current_token, details_json}."""
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "SELECT capital,risk_per_trade_pct,max_daily_loss_pct,updated_at FROM risk_config "
+                       "WHERE id=1" + self.LOCK_CLAUSE)
+            rc = cur.fetchone()
+            self._exec(cur, f"SELECT {self._RCP_COLS} FROM risk_control_policy WHERE id='policy'" + self.LOCK_CLAUSE)
+            pol = cur.fetchone()
+            d = lambda v: None if v is None else to_decimal(v)  # noqa: E731
+            cur_token = risk_config_token(
+                capital=d(rc[0]) if rc else None, risk_per_trade_pct=d(rc[1]) if rc else None,
+                max_daily_loss_pct=d(rc[2]) if rc else None, rc_updated_at=(rc[3] if rc else None),
+                config_version=(int(pol[6]) if pol else 0), currency=(pol[2] if pol else None),
+                warning_threshold_pct=(d(pol[3]) if pol else None),
+                max_portfolio_exposure_pct=(d(pol[4]) if pol else None),
+                max_drawdown_pct=(d(pol[5]) if pol else None))
+            if expected_token != cur_token:
+                return {"ok": False, "reason": "version_conflict", "current_token": cur_token}
+            new_version = (int(pol[6]) if pol else 0) + 1
+            ms = lambda v: None if v is None else money_str(v if isinstance(v, Decimal) else D(str(v)))  # noqa: E731
+            before = {"capital": ms(d(rc[0])) if rc else None,
+                      "risk_per_trade_pct": ms(d(rc[1])) if rc else None,
+                      "max_daily_loss_pct": ms(d(rc[2])) if rc else None,
+                      "currency": (pol[2] if pol else None),
+                      "warning_threshold_pct": ms(d(pol[3])) if pol else None,
+                      "max_portfolio_exposure_pct": ms(d(pol[4])) if pol else None,
+                      "max_drawdown_pct": ms(d(pol[5])) if pol else None,
+                      "config_version": (int(pol[6]) if pol else 0)}
+            self._exec(cur,
+                "INSERT INTO risk_config (id,capital,risk_per_trade_pct,max_daily_loss_pct,updated_at) "
+                "VALUES (1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET capital=excluded.capital, "
+                "risk_per_trade_pct=excluded.risk_per_trade_pct, max_daily_loss_pct=excluded.max_daily_loss_pct, "
+                "updated_at=excluded.updated_at",
+                (self._m(capital), self._m(risk_per_trade_pct), self._m(max_daily_loss_pct), now))
+            self._exec(cur,
+                "INSERT INTO risk_control_policy (id,risk_config_id,currency,warning_threshold_pct,"
+                "max_portfolio_exposure_pct,max_drawdown_pct,config_version,updated_at,updated_by) "
+                "VALUES ('policy',1,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET currency=excluded.currency, "
+                "warning_threshold_pct=excluded.warning_threshold_pct, "
+                "max_portfolio_exposure_pct=excluded.max_portfolio_exposure_pct, "
+                "max_drawdown_pct=excluded.max_drawdown_pct, config_version=excluded.config_version, "
+                "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
+                (currency, self._m(warning_threshold_pct), self._m(max_portfolio_exposure_pct),
+                 self._m(max_drawdown_pct), new_version, now, actor))
+            after = {"capital": ms(capital), "risk_per_trade_pct": ms(risk_per_trade_pct),
+                     "max_daily_loss_pct": ms(max_daily_loss_pct), "currency": currency,
+                     "warning_threshold_pct": ms(warning_threshold_pct),
+                     "max_portfolio_exposure_pct": ms(max_portfolio_exposure_pct),
+                     "max_drawdown_pct": ms(max_drawdown_pct), "config_version": new_version}
+            changed = [k for k in after if str(before.get(k)) != str(after.get(k))]
+            details = json.dumps({"changed_fields": changed, "before": before, "after": after,
+                                  "actor": actor, "configuration_version": new_version, "timestamp": now},
+                                 sort_keys=True)
+            self._exec(cur,
+                f"INSERT INTO risk_events ({self._RISK_EVENT_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (event_id or new_id(), now, "CONFIGURATION_UPDATED", "INFO",
+                 f"Risk configuration updated to v{new_version} by {actor}", "CONFIGURATION_UPDATED",
+                 None, None, str(new_version), details, now))
+            return {"ok": True, "version": new_version, "details_json": details}
 
     # -- orders (idempotent lifecycle) ------------------------------------
     def get_order_by_idempotency(self, key: str) -> OrderRow | None:

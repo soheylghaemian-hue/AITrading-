@@ -340,6 +340,29 @@ def _migration_016(dialect: str) -> list[str]:
     return [f"ALTER TABLE macro_snapshots ADD COLUMN core_cpi {_types(dialect)['TXT']}"]
 
 
+def _migration_017(dialect: str) -> list[str]:
+    """Risk Control Center (§ Phase R2.0 — capital-protection observability + config; NOT trading).
+    Two ADDITIVE tables, no change to the canonical `risk_config` (Trading-Core RiskEngine reads that +
+    a JSON file — both untouched): `risk_control_policy` holds ONLY the Risk-Control-only fields (no
+    duplication of capital / risk_per_trade_pct / max_daily_loss_pct) and references the canonical
+    singleton via risk_config_id; `risk_events` is an immutable audit of CONFIGURATION_UPDATED (+ future
+    events) with structured details_json. No order/execution/broker table is touched; nothing here can
+    create or submit an order."""
+    t = _types(dialect)
+    ts, txt, i = t["TS"], t["TXT"], t["INT"]
+    return [
+        f"""CREATE TABLE IF NOT EXISTS risk_control_policy (
+            id {txt} PRIMARY KEY, risk_config_id {i} NOT NULL DEFAULT 1, currency {txt},
+            warning_threshold_pct {txt}, max_portfolio_exposure_pct {txt}, max_drawdown_pct {txt},
+            config_version {i} NOT NULL DEFAULT 0, updated_at {ts}, updated_by {txt})""",
+        f"""CREATE TABLE IF NOT EXISTS risk_events (
+            id {txt} PRIMARY KEY, timestamp {ts}, event_type {txt} NOT NULL, severity {txt},
+            description {txt}, reason_code {txt}, observed_value {txt}, configured_limit {txt},
+            configuration_version {txt}, details_json {txt}, created_at {ts} NOT NULL)""",
+        "CREATE INDEX IF NOT EXISTS ix_risk_events_ts ON risk_events(created_at)",
+    ]
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -358,6 +381,7 @@ MIGRATIONS = [
     (14, "institutional_intelligence", _migration_014),
     (15, "insider_clusters", _migration_015),
     (16, "macro_core_cpi", _migration_016),
+    (17, "risk_control_center", _migration_017),
 ]
 
 

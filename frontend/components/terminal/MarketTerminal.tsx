@@ -8,7 +8,7 @@ import React, { useEffect, useState } from "react";
 import type { Snapshot } from "@/lib/types";
 import { instrumentRef } from "@/lib/instruments";
 import { symbolQuote } from "@/lib/market";
-import { fetchOhlc, fetchTraders, fetchFundamentals, fetchOptions, fetchConsensus, fetchMacroContext, fetchInstitutionalFlow } from "@/lib/api";
+import { fetchOhlc, fetchTraders, fetchFundamentals, fetchOptions, fetchConsensus, fetchMacroContext, fetchInstitutionalFlow, fetchRiskStatus } from "@/lib/api";
 import type { OhlcBar } from "@/lib/ohlc";
 import type { TraderConsensus } from "@/lib/traders";
 import type { FundamentalsData } from "@/lib/fundamentals";
@@ -16,7 +16,9 @@ import type { OptionsData } from "@/lib/options";
 import type { AiConsensus } from "@/lib/consensus";
 import type { MacroContext } from "@/lib/macro";
 import type { InstitutionalFlow } from "@/lib/institutional";
+import type { RiskStatus } from "@/lib/risk";
 import { Dot } from "@/components/ui";
+import { RiskCard } from "./RiskCard";
 import { TerminalHeader } from "./TerminalHeader";
 import { DataQuality } from "./DataQuality";
 import { MarketChart } from "./MarketChart";
@@ -44,6 +46,7 @@ export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; s
   const [consensus, setConsensus] = useState<AiConsensus | null>(null);
   const [macro, setMacro] = useState<MacroContext | null>(null);
   const [institutional, setInstitutional] = useState<InstitutionalFlow | null>(null);
+  const [risk, setRisk] = useState<RiskStatus | null>(null);
 
   // Fetch OHLC whenever the symbol or timeframe changes. AbortController + a cancelled flag guard against
   // a stale response landing after a fast symbol switch (NVDA → AAPL → SPY) overwriting the newer request.
@@ -83,6 +86,9 @@ export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; s
     fetchInstitutionalFlow(symbol, ctrl.signal)             // §R1.3 institutional 13F changes + insiders
       .then((r) => { if (!cancelled) setInstitutional(r); })
       .catch(() => { if (!cancelled) setInstitutional(null); });
+    fetchRiskStatus(ctrl.signal)                            // §R2.0 global capital-protection state (read-only)
+      .then((r) => { if (!cancelled) setRisk(r); })
+      .catch(() => { if (!cancelled) setRisk(null); });
     return () => { cancelled = true; ctrl.abort(); };
   }, [symbol]);
 
@@ -114,6 +120,7 @@ export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; s
       <AiSummary data={consensus} />
       <MacroContextCard data={macro} />
       <InstitutionalPanel data={institutional} />
+      <RiskCard data={risk} />
       <DataQuality quote={quote} refData={refData} />
       <div className="term-main">
         <div className="card term-chart">

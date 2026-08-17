@@ -18,6 +18,7 @@ import type { Governance, GovernanceFeed } from "./governance";
 import type { Completeness } from "./completeness";
 import type { Macro, MacroContext } from "./macro";
 import type { InstitutionalFlow, InsiderCluster } from "./institutional";
+import type { RiskStatus, RiskConfigView, RiskEvents } from "./risk";
 
 // Where the browser sends dashboard calls. Default: the SAME-ORIGIN server proxy ("/api"), which
 // forwards to the private backend and injects the read token server-side — so no token ever
@@ -368,16 +369,84 @@ export async function emergencyStop(token = ""): Promise<{ ok: boolean; detail: 
   return { ok: res.ok, detail: body.reason || body.detail || `${res.status}` };
 }
 
-export async function setRiskConfig(
-  cfg: { capital: number; risk_per_trade_pct: number; max_daily_loss_pct: number },
-  token = "",
-): Promise<{ ok: boolean; detail: string; data?: any }> {
+// § R2.0 — the read-only Risk Control state (READY/WARNING/BLOCKED/NO DATA + budget usage + limits +
+// kill switch). Same-origin server proxy → Control API /risk/status. On no backend / non-OK it throws
+// (the caller renders NO DATA — never a fabricated zero, never a false READY).
+export async function fetchRiskStatus(signal?: AbortSignal): Promise<RiskStatus> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/risk-status`,
+    { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = (await res.json()) as Partial<RiskStatus>;
+  return {
+    status: b.status ?? null, reasons: Array.isArray(b.reasons) ? b.reasons : [],
+    missing: Array.isArray(b.missing) ? b.missing : [],
+    capital: b.capital ?? { value: null, currency: null, source: null },
+    daily_pnl: b.daily_pnl ?? { value: null, limit: null, used_pct: null, remaining: null, observed_at: null },
+    position_risk: b.position_risk ?? { value: null, limit: null },
+    exposure: b.exposure ?? { gross_pct: null, net_pct: null, limit_pct: null },
+    drawdown: b.drawdown ?? { value_pct: null, limit_pct: null },
+    kill_switch: b.kill_switch ?? null, configuration_version: b.configuration_version ?? null,
+    version_token: b.version_token ?? null, updated_at: b.updated_at ?? null, ts: b.ts ?? null,
+  };
+}
+
+// § R2.0 — the read-only current Risk Control configuration (canonical limits + the DERIVED
+// max_daily_loss_amount + the concurrency version token). Proxy → Control API /risk/config (GET).
+export async function fetchRiskConfig(signal?: AbortSignal): Promise<RiskConfigView> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/risk-config`,
+    { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = (await res.json()) as Partial<RiskConfigView>;
+  return {
+    configured: !!b.configured, reason: b.reason ?? null,
+    configuration_version: b.configuration_version ?? null, version_token: b.version_token ?? null,
+    kill_switch: b.kill_switch ?? null, config: b.config ?? null,
+  };
+}
+
+// § R2.0 — the immutable risk-event history (CONFIGURATION_UPDATED + kill-switch audit). Proxy →
+// Control API /risk/events. Read-only; on no backend / non-OK it throws (caller shows NO DATA).
+export async function fetchRiskEvents(limit = 50, signal?: AbortSignal): Promise<RiskEvents> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/risk-events?limit=${limit}`,
+    { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = (await res.json()) as Partial<RiskEvents>;
+  return { count: b.count ?? 0, events: Array.isArray(b.events) ? b.events : [] };
+}
+
+// § R2.0 — update the Risk Control configuration. Authorized by the SERVER proxy (owner token injected
+// server-side, never in the browser); `expected_version` is the version_token from fetchRiskConfig
+// (optimistic concurrency — a stale or out-of-band change is rejected 409). This changes LIMITS only:
+// it writes the canonical risk_config + policy + an immutable audit event. It does NOT place an order,
+// touch the broker/IBKR/execution, or enable trading, and it never mutates the kill switch.
+export interface RiskConfigUpdate {
+  expected_version?: string | null;
+  capital: number;
+  currency: string;
+  max_daily_loss_pct: number;
+  max_position_risk_pct: number;
+  max_portfolio_exposure_pct: number;
+  max_drawdown_pct: number;
+  warning_threshold_pct: number;
+}
+export async function updateRiskConfig(
+  cfg: RiskConfigUpdate, token = "",
+): Promise<{ ok: boolean; detail: string; conflict?: boolean; errors?: string[]; data?: any }> {
   if (!API_BASE) return { ok: false, detail: "no backend configured — connect a read-only backend to apply config" };
   const res = await fetch(`${API_BASE}/dashboard/risk-config`, {
     method: "POST", headers: mutHeaders(token, true), body: JSON.stringify(cfg),
   });
   const body = await res.json().catch(() => ({}));
-  return { ok: res.ok, detail: body.detail || (res.ok ? "updated" : `${res.status}`), data: body };
+  if (res.ok) return { ok: true, detail: "updated", data: body };
+  // 422 → validation errors; 409 → version conflict (reload + retry); 401 → auth.
+  const errors: string[] | undefined = Array.isArray(body?.detail?.errors) ? body.detail.errors : undefined;
+  const detail = errors ? errors.join("; ")
+    : (typeof body?.detail === "string" ? body.detail
+      : body?.detail?.detail || (res.status === 401 ? "not authorized" : `${res.status}`));
+  return { ok: false, detail, conflict: res.status === 409, errors, data: body };
 }
 
 export async function autonomousControl(
