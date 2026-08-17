@@ -2123,6 +2123,47 @@ class SqlStore(Store):
                         dataset_id, expected_from))
             return cur.rowcount > 0
 
+    def rd_append_bars(self, dataset_id: str, bars=(), events=()) -> bool:
+        """R3.0A.1 — incrementally persist ONE bounded chunk's normalized bars + events while the dataset is
+        RUNNING (never finalizes). Bumps updated_at as a liveness heartbeat (so a crashed worker's RUNNING
+        row is detectably stale). The heartbeat UPDATE is guarded on status='RUNNING' FIRST — if the dataset
+        is no longer RUNNING (reclaimed/terminal) it returns False and inserts nothing (all in one tx)."""
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "UPDATE research_datasets SET updated_at=? WHERE dataset_id=? AND status='RUNNING'",
+                       (now, dataset_id))
+            if cur.rowcount <= 0:
+                return False
+            for barr in bars:
+                self._exec(cur, "INSERT INTO research_ohlc_bars (dataset_id,symbol,interval,ts,session_date,"
+                           "open,high,low,close,volume,trade_count,source,adjustment_policy,created_at) "
+                           "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                           (dataset_id, barr["symbol"], barr["interval"], barr["ts"], barr["session_date"],
+                            money_str(barr["open"]), money_str(barr["high"]), money_str(barr["low"]),
+                            money_str(barr["close"]), money_str(barr["volume"]),
+                            (None if barr.get("trade_count") is None else int(barr["trade_count"])),
+                            barr["source"], barr["adjustment_policy"], now))
+            for e in events:
+                self._exec(cur, "INSERT INTO research_dataset_events (id,dataset_id,seq,ts,event_type,severity,"
+                           "symbol,details_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                           (f"{dataset_id}-e{e['seq']}", dataset_id, int(e["seq"]), e.get("ts"), e["event_type"],
+                            e.get("severity"), e.get("symbol"), json.dumps(e.get("details") or {}), now))
+            return True
+
+    def rd_reclaim_stale_running(self, cutoff_iso: str, *, failure_code: str, failure_reason: str) -> list[str]:
+        """R3.0A.1 — a RUNNING dataset whose heartbeat (updated_at) is older than `cutoff_iso` is a crashed
+        worker; record it honestly as FAILED (terminal) BEFORE any retry creates a NEW dataset. Returns the
+        reclaimed dataset_ids. RUNNING→FAILED is a legal terminal transition (triggers allow it)."""
+        now = utcnow_iso()
+        ids = [r[0] for r in self._all("SELECT dataset_id FROM research_datasets WHERE status='RUNNING' "
+                                       "AND updated_at < ?", (cutoff_iso,))]
+        for ds_id in ids:
+            with self.tx() as cur:
+                self._exec(cur, "UPDATE research_datasets SET status='FAILED', failure_code=?, failure_reason=?, "
+                           "ended_at=?, updated_at=? WHERE dataset_id=? AND status='RUNNING'",
+                           (failure_code, failure_reason, now, now, ds_id))
+        return ids
+
     def rd_get_dataset(self, dataset_id: str) -> ResearchDatasetRow | None:
         r = self._one(f"SELECT {self._RD_DS_COLS} FROM research_datasets WHERE dataset_id=?", (dataset_id,))
         if not r:

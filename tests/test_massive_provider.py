@@ -51,7 +51,10 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-TS = int(time.time() * 1000)  # fresh timestamp so the gate does not reject on staleness
+def _ts() -> int:
+    # Fresh AT CALL TIME (not import time) so the READY freshness gate never rejects merely because the
+    # rest of the suite took > max_age_s to reach this test. Stale-path tests subtract from this explicitly.
+    return int(time.time() * 1000)
 
 
 # ------------------------------------------------------------------ missing key
@@ -106,9 +109,9 @@ def test_quote_trade_normalize_to_ready():
     frames = [
         {"ev": "status", "status": "connected"},
         {"ev": "status", "status": "auth_success"},
-        {"ev": "Q", "sym": "AAPL", "bp": 226.10, "bs": 3, "ap": 226.12, "as": 5, "t": TS},
-        {"ev": "T", "sym": "AAPL", "p": 226.11, "s": 100, "t": TS},
-        {"ev": "A", "sym": "AAPL", "av": 1_250_000, "c": 226.11, "t": TS},
+        {"ev": "Q", "sym": "AAPL", "bp": 226.10, "bs": 3, "ap": 226.12, "as": 5, "t": _ts()},
+        {"ev": "T", "sym": "AAPL", "p": 226.11, "s": 100, "t": _ts()},
+        {"ev": "A", "sym": "AAPL", "av": 1_250_000, "c": 226.11, "t": _ts()},
     ]
 
     async def go():
@@ -136,7 +139,7 @@ def test_missing_fields_stay_null_and_block():
     frames = [
         {"ev": "status", "status": "connected"},
         {"ev": "status", "status": "auth_success"},
-        {"ev": "T", "sym": "NVDA", "p": 173.0, "s": 100, "t": TS},
+        {"ev": "T", "sym": "NVDA", "p": 173.0, "s": 100, "t": _ts()},
     ]
 
     async def go():
@@ -151,7 +154,7 @@ def test_missing_fields_stay_null_and_block():
 
 
 def test_stale_timestamp_rejected_by_gate():
-    old = TS - 60_000  # 60s old
+    old = _ts() - 60_000  # 60s old
     frames = [
         {"ev": "status", "status": "connected"},
         {"ev": "status", "status": "auth_success"},
@@ -178,7 +181,7 @@ def test_realtime_only_after_a_live_tick():
     frames = [
         {"ev": "status", "status": "connected"},
         {"ev": "status", "status": "auth_success"},
-        {"ev": "Q", "sym": "AAPL", "bp": 226.1, "bs": 3, "ap": 226.12, "as": 5, "bx": 11, "ax": 12, "t": TS},
+        {"ev": "Q", "sym": "AAPL", "bp": 226.1, "bs": 3, "ap": 226.12, "as": 5, "bx": 11, "ax": 12, "t": _ts()},
     ]
 
     async def go():
@@ -211,7 +214,7 @@ def test_reconnect_after_drop():
         # second attempt: connect, auth, then keep quiet; we stop shortly after
         return DropWS([{"ev": "status", "status": "connected"},
                        {"ev": "status", "status": "auth_success"},
-                       {"ev": "Q", "sym": "AAPL", "bp": 1, "bs": 1, "ap": 2, "as": 1, "t": TS}])
+                       {"ev": "Q", "sym": "AAPL", "bp": 1, "bs": 1, "ap": 2, "as": 1, "t": _ts()}])
 
     async def go():
         p = MassiveProvider([MASSIVE_SYMBOLS[0]], api_key="k", connect_fn=cf)

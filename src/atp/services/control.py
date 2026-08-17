@@ -17,7 +17,7 @@ import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel
 
 from ..aigov.engine import build_governance_feed, evaluate_governance
@@ -476,23 +476,16 @@ class DatasetCreate(BaseModel):
     end: str | None = None
 
 
-def _resolve_backfill_provider():
-    """The real paid provider is DOUBLE-gated: it exists only when ATP_BACKFILL_ENABLED=1 AND MASSIVE_API_KEY
-    is set (the separate post-approval step). Tests inject `ctx.backfill_provider` (a mock). Otherwise None
-    → the endpoint refuses to issue any live/paid request."""
-    if ctx.backfill_provider is not None:
-        return ctx.backfill_provider
-    if os.environ.get("ATP_BACKFILL_ENABLED") != "1":
-        return None
-    key = os.environ.get("MASSIVE_API_KEY")
-    return bf.PolygonAggregatesProvider(key) if key else None
-
-
-@app.post("/research/datasets")
-def create_dataset(body: DatasetCreate, authorization: str | None = Header(default=None)) -> dict:
-    """§ R3.0A — build (or reuse) an immutable research dataset from split-adjusted 1-minute aggregates
-    normalized to RTH daily bars. RESEARCH DATA ONLY: never trades, never touches live `ohlc_bars`. The
-    real backfill is disabled unless explicitly enabled server-side (post-approval) — otherwise 403."""
+@app.post("/research/datasets", status_code=202)
+def create_dataset(body: DatasetCreate, response: Response,
+                   authorization: str | None = Header(default=None)) -> dict:
+    """§ R3.0A.1 — ENQUEUE an immutable research dataset (does NOT execute it). This endpoint performs ZERO
+    provider network I/O and NO normalization/backfill inside the request, and never holds `ctx.lock` across
+    long-running work: it only authenticates, validates the bounded request, and idempotently creates or
+    reuses a PLANNED dataset. The actual chunked backfill runs OUTSIDE atp-control in the durable one-shot
+    worker (`python -m atp.research.backfill.worker`). Returns 202 (PLANNED/RUNNING) or 200 (reused COMPLETED)
+    with dataset_id, request checksum and status. RESEARCH DATA ONLY: never trades, never touches live
+    `ohlc_bars`."""
     _auth(authorization)
     if not body.start or not body.end:
         raise HTTPException(422, {"detail": "dataset request invalid", "error": "start and end are required"})
@@ -500,18 +493,11 @@ def create_dataset(body: DatasetCreate, authorization: str | None = Header(defau
         req = bf.build_request(body.symbols, body.interval, body.start, body.end)
     except bf.DatasetRequestError as e:
         raise HTTPException(422, {"detail": "dataset request invalid", "error": str(e)})
-    provider = _resolve_backfill_provider()
-    if provider is None:
-        raise HTTPException(403, {"detail": "BACKFILL_DISABLED",
-                                  "message": "historical backfill is disabled on this server (requires "
-                                             "ATP_BACKFILL_ENABLED=1 + MASSIVE_API_KEY after separate approval)"})
-    try:
-        with ctx.lock:
-            result = bf.run_backfill(ctx.store, req, provider, owner="operator")
-            row = ctx.store.rd_get_dataset(result["dataset_id"])
-            detail = bf.dataset_detail(ctx.store, row)
-    except bf.BackfillConflict as e:
-        raise HTTPException(409, {"detail": "DATASET_REQUEST_IN_PROGRESS", "message": str(e)})
+    with ctx.lock:   # store-only + fast; NO provider I/O is performed here
+        enq = bf.enqueue_backfill(ctx.store, req, owner="operator")
+        row = ctx.store.rd_get_dataset(enq["dataset_id"])
+        detail = bf.dataset_detail(ctx.store, row)
+    response.status_code = 200 if enq["reused"] else 202
     return detail
 
 

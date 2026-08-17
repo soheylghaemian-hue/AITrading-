@@ -27,9 +27,28 @@ from .provider import (
     ProviderError,
 )
 from .readmodel import dataset_coverage, dataset_detail, dataset_summary, datasets_list
-from .runner import BackfillConflict, run_backfill
+from .runner import (
+    CHUNK_SESSIONS,
+    MAX_PAGES_PER_CHUNK,
+    MAX_RESULTS_PER_CHUNK,
+    STALE_RUNNING_AFTER_S,
+    BackfillConflict,
+    claim_and_run,
+    claim_dataset,
+    enqueue_backfill,
+    execute_claimed,
+    execute_dataset,
+    run_backfill,
+)
 from .select import validate_selection
-from .validate import ValidationError, dataset_checksum, raw_pages_checksum, validate_daily_bars, validate_minutes
+from .validate import (
+    StreamingPagesChecksum,
+    ValidationError,
+    dataset_checksum,
+    raw_pages_checksum,
+    validate_daily_bars,
+    validate_minutes,
+)
 
 __all__ = [
     "DatasetRequest", "DatasetRequestError", "build_request",
@@ -38,7 +57,10 @@ __all__ = [
     "MISSING_MINUTE_THRESHOLD",
     "MinuteAggregatesProvider", "PolygonAggregatesProvider", "MockAggregatesProvider", "FetchResult",
     "EntitlementError", "ProviderError",
-    "validate_minutes", "validate_daily_bars", "raw_pages_checksum", "dataset_checksum", "ValidationError",
+    "validate_minutes", "validate_daily_bars", "raw_pages_checksum", "dataset_checksum",
+    "StreamingPagesChecksum", "ValidationError",
+    "enqueue_backfill", "execute_dataset", "execute_claimed", "claim_dataset", "claim_and_run",
     "run_backfill", "BackfillConflict", "validate_selection",
+    "CHUNK_SESSIONS", "MAX_PAGES_PER_CHUNK", "MAX_RESULTS_PER_CHUNK", "STALE_RUNNING_AFTER_S",
     "dataset_summary", "dataset_detail", "dataset_coverage", "datasets_list",
 ]

@@ -5,7 +5,7 @@
 // ohlc_bars. Every field traces to a real dataset record or renders NO DATA / MISSING (never fabricated).
 import React, { useEffect, useState } from "react";
 import { NO_DATA } from "@/lib/format";
-import { createDataset, fetchDatasets, fetchDataset, fetchDatasetCoverage } from "@/lib/api";
+import { createDataset, fetchDatasets, fetchDataset, fetchDatasetCoverage, POLL_MS } from "@/lib/api";
 import {
   type ResearchDataset, type DatasetCoverage, datasetTone, rangeText, shortChecksum,
 } from "@/lib/dataset";
@@ -37,9 +37,13 @@ function BuildForm({ connected, onBuilt }: { connected: boolean; onBuilt: () => 
     setBusy(true);
     try {
       const r = await createDataset({ symbols: syms, interval: "1D", start, end });
-      if (r.ok && r.data) { setMsg({ tone: "ok", text: `dataset ${r.data.status} · ${r.data.dataset_id.slice(0, 12)}…` }); onBuilt(); }
-      else if (r.disabled) setMsg({ tone: "disabled", text: r.detail || "historical backfill is disabled on this server (enabled only after approval)" });
-      else setMsg({ tone: "err", text: r.detail || "build failed" });
+      if (r.ok && r.data) {
+        const s = r.data.status;
+        const note = s === "COMPLETED" ? "already built (reused)" : "queued — the research worker will build it";
+        setMsg({ tone: "ok", text: `${s} · ${r.data.dataset_id.slice(0, 12)}… — ${note}` });
+        onBuilt();
+      } else if (r.disabled) setMsg({ tone: "disabled", text: r.detail || "historical backfill is disabled on this server (enabled only after approval)" });
+      else setMsg({ tone: "err", text: r.detail || "enqueue failed" });
     } finally { setBusy(false); }
   }
 
@@ -149,6 +153,13 @@ export function Datasets({ connected }: { connected: boolean }) {
       .finally(() => { if (live) setLoaded(true); });
     return () => { live = false; };
   }, [reloadKey]);
+
+  // Poll the read endpoint so PLANNED → RUNNING → COMPLETED/FAILED transitions (driven by the external
+  // worker) surface without a manual refresh. Never fabricates: on error the list simply holds.
+  useEffect(() => {
+    const id = setInterval(() => setReloadKey((k) => k + 1), Math.max(3000, POLL_MS));
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     if (!selectedId) { setDetail(null); setCoverage(null); return; }

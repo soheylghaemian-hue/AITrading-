@@ -57,20 +57,17 @@ describe("dataset fetchers — same-origin proxy only (research read-only)", () 
     calls = []; await fetchDataset("D1"); expect(calls[0].url).toBe("/api/dashboard/research-datasets/D1");
     calls = []; await fetchDatasetCoverage("D1"); expect(calls[0].url).toBe("/api/dashboard/research-datasets/D1/coverage");
   });
-  it("createDataset POSTs to /api/dashboard/research-datasets", async () => {
-    vi.stubGlobal("fetch", okFetch({ dataset_id: "D1", status: "COMPLETED" }));
+  it("createDataset POSTs to /api/dashboard/research-datasets and returns the enqueued dataset", async () => {
+    // R3.0A.1: the endpoint ENQUEUES (202) — the returned dataset is PLANNED, not yet built.
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: any) => {
+      calls.push({ url: String(url), init });
+      return { ok: true, status: 202, json: async () => ({ dataset_id: "D1", status: "PLANNED" }) } as any;
+    }));
     const res = await createDataset({ symbols: ["NVDA"], interval: "1D", start: "2023-01-03", end: "2023-06-30" });
     expect(calls[0].url).toBe("/api/dashboard/research-datasets");
     expect(calls[0].init.method).toBe("POST");
     expect(res.ok).toBe(true);
-    expect(res.data?.status).toBe("COMPLETED");
-  });
-  it("createDataset surfaces the 403 BACKFILL_DISABLED state honestly (never hidden)", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 403, json: async () => ({ detail: { detail: "BACKFILL_DISABLED", message: "backfill is disabled" } }) } as any)));
-    const res = await createDataset({ symbols: ["NVDA"], interval: "1D", start: "2023-01-03", end: "2023-06-30" });
-    expect(res.ok).toBe(false);
-    expect(res.disabled).toBe(true);
-    expect(res.detail).toContain("disabled");
+    expect(res.data?.status).toBe("PLANNED");
   });
   it("createDataset surfaces a 422 bounds error", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 422, json: async () => ({ detail: { error: "symbols not in the approved R3.0A universe" } }) } as any)));

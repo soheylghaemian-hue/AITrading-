@@ -69,15 +69,34 @@ def validate_daily_bars(bars: list[dict]) -> None:
         last_ts_by_symbol[sym] = ts
 
 
+def _page_blob(symbol: str, page: dict) -> bytes:
+    return json.dumps({"symbol": symbol, "adjusted": page.get("adjusted"),
+                       "results": page.get("results", [])},
+                      sort_keys=True, separators=(",", ":"), default=str).encode()
+
+
 def raw_pages_checksum(pages_by_symbol: dict[str, list[dict]]) -> str:
     """Deterministic fingerprint of the exact provider pages consumed (symbol-ordered, page-ordered)."""
     h = hashlib.sha256()
     for sym in sorted(pages_by_symbol):
         for page in pages_by_symbol[sym]:
-            h.update(json.dumps({"symbol": sym, "adjusted": page.get("adjusted"),
-                                 "results": page.get("results", [])},
-                                sort_keys=True, separators=(",", ":"), default=str).encode())
+            h.update(_page_blob(sym, page))
     return "sha256:" + h.hexdigest()
+
+
+class StreamingPagesChecksum:
+    """Incremental raw-pages checksum for BOUNDED-memory chunked backfill (R3.0A.1): the worker feeds each
+    provider page as it is consumed (chunk-major, symbol-sorted within a chunk, page-order within a fetch)
+    and never retains the multi-year page set. Deterministic for a fixed chunking contract."""
+
+    def __init__(self) -> None:
+        self._h = hashlib.sha256()
+
+    def update(self, symbol: str, page: dict) -> None:
+        self._h.update(_page_blob(symbol, page))
+
+    def hexdigest(self) -> str:
+        return "sha256:" + self._h.hexdigest()
 
 
 def dataset_checksum(bars: list[dict]) -> str:

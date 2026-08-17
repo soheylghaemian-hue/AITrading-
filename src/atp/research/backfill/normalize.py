@@ -18,13 +18,16 @@ built on these bars is PRICE RETURN, not total shareholder return. Adjusted volu
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from .. import calendars as cal
 
 PROVIDER = "MASSIVE"
-PROVIDER_CONTRACT_VERSION = "polygon-aggs-1min-v1"
+# R3.0A.1: bumped v1 → chunked-v2. The provider request contract changed (bounded, session-aligned date
+# chunks with per-chunk page/result caps instead of one multi-year request), so the canonical request
+# checksum changes with it — a v1 dataset is NEVER silently reused as if produced by the new contract.
+PROVIDER_CONTRACT_VERSION = "polygon-aggs-1min-chunked-v2"
 ADJUSTMENT_POLICY = "MASSIVE_SPLIT_ADJUSTED_RTH_V1"
 NORMALIZATION_POLICY = "US_EQUITY_RTH_DAILY_FROM_1MIN_V1"
 # A completed session must retain at least this fraction of its expected RTH minutes (and the 09:30 open),
@@ -83,11 +86,15 @@ def normalize_minutes_to_daily(symbol: str, minutes: list[MinuteBar], start: dat
                 continue
             mins = sorted(by_session.get(d.isoformat(), []), key=lambda m: m.ts)
             exp = expected_rth_minutes(d)
+            # The EXACT expected opening and closing RTH minutes: 09:30 open, and the last in-session minute
+            # (session close − 1min = 15:59 on a normal session, 12:59 on an early close). Both must be
+            # present — a close is NEVER manufactured from an earlier minute (correction #4/R3.0A.1).
             has_open = bool(mins) and mins[0].ts == cal.session_open_utc(d)
-            if not mins or Decimal(len(mins)) < threshold * Decimal(exp) or not has_open:
+            has_close = bool(mins) and mins[-1].ts == cal.session_close_utc(d) - timedelta(minutes=1)
+            if not mins or Decimal(len(mins)) < threshold * Decimal(exp) or not has_open or not has_close:
                 missing.append({"session_date": d.isoformat(), "reason": "INSUFFICIENT_SESSION_MINUTES",
                                 "available": len(mins), "expected": exp,
-                                "open_minute_present": has_open})
+                                "open_minute_present": has_open, "close_minute_present": has_close})
             else:
                 counts = [m.trade_count for m in mins]
                 trade_count = sum(counts) if all(c is not None for c in counts) else None  # type: ignore[arg-type]
@@ -105,7 +112,6 @@ def normalize_minutes_to_daily(symbol: str, minutes: list[MinuteBar], start: dat
 
 
 def _next_day(d: date) -> date:
-    from datetime import timedelta
     return d + timedelta(days=1)
 
 
@@ -116,4 +122,4 @@ def last_completed_session(now: datetime | None = None) -> date:
     while True:
         if cal.is_session_day(d) and cal.session_close_utc(d) <= now:
             return d
-        d = d - __import__("datetime").timedelta(days=1)
+        d = d - timedelta(days=1)

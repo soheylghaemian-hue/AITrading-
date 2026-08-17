@@ -25,7 +25,8 @@ import pytest
 
 from atp.research import calendars as cal
 from atp.research.backfill import (
-    build_request, run_backfill, validate_selection, MockAggregatesProvider, MinuteBar,
+    build_request, run_backfill, enqueue_backfill, claim_dataset, claim_and_run, execute_dataset,
+    validate_selection, MockAggregatesProvider, MinuteBar, CHUNK_SESSIONS,
     dataset_checksum, raw_pages_checksum, validate_minutes, validate_daily_bars,
 )
 from atp.research.backfill import normalize as norm
@@ -130,6 +131,38 @@ def test_missing_open_minute_rejects_session_even_if_dense():
     assert out["bars"] == []
     m = out["missing_sessions"][0]
     assert m["reason"] == "INSUFFICIENT_SESSION_MINUTES" and m["open_minute_present"] is False
+
+
+def test_missing_close_minute_excludes_normal_session():
+    d = date(2023, 1, 3)                              # normal session; final RTH minute is 15:59
+    o, c = cal.session_open_utc(d), cal.session_close_utc(d)
+    mins = rth_minutes(d)
+    assert mins[-1].ts == c - timedelta(minutes=1)   # 15:59 present in a full session
+    out = norm.normalize_minutes_to_daily("NVDA", rth_minutes(d, drop=(389,)), o, c, now=NOW)  # drop 15:59
+    assert out["bars"] == []
+    m = out["missing_sessions"][0]
+    assert m["reason"] == "INSUFFICIENT_SESSION_MINUTES"
+    assert m["open_minute_present"] is True and m["close_minute_present"] is False
+
+
+def test_missing_close_minute_excludes_early_close_session():
+    d = date(2023, 11, 24)                            # early close 13:00 → final RTH minute is 12:59
+    o, c = cal.session_open_utc(d), cal.session_close_utc(d)
+    exp = norm.expected_rth_minutes(d)               # 210
+    out = norm.normalize_minutes_to_daily("NVDA", rth_minutes(d, drop=(exp - 1,)), o, c, now=NOW)  # drop 12:59
+    assert out["bars"] == []
+    assert out["missing_sessions"][0]["close_minute_present"] is False
+
+
+def test_complete_normal_and_early_close_sessions_normalize():
+    normal, early = date(2023, 1, 3), date(2023, 11, 24)
+    for d in (normal, early):
+        o, c = cal.session_open_utc(d), cal.session_close_utc(d)
+        out = norm.normalize_minutes_to_daily("NVDA", rth_minutes(d), o, c, now=NOW)
+        assert len(out["bars"]) == 1 and out["missing_sessions"] == []
+        bar = out["bars"][0]
+        # close is the ACTUAL final RTH minute's close (never manufactured from an earlier minute)
+        assert bar["close"] == rth_minutes(d)[-1].close
 
 
 def test_extra_afterhours_minutes_do_not_compensate_missing_rth():
@@ -280,7 +313,7 @@ def test_returned_adjustment_flag_mismatch_fails():
     assert res["status"] == "FAILED" and res["failure_code"] == "PROVIDER_ADJUSTMENT_MISMATCH"
 
 
-def test_idempotent_reuse_and_running_conflict():
+def test_idempotent_reuse_completed():
     days = [date(2023, 1, 3), date(2023, 1, 4)]
     store = _store()
     req = build_request(["NVDA"], "1D", "2023-01-03", "2023-01-04", now=NOW)
@@ -288,16 +321,30 @@ def test_idempotent_reuse_and_running_conflict():
     r1 = run_backfill(store, req, prov, owner="op", now=NOW)
     r2 = run_backfill(store, req, prov, owner="op", now=NOW)
     assert r2["reused"] and r2["dataset_id"] == r1["dataset_id"]
-    # a lingering RUNNING with the same checksum → 409 conflict (no second dataset)
-    store.rd_create_dataset(dataset_id="dup", owner="op", request_checksum=req.request_checksum,
-                            symbol_universe_json=json.dumps(["NVDA"]), interval="1D", provider=norm.PROVIDER,
-                            provider_contract_version=norm.PROVIDER_CONTRACT_VERSION,
-                            adjustment_policy=norm.ADJUSTMENT_POLICY,
-                            normalization_policy=norm.NORMALIZATION_POLICY,
-                            calendar_version=cal.CALENDAR_VERSION, range_start="2023-01-03", range_end="2023-01-04")
-    store.rd_advance_status("dup", "PLANNED", "RUNNING")
+
+
+def test_running_conflict_no_second_dataset():
+    days = [date(2023, 1, 3), date(2023, 1, 4)]
+    store = _store()
+    req = build_request(["NVDA"], "1D", "2023-01-03", "2023-01-04", now=NOW)
+    prov = MockAggregatesProvider({"NVDA": [m for d in days for m in rth_minutes(d)]}, adjusted=True)
+    enq = enqueue_backfill(store, req, owner="op")          # PLANNED
+    assert enq["status"] == "PLANNED" and enq["created"]
+    assert claim_dataset(store, enq["dataset_id"])          # a worker claims it → RUNNING
+    # a synchronous run for the IDENTICAL request must not create a second dataset → conflict
     with pytest.raises(BackfillConflict):
-        run_backfill(store, req, prov, owner="op", now=NOW, allow_reuse=False)
+        run_backfill(store, req, prov, owner="op", now=NOW)
+    assert len(store.rd_list_datasets(limit=50)) == 1       # still exactly one dataset
+
+
+def test_enqueue_performs_no_provider_io():
+    """enqueue_backfill only creates a PLANNED row — it never fetches or normalizes (that is the worker)."""
+    store = _store()
+    req = build_request(["NVDA"], "1D", "2023-01-03", "2023-01-31", now=NOW)
+    enq = enqueue_backfill(store, req, owner="op")
+    ds = store.rd_get_dataset(enq["dataset_id"])
+    assert ds.status == "PLANNED" and ds.row_count is None and ds.dataset_checksum is None
+    assert store.rd_count_bars(enq["dataset_id"]) == 0      # zero bars persisted by enqueue
 
 
 def test_completed_and_failed_datasets_are_db_immutable():
@@ -416,3 +463,149 @@ def test_never_touches_live_ohlc_bars():
                  owner="op", now=NOW)
     assert store._one("SELECT COUNT(*) FROM ohlc_bars")[0] == 0
     assert store._one("SELECT COUNT(*) FROM research_ohlc_bars")[0] == 2
+
+
+# --------------------------------------------------------------------- R3.0A.1 chunked / bounded worker
+def _many_sessions(n, start=date(2023, 1, 3)):
+    out, d = [], start
+    while len(out) < n:
+        if cal.is_session_day(d):
+            out.append(d)
+        d += timedelta(days=1)
+    return out
+
+
+class _CountingProvider(MockAggregatesProvider):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.fetch_calls = 0
+
+    def fetch_minutes(self, *a, **k):
+        self.fetch_calls += 1
+        return super().fetch_minutes(*a, **k)
+
+
+def test_processing_is_chunked_and_bounded():
+    days = _many_sessions(CHUNK_SESSIONS * 2 + 5)          # spans 3 chunks
+    store = _store()
+    req = build_request(["NVDA"], "1D", days[0].isoformat(), days[-1].isoformat(), now=NOW)
+    prov = _CountingProvider({"NVDA": [m for d in days for m in rth_minutes(d)]}, adjusted=True, page_size=5000)
+    enq = enqueue_backfill(store, req, owner="op")
+    res = execute_dataset(store, enq["dataset_id"], provider=prov, now=NOW)
+    assert res["status"] == "COMPLETED" and res["row_count"] == len(days)
+    # exactly one bounded fetch PER CHUNK (never one multi-year request); 1 symbol × 3 chunks
+    assert prov.fetch_calls == 3
+    chunk_events = [e for e in store.rd_list_events(enq["dataset_id"]) if e.event_type == "CHUNK"]
+    assert len(chunk_events) == 3
+    assert [e.event_type for e in store.rd_list_events(enq["dataset_id"])][-1] == "COMPLETE"
+
+
+def test_worker_reclaims_stale_running_then_retry_creates_new_dataset():
+    days = [date(2023, 1, 3), date(2023, 1, 4)]
+    store = _store()
+    req = build_request(["NVDA"], "1D", "2023-01-03", "2023-01-04", now=NOW)
+    enq = enqueue_backfill(store, req, owner="op")
+    assert claim_dataset(store, enq["dataset_id"])         # RUNNING, but the worker then "crashes"
+    with store.tx() as cur:                                # force a stale heartbeat
+        store._exec(cur, "UPDATE research_datasets SET updated_at=? WHERE dataset_id=?",
+                    ("2000-01-01T00:00:00+00:00", enq["dataset_id"]))
+    out = claim_and_run(store, MockAggregatesProvider({"NVDA": [m for d in days for m in rth_minutes(d)]},
+                                                      adjusted=True), now=NOW, stale_after_s=1)
+    assert enq["dataset_id"] in out["reclaimed"]
+    reclaimed = store.rd_get_dataset(enq["dataset_id"])
+    assert reclaimed.status == "FAILED" and reclaimed.failure_code == "STALE_RUNNING_RECLAIMED"
+    # a retry links to the reclaimed FAILED predecessor and creates a NEW dataset id (no reuse/mutation)
+    enq2 = enqueue_backfill(store, req, owner="op")
+    assert enq2["created"] and enq2["dataset_id"] != enq["dataset_id"]
+    assert enq2["retry_of"] == enq["dataset_id"]
+
+
+def test_only_one_claim_of_a_planned_dataset():
+    store = _store()
+    req = build_request(["NVDA"], "1D", "2023-01-03", "2023-01-04", now=NOW)
+    enq = enqueue_backfill(store, req, owner="op")
+    assert claim_dataset(store, enq["dataset_id"]) is True     # first claim wins (PLANNED→RUNNING)
+    assert claim_dataset(store, enq["dataset_id"]) is False    # the guarded UPDATE rejects a second claim
+
+
+def test_retry_cannot_mutate_or_reuse_a_failed_terminal():
+    days = [date(2023, 1, 3), date(2023, 1, 4)]
+    store = _store()
+    req = build_request(["NVDA"], "1D", "2023-01-03", "2023-01-04", now=NOW)
+    f = run_backfill(store, req, MockAggregatesProvider({"NVDA": [m for d in days for m in rth_minutes(d)]},
+                                                        adjusted=False), owner="op", now=NOW)
+    assert f["status"] == "FAILED"
+    with pytest.raises(Exception):                             # terminal → any UPDATE rejected by trigger
+        with store.tx() as cur:
+            store._exec(cur, "UPDATE research_datasets SET status='RUNNING' WHERE dataset_id=?", (f["dataset_id"],))
+    good = run_backfill(store, req, MockAggregatesProvider({"NVDA": [m for d in days for m in rth_minutes(d)]},
+                                                           adjusted=True), owner="op", now=NOW)
+    assert good["dataset_id"] != f["dataset_id"] and good["status"] == "COMPLETED"   # NEW id, not reused
+
+
+def test_persisted_dataset_checksum_reverifies_after_chunked_run():
+    days = _many_sessions(CHUNK_SESSIONS + 3)             # 2 chunks
+    store = _store()
+    req = build_request(["NVDA"], "1D", days[0].isoformat(), days[-1].isoformat(), now=NOW)
+    res = run_backfill(store, req, MockAggregatesProvider({"NVDA": [m for d in days for m in rth_minutes(d)]},
+                                                          adjusted=True, page_size=5000), owner="op", now=NOW)
+    # the stored checksum equals a fresh checksum recomputed from the PERSISTED bars (select-time re-verify)
+    _, pin, errors = validate_selection(store, res["dataset_id"], ["NVDA"], "1D",
+                                        days[0].isoformat(), days[-1].isoformat())
+    assert not errors and pin["checksum"] == res["dataset_checksum"]
+
+
+# --------------------------------------------------------------------- pagination safety (real client)
+class _FakeResp:
+    def __init__(self, body):
+        self._b = body
+
+    def read(self):
+        return self._b
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_pagination_page_limit_exceeded(monkeypatch):
+    import urllib.request
+    body = json.dumps({"status": "OK", "adjusted": True, "results": [],
+                       "next_url": "https://api.polygon.io/v2/aggs/next?cursor=abc"}).encode()
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: _FakeResp(body))
+    p = PolygonAggregatesProvider("secret", delay_s=0, max_retries=0)
+    with pytest.raises(ProviderError) as e:
+        p.fetch_minutes("NVDA", "2023-01-03", "2023-01-03", max_pages=3)   # next_url never ends
+    assert e.value.code == "PROVIDER_PAGE_LIMIT_EXCEEDED"
+
+
+def test_cross_origin_next_url_rejected_before_credential_sent(monkeypatch):
+    import urllib.request
+    calls = {"n": 0, "hosts": []}
+
+    def fake_urlopen(req, timeout=None):
+        calls["n"] += 1
+        calls["hosts"].append(req.host)
+        return _FakeResp(json.dumps({"status": "OK", "adjusted": True, "results": [],
+                                     "next_url": "https://evil.example.com/steal?apiKey=x"}).encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    p = PolygonAggregatesProvider("secret", delay_s=0)
+    with pytest.raises(ProviderError) as e:
+        p.fetch_minutes("NVDA", "2023-01-03", "2023-01-03", max_pages=5)
+    assert e.value.code == "PROVIDER_UNSAFE_PAGE_URL"
+    assert calls["n"] == 1                                # the cross-origin next_url was NEVER fetched
+    assert all("evil.example.com" not in h for h in calls["hosts"])   # credential never sent off-origin
+
+
+def test_downgraded_http_next_url_rejected(monkeypatch):
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: _FakeResp(
+        json.dumps({"status": "OK", "adjusted": True, "results": [],
+                    "next_url": "http://api.polygon.io/v2/aggs/next?cursor=abc"}).encode()))   # http downgrade
+    p = PolygonAggregatesProvider("secret", delay_s=0)
+    with pytest.raises(ProviderError) as e:
+        p.fetch_minutes("NVDA", "2023-01-03", "2023-01-03", max_pages=5)
+    assert e.value.code == "PROVIDER_UNSAFE_PAGE_URL"

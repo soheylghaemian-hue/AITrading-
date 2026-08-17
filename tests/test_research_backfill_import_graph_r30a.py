@@ -31,6 +31,7 @@ BACKFILL_MODULES = [
     "atp.research.backfill.runner",
     "atp.research.backfill.readmodel",
     "atp.research.backfill.select",
+    "atp.research.backfill.worker",
 ]
 
 
