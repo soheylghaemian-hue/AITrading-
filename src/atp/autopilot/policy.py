@@ -45,7 +45,7 @@ class AutopilotPolicy:
     YELLOW_PREFIXES = ("infra/", ".github/workflows/")
     GREEN_PREFIXES = (
         "src/atp/autopilot/", "src/atp/brain/", "src/atp/research/",
-        "tests/", "docs/", ".github/ISSUE_TEMPLATE/",
+        "tests/", "docs/", "frontend/", ".github/ISSUE_TEMPLATE/",
     )
 
     def classify_path(self, path: str, *, goal_paths: tuple[str, ...] = ()) -> Decision:

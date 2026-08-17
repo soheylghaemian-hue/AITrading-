@@ -1,0 +1,12 @@
+{
+  "goal_id": "trader-brain-learn-v1",
+  "objective": "Build research-only LEARN contracts for regime drift, champion-challenger comparison and reversible model retirement.",
+  "success_criteria": [
+    "Drift can lower confidence or force abstention",
+    "Challengers cannot promote themselves",
+    "Every model transition is reversible and evidence-backed",
+    "No deployment, live execution, leverage or risk-limit relaxation is possible"
+  ],
+  "allowed_paths": ["src/atp/brain/", "src/atp/research/", "tests/", "docs/"],
+  "max_iterations": 2
+}

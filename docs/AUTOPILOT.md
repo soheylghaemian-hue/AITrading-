@@ -35,10 +35,11 @@ by trusted repository configuration and run with `shell=False`.
 
 ## Provider isolation
 
-Builder and reviewer implement a small provider-neutral interface. The repository package itself has no network
-client, API-key handling or external destination. Its included provider is deterministic and offline. A later host
-adapter may connect a model only after explicit destination approval and redaction rules; missing responses produce
-`BLOCKED_AUTH`, not an interactive prompt.
+The repository core remains provider-neutral and contains no API keys. The GitHub host workflow implements the
+explicitly authorized role split: Codex plans and reviews in read-only, ephemeral jobs; Claude is the sole code
+author and returns a structured unified patch without shell or checkout-write tools. A separate secret-free gate
+applies the patch, enforces path policy and runs deterministic tests. A final publisher has GitHub write permission
+but receives no model credentials and can only update a draft workbench pull request.
 
 ## Evidence
 
@@ -52,9 +53,16 @@ exit codes, hashed outputs, bounded output tails and a stable result checksum.
 gigbay-autopilot autopilot/goals/example.json approved-responses.json --repo .
 ```
 
-The command replays an approved response bundle and never asks for credentials interactively. GitHub's Autopilot
-Safety Gate is read-only and verifies these boundaries; it cannot push, merge or deploy. Continuous model-driven work
-requires a separately authorized host adapter so repository contents are not silently sent to an external service.
+The command replays an approved response bundle and never asks for credentials interactively. The hosted workflow
+runs once per day and selects the next unfinished, committed goal from `autopilot/queue.json`. Work accumulates on
+`claude/autopilot-workbench` and in one draft pull request. It never merges or deploys.
+
+Two one-time GitHub secrets are required: `OPENAI_API_KEY` for the Codex planner/reviewer and either
+`ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` for Claude. They are supplied only to their isolated model jobs
+and never written to the repository or evidence artifacts. Missing authentication stops the workflow.
+
+The trusted queue currently advances through SENSE, THINK, PROVE and LEARN research contracts. Completion markers
+are deterministic publisher metadata under `docs/autopilot/completed/`; they are not model-authored code.
 
 ## Trader Brain boundary
 

@@ -46,7 +46,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install -e '.[dev]'
-      - run: python -m pytest tests/test_autopilot.py tests/test_autopilot_import_graph.py tests/test_brain_contracts.py
+      - run: python -m pytest tests/test_autopilot*.py tests/test_brain_contracts.py
       - name: Reject tracked secret files
         run: |
           if git ls-files | grep -E '(^|/)(\.env($|\.)|atp\.env$|.*\.(pem|key)$)'; then
