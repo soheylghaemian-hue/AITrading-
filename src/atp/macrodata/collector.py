@@ -22,6 +22,6 @@ class MacroCollector:
         sid = f"macro:{now.strftime('%Y-%m-%dT%H')}"
         self.store.insert_macro_snapshot(
             id=sid, timestamp=now.isoformat(), fed_rate=m.fed_rate, treasury_10y=m.treasury_10y,
-            treasury_2y=m.treasury_2y, cpi=m.cpi, unemployment=m.unemployment, vix=m.vix, dxy=m.dxy,
-            oil=m.oil, gold=m.gold, source=self.provider.name)
+            treasury_2y=m.treasury_2y, cpi=m.cpi, core_cpi=m.core_cpi, unemployment=m.unemployment,
+            vix=m.vix, dxy=m.dxy, oil=m.oil, gold=m.gold, source=self.provider.name)
         return True

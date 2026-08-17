@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from .regime import classify_regime, macro_score, signals_and_risks
 
-_METRIC_FIELDS = ("fed_rate", "treasury_10y", "treasury_2y", "cpi", "unemployment", "vix", "dxy", "oil", "gold")
+_METRIC_FIELDS = ("fed_rate", "treasury_10y", "treasury_2y", "cpi", "core_cpi", "unemployment", "vix", "dxy", "oil", "gold")
 _METRIC_LABELS = {
     "fed_rate": "Fed Funds Rate", "treasury_10y": "10Y Treasury", "treasury_2y": "2Y Treasury",
+    "core_cpi": "Core CPI (YoY)",
     "cpi": "CPI (YoY)", "unemployment": "Unemployment", "vix": "VIX", "dxy": "US Dollar Index",
     "oil": "WTI Crude", "gold": "Gold",
 }

@@ -334,6 +334,12 @@ def _migration_015(dialect: str) -> list[str]:
     ]
 
 
+def _migration_016(dialect: str) -> list[str]:
+    """Macro core CPI (§ Phase R1.2 fix). The provider already fetches core CPI (CPILFESL, YoY) but it
+    had no column, so it was dropped on persist. Additive column — read-only intelligence, no execution."""
+    return [f"ALTER TABLE macro_snapshots ADD COLUMN core_cpi {_types(dialect)['TXT']}"]
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -351,6 +357,7 @@ MIGRATIONS = [
     (13, "macro_intelligence", _migration_013),
     (14, "institutional_intelligence", _migration_014),
     (15, "insider_clusters", _migration_015),
+    (16, "macro_core_cpi", _migration_016),
 ]
 
 

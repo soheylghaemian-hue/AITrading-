@@ -358,6 +358,7 @@ class MacroSnapshotRow:
     treasury_10y: float | None
     treasury_2y: float | None
     cpi: float | None
+    core_cpi: float | None
     unemployment: float | None
     vix: float | None
     dxy: float | None
@@ -1041,28 +1042,28 @@ class SqlStore(Store):
         return int(r[0]) if r else 0
 
     # -- Macro snapshots (§ Phase R1.2, read-only IMMUTABLE macro-environment history) ------
-    _MACRO_COLS = ("id,timestamp,fed_rate,treasury_10y,treasury_2y,cpi,unemployment,vix,dxy,oil,gold,"
-                   "source,created_at")
+    _MACRO_COLS = ("id,timestamp,fed_rate,treasury_10y,treasury_2y,cpi,core_cpi,unemployment,vix,dxy,"
+                   "oil,gold,source,created_at")
 
     def insert_macro_snapshot(self, *, id: str, timestamp, fed_rate=None, treasury_10y=None,
-                              treasury_2y=None, cpi=None, unemployment=None, vix=None, dxy=None,
-                              oil=None, gold=None, source: str | None = None) -> None:
+                              treasury_2y=None, cpi=None, core_cpi=None, unemployment=None, vix=None,
+                              dxy=None, oil=None, gold=None, source: str | None = None) -> None:
         """Record a macro snapshot once. ON CONFLICT DO NOTHING → snapshots are never rewritten. Missing
         metrics stay NULL (NO DATA) — never fabricated."""
         now = utcnow_iso()
         f = lambda v: None if v is None else str(float(v))  # noqa: E731
         with self.tx() as cur:
             self._exec(cur,
-                "INSERT INTO macro_snapshots (id,timestamp,fed_rate,treasury_10y,treasury_2y,cpi,"
-                "unemployment,vix,dxy,oil,gold,source,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "INSERT INTO macro_snapshots (id,timestamp,fed_rate,treasury_10y,treasury_2y,cpi,core_cpi,"
+                "unemployment,vix,dxy,oil,gold,source,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(id) DO NOTHING",
-                (id, timestamp, f(fed_rate), f(treasury_10y), f(treasury_2y), f(cpi), f(unemployment),
-                 f(vix), f(dxy), f(oil), f(gold), source, now))
+                (id, timestamp, f(fed_rate), f(treasury_10y), f(treasury_2y), f(cpi), f(core_cpi),
+                 f(unemployment), f(vix), f(dxy), f(oil), f(gold), source, now))
 
     def _macro_row(self, r) -> MacroSnapshotRow:
         g = lambda v: None if v is None else float(v)  # noqa: E731
         return MacroSnapshotRow(r[0], r[1], g(r[2]), g(r[3]), g(r[4]), g(r[5]), g(r[6]), g(r[7]),
-                                g(r[8]), g(r[9]), g(r[10]), r[11], r[12])
+                                g(r[8]), g(r[9]), g(r[10]), g(r[11]), r[12], r[13])
 
     def latest_macro_snapshot(self) -> MacroSnapshotRow | None:
         r = self._one(f"SELECT {self._MACRO_COLS} FROM macro_snapshots ORDER BY timestamp DESC LIMIT 1")

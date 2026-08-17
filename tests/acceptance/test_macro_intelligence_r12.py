@@ -127,6 +127,15 @@ def test_collect_persist_and_build(store):
     assert m["source"] == "fake"
 
 
+def test_core_cpi_persists_and_is_exposed(store):
+    # core_cpi must survive persist → read-model (it had no column before this fix).
+    MacroCollector(store, FakeProvider(MacroMetrics(cpi=3.3, core_cpi=2.5, vix=15.0, treasury_10y=4.0))).collect(T0)
+    assert store.latest_macro_snapshot().core_cpi == 2.5
+    m = build_macro(store)
+    assert m["metrics"]["core_cpi"]["value"] == 2.5
+    assert m["metrics"]["core_cpi"]["label"] == "Core CPI (YoY)"
+
+
 def test_snapshot_is_immutable(store):
     MacroCollector(store, FakeProvider(RISK_ON_M)).collect(T0)
     assert store.count_macro_snapshots() == 1
