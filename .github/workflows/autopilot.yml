@@ -124,6 +124,44 @@ jobs:
             --disallowedTools "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Task,mcp__*"
             --json-schema '{"type":"object","additionalProperties":false,"required":["author","summary","patch","changed_files"],"properties":{"author":{"type":"string","enum":["claude"]},"summary":{"type":"string","maxLength":2000},"patch":{"type":"string"},"changed_files":{"type":"array","minItems":1,"maxItems":80,"uniqueItems":true,"items":{"type":"string"}}}}'
 
+      - name: Report redacted Claude startup error
+        if: ${{ failure() && steps.claude-author.outputs.execution_file != '' }}
+        env:
+          EXECUTION_FILE: ${{ steps.claude-author.outputs.execution_file }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+
+          with open(os.environ["EXECUTION_FILE"], encoding="utf-8") as handle:
+              messages = json.load(handle)
+          result = next(
+              (item for item in reversed(messages) if item.get("type") == "result"),
+              {},
+          )
+          payload = {
+              "subtype": result.get("subtype"),
+              "is_error": result.get("is_error"),
+              "errors": result.get("errors"),
+              "result": result.get("result"),
+          }
+          safe = json.dumps(payload, ensure_ascii=True)
+          safe = re.sub(r"sk-[A-Za-z0-9_-]{8,}", "[REDACTED_KEY]", safe)
+          safe = re.sub(
+              r"(?i)((?:api[_ -]?key|oauth[_ -]?token|authorization)\s*[:=]\s*)\S+",
+              r"\1[REDACTED]",
+              safe,
+          )
+          safe = re.sub(
+              r"(?<![A-Za-z0-9])[A-Za-z0-9_-]{40,}(?![A-Za-z0-9])",
+              "[REDACTED_LONG_TOKEN]",
+              safe,
+          )
+          print("Sanitized Claude startup result:")
+          print(safe[:4000])
+          PY
+
   gate:
     needs: [prepare, author]
     runs-on: ubuntu-latest
