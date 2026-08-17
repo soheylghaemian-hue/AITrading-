@@ -224,25 +224,39 @@ def execute_dataset(store, dataset_id: str, provider: MinuteAggregatesProvider, 
     return execute_claimed(store, dataset_id, provider, **kw)
 
 
-def claim_and_run(store, provider: MinuteAggregatesProvider, *, now: datetime | None = None,
-                  stale_after_s: int = STALE_RUNNING_AFTER_S, max_datasets: int | None = None, **bounds) -> dict:
-    """One-shot worker pass: reclaim crashed RUNNING datasets, then claim + execute every currently-PLANNED
-    dataset (bounded by `max_datasets`). Designed to be invoked by a systemd one-shot/timer."""
+def reclaim_stale(store, *, now: datetime | None = None, stale_after_s: int = STALE_RUNNING_AFTER_S) -> list[str]:
+    """Bounded stale recovery: atomically reclaim crashed RUNNING datasets to FAILED (a fresh heartbeat before
+    the flip prevents reclamation). Returns only the ids actually transitioned."""
     now = now or datetime.now(timezone.utc)
     cutoff = (now - timedelta(seconds=stale_after_s)).astimezone(timezone.utc).isoformat()
-    reclaimed = store.rd_reclaim_stale_running(
+    return store.rd_reclaim_stale_running(
         cutoff, failure_code="STALE_RUNNING_RECLAIMED",
         failure_reason="worker heartbeat exceeded the stale threshold; reclaimed as FAILED")
-    results: list[dict] = []
-    while max_datasets is None or len(results) < max_datasets:
-        planned = store.rd_list_datasets(status="PLANNED", limit=1)
-        if not planned:
-            break
-        ds = planned[0]
-        if not claim_dataset(store, ds.dataset_id):
-            continue                                        # lost the race; try the next PLANNED
-        results.append(execute_claimed(store, ds.dataset_id, provider, now=now, **bounds))
-    return {"reclaimed": reclaimed, "processed": [r["dataset_id"] for r in results], "results": results}
+
+
+def process_one(store, dataset_id: str, provider: MinuteAggregatesProvider, *, now: datetime | None = None,
+                **bounds) -> dict:
+    """Process EXACTLY the named dataset. Honestly rejects an unknown / already-terminal / already-RUNNING
+    dataset (no side effects) rather than silently picking a different one. Returns a result dict whose
+    `status` is COMPLETED / FAILED, or ERROR with an `error_code` when the dataset could not be claimed."""
+    ds = store.rd_get_dataset(dataset_id)
+    if ds is None:
+        return {"dataset_id": dataset_id, "status": "ERROR", "error_code": "DATASET_NOT_FOUND"}
+    if ds.status != "PLANNED":
+        return {"dataset_id": dataset_id, "status": "ERROR", "error_code": "DATASET_NOT_PLANNED",
+                "actual_status": ds.status}
+    if not claim_dataset(store, dataset_id):
+        return {"dataset_id": dataset_id, "status": "ERROR", "error_code": "CLAIM_CONFLICT"}
+    return execute_claimed(store, dataset_id, provider, now=now, **bounds)
+
+
+def claim_next_one(store, provider: MinuteAggregatesProvider, *, now: datetime | None = None, **bounds) -> dict | None:
+    """Explicit `--next` mode, HARD-CAPPED to ONE dataset: pick the oldest PLANNED and process only it. Never
+    drains the queue. Returns None when there is no PLANNED dataset."""
+    planned = store.rd_list_datasets(status="PLANNED", limit=1)
+    if not planned:
+        return None
+    return process_one(store, planned[0].dataset_id, provider, now=now, **bounds)
 
 
 # --------------------------------------------------------------------------- convenience (tests / local)

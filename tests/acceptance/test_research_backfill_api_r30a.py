@@ -23,7 +23,7 @@ from fastapi import Response
 
 from atp.research import calendars as cal
 from atp.research.backfill import (
-    MinuteBar, MockAggregatesProvider, build_request, claim_and_run, enqueue_backfill,
+    MinuteBar, MockAggregatesProvider, build_request, claim_next_one, enqueue_backfill,
 )
 from atp.store import open_store
 
@@ -103,7 +103,7 @@ def test_post_is_idempotent_reuse_returns_200():
     body = c.DatasetCreate(symbols=["NVDA"], interval="1D", start="2023-01-03", end="2023-01-04")
     first = c.create_dataset(body, Response(), authorization="Bearer tok")
     # complete it via the external worker
-    claim_and_run(store, MockAggregatesProvider({"NVDA": [m for d in days for m in _minutes(d, Decimal("450"))]},
+    claim_next_one(store, MockAggregatesProvider({"NVDA": [m for d in days for m in _minutes(d, Decimal("450"))]},
                                                 adjusted=True), now=NOW)
     resp2 = Response()
     again = c.create_dataset(body, resp2, authorization="Bearer tok")
@@ -123,7 +123,7 @@ def test_worker_completes_and_read_models_expose_it():
     assert listing["datasets"][0]["status"] == "PLANNED"
 
     # external worker executes it (separate call, its own provider) → COMPLETED
-    claim_and_run(store, MockAggregatesProvider({"NVDA": [m for d in days for m in _minutes(d, Decimal("450"))]},
+    claim_next_one(store, MockAggregatesProvider({"NVDA": [m for d in days for m in _minutes(d, Decimal("450"))]},
                                                 adjusted=True, page_size=300), now=NOW)
 
     got = c.get_dataset(ds_id)
@@ -155,7 +155,7 @@ def test_control_api_stays_responsive_while_worker_fetches():
             return super().fetch_minutes(*a, **k)
 
     slow = _Slow({"NVDA": [m for d in days for m in _minutes(d, Decimal("450"))]}, adjusted=True)
-    worker = threading.Thread(target=lambda: claim_and_run(store_worker, slow, now=NOW))
+    worker = threading.Thread(target=lambda: claim_next_one(store_worker, slow, now=NOW))
     worker.start()
     time.sleep(0.15)                                     # let the worker enter the slow fetch
 

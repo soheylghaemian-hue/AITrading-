@@ -60,6 +60,16 @@ def _as_date(v: str | date) -> date:
     return v if isinstance(v, date) else datetime.fromisoformat(v).date()
 
 
+def _count_sessions(start: date, end: date) -> int:
+    from datetime import timedelta
+    n, d = 0, start
+    while d <= end:
+        if cal.is_session_day(d):
+            n += 1
+        d += timedelta(days=1)
+    return n
+
+
 def build_request(symbols, interval, range_start, range_end, *, now: datetime | None = None,
                   provider: str = norm.PROVIDER,
                   provider_contract_version: str = norm.PROVIDER_CONTRACT_VERSION,
@@ -93,6 +103,12 @@ def build_request(symbols, interval, range_start, range_end, *, now: datetime | 
     if end > last_done:
         raise DatasetRequestError(f"range_end {end} is after the last completed session {last_done} "
                                   f"(the in-progress/future session is never backfilled)")
+
+    # A range with ZERO expected NYSE sessions (e.g. a weekend-only or holiday-only span) can never yield a
+    # bar; reject it so it never becomes an empty COMPLETED dataset.
+    if _count_sessions(start, end) == 0:
+        raise DatasetRequestError(f"range [{start}, {end}] contains no NYSE trading sessions "
+                                  f"(weekend/holiday-only ranges are rejected)")
 
     if provider != norm.PROVIDER:
         raise DatasetRequestError(f"unexpected provider '{provider}'")

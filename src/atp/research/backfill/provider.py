@@ -17,7 +17,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from urllib.parse import urlparse
 
 from .. import calendars as _cal
@@ -55,11 +55,18 @@ class MinuteAggregatesProvider(abc.ABC):
 
 
 def _mb(r: dict) -> MinuteBar:
-    return MinuteBar(
-        ts=datetime.fromtimestamp(int(r["t"]) / 1000.0, tz=timezone.utc),
-        open=Decimal(str(r["o"])), high=Decimal(str(r["h"])), low=Decimal(str(r["l"])),
-        close=Decimal(str(r["c"])), volume=Decimal(str(r["v"])),
-        trade_count=(int(r["n"]) if r.get("n") is not None else None))
+    """Parse one provider aggregate row → MinuteBar. A malformed row (missing/invalid field) becomes a
+    DETERMINISTIC ProviderError so the claimed dataset FAILS rather than crashing the worker. The error
+    names only the field kind, never the value/body/credential."""
+    try:
+        return MinuteBar(
+            ts=datetime.fromtimestamp(int(r["t"]) / 1000.0, tz=timezone.utc),
+            open=Decimal(str(r["o"])), high=Decimal(str(r["h"])), low=Decimal(str(r["l"])),
+            close=Decimal(str(r["c"])), volume=Decimal(str(r["v"])),
+            trade_count=(int(r["n"]) if r.get("n") is not None else None))
+    except (KeyError, TypeError, ValueError, InvalidOperation) as e:
+        raise ProviderError(f"malformed aggregate row ({type(e).__name__})",
+                            code="PROVIDER_MALFORMED_ROW") from e
 
 
 class PolygonAggregatesProvider(MinuteAggregatesProvider):
@@ -78,17 +85,22 @@ class PolygonAggregatesProvider(MinuteAggregatesProvider):
         """A provider `next_url` is attacker-influenced data. BEFORE we follow it and attach the API key,
         require HTTPS and the SAME configured provider origin (host + port). Reject cross-origin, downgraded
         (http) or malformed URLs so the credential is never sent anywhere but the configured provider."""
+        # urlparse itself is lenient, but accessing .hostname/.port on a malformed authority (e.g. a
+        # non-numeric or out-of-range port) raises ValueError — treat ALL such parse failures as unsafe.
         try:
             u, base = urlparse(url), urlparse(self._base)
+            scheme, host, port = u.scheme, u.hostname, u.port
+            base_host, base_port = base.hostname, base.port
         except ValueError as e:
-            raise ProviderError(f"malformed next_url: {e}", code="PROVIDER_UNSAFE_PAGE_URL") from e
-        if u.scheme != "https":
+            raise ProviderError("malformed next_url (unparseable authority)",
+                                code="PROVIDER_UNSAFE_PAGE_URL") from e
+        if scheme != "https":
             raise ProviderError("next_url is not HTTPS (refusing to attach credential)",
                                 code="PROVIDER_UNSAFE_PAGE_URL")
-        if not u.hostname or (u.hostname or "").lower() != (base.hostname or "").lower():
+        if not host or host.lower() != (base_host or "").lower():
             raise ProviderError("next_url host is not the configured provider origin",
                                 code="PROVIDER_UNSAFE_PAGE_URL")
-        if (u.port or 443) != (base.port or 443):
+        if (port or 443) != (base_port or 443):
             raise ProviderError("next_url port is not the configured provider origin",
                                 code="PROVIDER_UNSAFE_PAGE_URL")
 
@@ -100,7 +112,7 @@ class PolygonAggregatesProvider(MinuteAggregatesProvider):
                                                        "Accept": "application/json"})
             try:
                 with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                    return json.loads(resp.read().decode())
+                    raw = resp.read()
             except urllib.error.HTTPError as e:
                 if e.code in (401, 403):
                     raise EntitlementError(f"HTTP {e.code}") from e
@@ -111,8 +123,15 @@ class PolygonAggregatesProvider(MinuteAggregatesProvider):
                 raise ProviderError(f"HTTP {e.code}") from e
             except (urllib.error.URLError, TimeoutError) as e:
                 if attempt >= self._retries:
-                    raise ProviderError(str(e)) from e
+                    raise ProviderError("network error contacting provider") from e
                 time.sleep(backoff); backoff *= 2
+                continue
+            # A transport success but a non-JSON / undecodable body is DETERMINISTIC — do not retry; fail with
+            # a stable code and NEVER echo the body (it could be large or sensitive).
+            try:
+                return json.loads(raw.decode())
+            except (ValueError, UnicodeDecodeError) as e:
+                raise ProviderError("provider returned invalid JSON", code="PROVIDER_INVALID_JSON") from e
         raise ProviderError("exhausted retries")
 
     def probe(self, symbol: str, day: str) -> dict:

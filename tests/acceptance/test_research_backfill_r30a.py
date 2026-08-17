@@ -25,8 +25,8 @@ import pytest
 
 from atp.research import calendars as cal
 from atp.research.backfill import (
-    build_request, run_backfill, enqueue_backfill, claim_dataset, claim_and_run, execute_dataset,
-    validate_selection, MockAggregatesProvider, MinuteBar, CHUNK_SESSIONS,
+    build_request, run_backfill, enqueue_backfill, claim_dataset, reclaim_stale, process_one,
+    claim_next_one, execute_dataset, validate_selection, MockAggregatesProvider, MinuteBar, CHUNK_SESSIONS,
     dataset_checksum, raw_pages_checksum, validate_minutes, validate_daily_bars,
 )
 from atp.research.backfill import normalize as norm
@@ -509,9 +509,8 @@ def test_worker_reclaims_stale_running_then_retry_creates_new_dataset():
     with store.tx() as cur:                                # force a stale heartbeat
         store._exec(cur, "UPDATE research_datasets SET updated_at=? WHERE dataset_id=?",
                     ("2000-01-01T00:00:00+00:00", enq["dataset_id"]))
-    out = claim_and_run(store, MockAggregatesProvider({"NVDA": [m for d in days for m in rth_minutes(d)]},
-                                                      adjusted=True), now=NOW, stale_after_s=1)
-    assert enq["dataset_id"] in out["reclaimed"]
+    reclaimed_ids = reclaim_stale(store, now=NOW, stale_after_s=1)
+    assert enq["dataset_id"] in reclaimed_ids
     reclaimed = store.rd_get_dataset(enq["dataset_id"])
     assert reclaimed.status == "FAILED" and reclaimed.failure_code == "STALE_RUNNING_RECLAIMED"
     # a retry links to the reclaimed FAILED predecessor and creates a NEW dataset id (no reuse/mutation)
@@ -609,3 +608,160 @@ def test_downgraded_http_next_url_rejected(monkeypatch):
     with pytest.raises(ProviderError) as e:
         p.fetch_minutes("NVDA", "2023-01-03", "2023-01-03", max_pages=5)
     assert e.value.code == "PROVIDER_UNSAFE_PAGE_URL"
+
+
+# --------------------------------------------------------------------- R3.0A.2 reclaim atomicity
+def _dbfile():
+    return str(Path(tempfile.mkdtemp()) / "atp.db")
+
+
+def test_reclaim_race_fresh_heartbeat_prevents_reclamation():
+    """A legitimate worker writing a fresh heartbeat AFTER the stale candidate is selected but BEFORE the
+    terminal flip must NOT be reclaimed (the flip re-checks updated_at < cutoff atomically)."""
+    dbfile = _dbfile()
+    s1, s2 = open_store(dbfile), open_store(dbfile, migrate=False)   # two independent connections
+    enq = enqueue_backfill(s1, build_request(["NVDA"], "1D", "2023-01-03", "2023-01-04", now=NOW), owner="op")
+    ds_id = enq["dataset_id"]
+    assert claim_dataset(s1, ds_id)                                  # RUNNING
+    with s1.tx() as cur:                                             # make it look stale
+        s1._exec(cur, "UPDATE research_datasets SET updated_at=? WHERE dataset_id=?",
+                 ("2000-01-01T00:00:00+00:00", ds_id))
+
+    def heartbeat(candidate_id):                                     # injected between select and flip
+        with s2.tx() as cur:
+            s2._exec(cur, "UPDATE research_datasets SET updated_at=? WHERE dataset_id=? AND status='RUNNING'",
+                     ("2099-01-01T00:00:00+00:00", candidate_id))
+
+    reclaimed = s1.rd_reclaim_stale_running("2020-01-01T00:00:00+00:00", failure_code="STALE_RUNNING_RECLAIMED",
+                                            failure_reason="x", _probe=heartbeat)
+    assert reclaimed == []                                          # the fresh heartbeat won the race
+    assert s1.rd_get_dataset(ds_id).status == "RUNNING"             # dataset stays RUNNING
+    assert not [e for e in s1.rd_list_events(ds_id) if e.event_type == "RECLAIM"]   # no event left behind
+
+
+def test_genuine_stale_reclaim_is_atomic_single_and_audited():
+    store = _store()
+    enq = enqueue_backfill(store, build_request(["NVDA"], "1D", "2023-01-03", "2023-01-04", now=NOW), owner="op")
+    ds_id = enq["dataset_id"]
+    assert claim_dataset(store, ds_id)
+    with store.tx() as cur:
+        store._exec(cur, "UPDATE research_datasets SET updated_at=? WHERE dataset_id=?",
+                    ("2000-01-01T00:00:00+00:00", ds_id))
+    assert reclaim_stale(store, now=NOW, stale_after_s=1) == [ds_id]
+    ds = store.rd_get_dataset(ds_id)
+    assert ds.status == "FAILED" and ds.failure_code == "STALE_RUNNING_RECLAIMED"
+    reclaim_events = [e for e in store.rd_list_events(ds_id) if e.event_type == "RECLAIM"]
+    assert len(reclaim_events) == 1 and reclaim_events[0].severity == "ERROR"     # one immutable reclaim event
+    # idempotent: a second reclaim is a no-op (terminal); no second transition, no second event
+    assert reclaim_stale(store, now=NOW, stale_after_s=1) == []
+    assert len([e for e in store.rd_list_events(ds_id) if e.event_type == "RECLAIM"]) == 1
+
+
+# --------------------------------------------------------------------- R3.0A.2 bounded worker (one dataset)
+def test_process_one_touches_only_the_named_dataset():
+    days = [date(2023, 1, 3), date(2023, 1, 4)]
+    store = _store()
+    a = enqueue_backfill(store, build_request(["NVDA"], "1D", "2023-01-03", "2023-01-04", now=NOW),
+                         owner="op")["dataset_id"]
+    b = enqueue_backfill(store, build_request(["AAPL"], "1D", "2023-01-03", "2023-01-04", now=NOW),
+                         owner="op")["dataset_id"]
+    prov = MockAggregatesProvider({"NVDA": [m for d in days for m in rth_minutes(d)],
+                                   "AAPL": [m for d in days for m in rth_minutes(d)]}, adjusted=True)
+    res = process_one(store, a, prov, now=NOW)
+    assert res["status"] == "COMPLETED" and res["dataset_id"] == a
+    assert store.rd_get_dataset(a).status == "COMPLETED"
+    assert store.rd_get_dataset(b).status == "PLANNED"             # the OTHER PLANNED dataset is untouched
+
+
+def test_process_one_rejects_unknown_terminal_and_running():
+    days = [date(2023, 1, 3), date(2023, 1, 4)]
+    store = _store()
+    prov = MockAggregatesProvider({"NVDA": [m for d in days for m in rth_minutes(d)]}, adjusted=True)
+    assert process_one(store, "does-not-exist", prov, now=NOW)["error_code"] == "DATASET_NOT_FOUND"
+    done = run_backfill(store, build_request(["NVDA"], "1D", "2023-01-03", "2023-01-04", now=NOW),
+                        prov, owner="op", now=NOW)["dataset_id"]
+    r = process_one(store, done, prov, now=NOW)
+    assert r["error_code"] == "DATASET_NOT_PLANNED" and r["actual_status"] == "COMPLETED"
+    running = enqueue_backfill(store, build_request(["AAPL"], "1D", "2023-01-03", "2023-01-04", now=NOW),
+                               owner="op")["dataset_id"]
+    assert claim_dataset(store, running)
+    r2 = process_one(store, running, MockAggregatesProvider({"AAPL": []}, adjusted=True), now=NOW)
+    assert r2["error_code"] == "DATASET_NOT_PLANNED" and r2["actual_status"] == "RUNNING"
+
+
+def test_worker_cli_exit_codes(monkeypatch):
+    from atp.research.backfill import worker as w
+    days = [date(2023, 1, 3), date(2023, 1, 4)]
+    dbfile = _dbfile()
+    store = open_store(dbfile)
+    good = MockAggregatesProvider({"NVDA": [m for d in days for m in rth_minutes(d)],
+                                   "AAPL": [m for d in days for m in rth_minutes(d)]}, adjusted=True)
+    monkeypatch.setenv("ATP_STORE_URL", "sqlite:///" + dbfile)
+    monkeypatch.setenv("ATP_BACKFILL_ENABLED", "1")
+    monkeypatch.setenv("MASSIVE_API_KEY", "k")
+
+    assert w.main([], provider=good) == 2                          # no --dataset-id / --next → usage error
+    enq = enqueue_backfill(store, build_request(["NVDA"], "1D", "2023-01-03", "2023-01-04", now=NOW), owner="op")
+    assert w.main(["--dataset-id", enq["dataset_id"]], provider=good) == 0            # COMPLETED → 0
+    assert store.rd_get_dataset(enq["dataset_id"]).status == "COMPLETED"
+    assert w.main(["--dataset-id", "nope"], provider=good) == 1                       # unknown → non-zero
+    enq2 = enqueue_backfill(store, build_request(["AAPL"], "1D", "2023-01-03", "2023-01-04", now=NOW), owner="op")
+    bad = MockAggregatesProvider({"AAPL": [m for d in days for m in rth_minutes(d)]}, adjusted=False)
+    assert w.main(["--dataset-id", enq2["dataset_id"]], provider=bad) == 1            # FAILED result → non-zero
+    assert store.rd_get_dataset(enq2["dataset_id"]).status == "FAILED"
+    monkeypatch.delenv("ATP_BACKFILL_ENABLED")
+    assert w.main(["--dataset-id", "anything"]) == 0                                  # disabled no-op → 0 (skipped)
+
+
+# --------------------------------------------------------------------- R3.0A.2 provider parsing hardening
+def test_malformed_port_next_url_is_unsafe_not_valueerror(monkeypatch):
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: _FakeResp(
+        json.dumps({"status": "OK", "adjusted": True, "results": [],
+                    "next_url": "https://api.polygon.io:notaport/v2/aggs/next"}).encode()))
+    p = PolygonAggregatesProvider("secret", delay_s=0)
+    with pytest.raises(ProviderError) as e:
+        p.fetch_minutes("NVDA", "2023-01-03", "2023-01-03", max_pages=5)
+    assert e.value.code == "PROVIDER_UNSAFE_PAGE_URL"
+
+
+def test_invalid_json_is_deterministic_and_body_not_echoed(monkeypatch):
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: _FakeResp(b"<html>secret-ish body</html>"))
+    p = PolygonAggregatesProvider("secret", delay_s=0, max_retries=0)
+    with pytest.raises(ProviderError) as e:
+        p.fetch_minutes("NVDA", "2023-01-03", "2023-01-03")
+    assert e.value.code == "PROVIDER_INVALID_JSON"
+    assert "secret-ish" not in str(e.value)                        # the body is never echoed
+
+
+def test_malformed_row_is_deterministic_provider_error(monkeypatch):
+    import urllib.request
+    body = json.dumps({"status": "OK", "adjusted": True,
+                       "results": [{"t": "not-a-number", "o": 1, "h": 1, "l": 1, "c": 1, "v": 1}]}).encode()
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: _FakeResp(body))
+    p = PolygonAggregatesProvider("secret", delay_s=0, max_retries=0)
+    with pytest.raises(ProviderError) as e:
+        p.fetch_minutes("NVDA", "2023-01-03", "2023-01-03")
+    assert e.value.code == "PROVIDER_MALFORMED_ROW"
+
+
+def test_malformed_provider_data_fails_dataset_not_stuck_running():
+    store = _store()
+    req = build_request(["NVDA"], "1D", "2023-01-03", "2023-01-04", now=NOW)
+
+    class _Broken(MockAggregatesProvider):
+        def fetch_minutes(self, *a, **k):
+            raise ProviderError("bad row", code="PROVIDER_MALFORMED_ROW")
+
+    res = run_backfill(store, req, _Broken({}, adjusted=True), owner="op", now=NOW)
+    assert res["status"] == "FAILED" and res["failure_code"] == "PROVIDER_MALFORMED_ROW"
+    assert store.rd_get_dataset(res["dataset_id"]).status == "FAILED"   # deterministically FAILED, not RUNNING
+
+
+# --------------------------------------------------------------------- R3.0A.2 empty-session-range rejection
+def test_weekend_only_and_holiday_only_ranges_rejected():
+    with pytest.raises(DatasetRequestError):
+        build_request(["NVDA"], "1D", "2023-01-07", "2023-01-08", now=NOW)   # Sat+Sun → zero sessions
+    with pytest.raises(DatasetRequestError):
+        build_request(["NVDA"], "1D", "2023-01-16", "2023-01-16", now=NOW)   # MLK holiday → zero sessions

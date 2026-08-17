@@ -26,6 +26,11 @@ from decimal import Decimal
 from .money import D, money_str, opt_money_str, to_decimal
 
 
+class _ReclaimSkipped(Exception):
+    """Internal sentinel: a stale-reclaim tx whose guarded terminal flip matched 0 rows (a fresh heartbeat
+    won the race) — used to roll the whole transaction back so the reclaim event is never left behind."""
+
+
 def risk_config_token(*, capital, risk_per_trade_pct, max_daily_loss_pct, rc_updated_at, config_version,
                       currency, warning_threshold_pct, max_portfolio_exposure_pct, max_drawdown_pct) -> str:
     """§ R2.0 optimistic-concurrency token over the FULL combined canonical config view (canonical
@@ -2150,19 +2155,39 @@ class SqlStore(Store):
                             e.get("severity"), e.get("symbol"), json.dumps(e.get("details") or {}), now))
             return True
 
-    def rd_reclaim_stale_running(self, cutoff_iso: str, *, failure_code: str, failure_reason: str) -> list[str]:
-        """R3.0A.1 — a RUNNING dataset whose heartbeat (updated_at) is older than `cutoff_iso` is a crashed
-        worker; record it honestly as FAILED (terminal) BEFORE any retry creates a NEW dataset. Returns the
-        reclaimed dataset_ids. RUNNING→FAILED is a legal terminal transition (triggers allow it)."""
+    def rd_reclaim_stale_running(self, cutoff_iso: str, *, failure_code: str, failure_reason: str,
+                                 _probe=None) -> list[str]:
+        """R3.0A.2 — ATOMICALLY reclaim crashed/stale RUNNING datasets as FAILED. The `updated_at < cutoff`
+        staleness predicate is RE-CHECKED at the actual terminal transition (not only when the candidate was
+        first selected), so a legitimate worker that writes a fresh heartbeat before the flip is NOT reclaimed.
+        The immutable RECLAIM event is written in the SAME transaction as the FAILED transition (event first,
+        while the parent is still RUNNING → the child trigger allows it; then the guarded flip; if the flip
+        matches 0 rows the whole tx rolls back, so the event is never left behind). Returns ONLY the ids that
+        were actually transitioned. `_probe` is a test-only seam invoked per candidate before its tx (used to
+        deterministically inject a concurrent heartbeat); production callers never pass it."""
         now = utcnow_iso()
-        ids = [r[0] for r in self._all("SELECT dataset_id FROM research_datasets WHERE status='RUNNING' "
-                                       "AND updated_at < ?", (cutoff_iso,))]
-        for ds_id in ids:
-            with self.tx() as cur:
-                self._exec(cur, "UPDATE research_datasets SET status='FAILED', failure_code=?, failure_reason=?, "
-                           "ended_at=?, updated_at=? WHERE dataset_id=? AND status='RUNNING'",
-                           (failure_code, failure_reason, now, now, ds_id))
-        return ids
+        candidates = [r[0] for r in self._all("SELECT dataset_id FROM research_datasets WHERE status='RUNNING' "
+                                              "AND updated_at < ?", (cutoff_iso,))]
+        reclaimed: list[str] = []
+        for ds_id in candidates:
+            if _probe is not None:
+                _probe(ds_id)                    # test seam: may write a fresh heartbeat via another conn
+            try:
+                with self.tx() as cur:
+                    self._exec(cur, "INSERT INTO research_dataset_events (id,dataset_id,seq,ts,event_type,"
+                               "severity,symbol,details_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                               (f"{ds_id}-reclaim", ds_id, None, now, "RECLAIM", "ERROR", None,
+                                json.dumps({"failure_code": failure_code, "reason": failure_reason}), now))
+                    self._exec(cur, "UPDATE research_datasets SET status='FAILED', failure_code=?, "
+                               "failure_reason=?, ended_at=?, updated_at=? WHERE dataset_id=? AND "
+                               "status='RUNNING' AND updated_at < ?",
+                               (failure_code, failure_reason, now, now, ds_id, cutoff_iso))
+                    if cur.rowcount <= 0:
+                        raise _ReclaimSkipped()  # fresh heartbeat won → rollback (event undone), stays RUNNING
+                reclaimed.append(ds_id)
+            except _ReclaimSkipped:
+                continue
+        return reclaimed
 
     def rd_get_dataset(self, dataset_id: str) -> ResearchDatasetRow | None:
         r = self._one(f"SELECT {self._RD_DS_COLS} FROM research_datasets WHERE dataset_id=?", (dataset_id,))
