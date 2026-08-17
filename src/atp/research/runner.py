@@ -120,9 +120,13 @@ def _checksum(decisions, trades, equity_points, metrics) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
 
 
-def run_backtest(store, *, owner: str, req: dict, commit_ref: str | None = None) -> str:
+def run_backtest(store, *, owner: str, req: dict, commit_ref: str | None = None,
+                 dataset_id: str | None = None) -> str:
     """Validate + execute a bounded research run synchronously; returns the run_id. Raises
-    ValidationError (→ 422) or OneActiveRunError (→ 409); data problems fail the RUN (persisted FAILED)."""
+    ValidationError (→ 422) or OneActiveRunError (→ 409); data problems fail the RUN (persisted FAILED).
+
+    `dataset_id` (R3.0A) pins an explicit, immutable, checksum-verified research dataset as the bar source.
+    When None, the legacy live-`ohlc_bars` source is used (existing R3.0 behavior; pins stay NULL)."""
     normalized, errors = validate_request(req)
     if errors:
         raise ValidationError(errors)
@@ -131,6 +135,15 @@ def run_backtest(store, *, owner: str, req: dict, commit_ref: str | None = None)
 
     symbols, interval = normalized["symbols"], normalized["interval"]
     start_dt, end_dt = _parse_dt(normalized["start"]), _parse_dt(normalized["end"])
+
+    # R3.0A: resolve + validate the pinned dataset BEFORE creating the run (invalid selection → 422).
+    dataset_pin = None
+    if dataset_id is not None:
+        from .backfill import validate_selection  # noqa: PLC0415 — keep backfill import local to this path
+        _ds, dataset_pin, ds_errors = validate_selection(store, dataset_id, symbols, interval,
+                                                          normalized["start"], normalized["end"])
+        if ds_errors:
+            raise ValidationError(ds_errors)
     strategy = get_strategy(normalized["strategy_id"], normalized["strategy_version"])
     capital = _dec(normalized["starting_capital"])
     risk = normalized["risk"]
@@ -174,9 +187,10 @@ def run_backtest(store, *, owner: str, req: dict, commit_ref: str | None = None)
         start_ts=start_dt.isoformat(), end_ts=end_dt.isoformat(), asset_class=_pol.asset_class,
         timestamp_policy_id=_pol.policy_id, timestamp_policy_version=_pol.policy_version,
         exchange_calendar_id=_pol.calendar_id, exchange_calendar_version=_pol.calendar_version,
-        exchange_tz=_pol.exchange_tz, session_calendar=_pol.session_calendar, data_source="ohlc_bars",
+        exchange_tz=_pol.exchange_tz, session_calendar=_pol.session_calendar,
+        data_source=(f"research_dataset:{dataset_id}" if dataset_id else "ohlc_bars"),
         config_snapshot_json=json.dumps(config_snapshot), risk_config_snapshot_json=json.dumps(risk_snapshot),
-        commit_ref=commit_ref)
+        commit_ref=commit_ref, dataset_pin=dataset_pin)
     store.bt_advance_status(run_id, "QUEUED", "RUNNING")
 
     if policy_error is not None:
@@ -187,11 +201,16 @@ def run_backtest(store, *, owner: str, req: dict, commit_ref: str | None = None)
         return run_id
 
     # Fetch historical bars per symbol (event ts in range). Point-in-time is enforced inside the replay.
+    # R3.0A: a pinned dataset reads the IMMUTABLE research bars; otherwise the legacy live ohlc_bars.
     bars_by_symbol: dict[str, list[ResearchBar]] = {}
     total_bars = 0
     for sym in symbols:
-        rows = store.list_ohlc_bars_range(sym, interval, start_dt.isoformat(), end_dt.isoformat(),
-                                          limit=MAX_INPUT_BARS + 1)
+        if dataset_id is not None:
+            rows = store.rd_list_bars_range(dataset_id, sym, interval, start_dt.isoformat(),
+                                            end_dt.isoformat(), limit=MAX_INPUT_BARS + 1)
+        else:
+            rows = store.list_ohlc_bars_range(sym, interval, start_dt.isoformat(), end_dt.isoformat(),
+                                              limit=MAX_INPUT_BARS + 1)
         bars_by_symbol[sym] = [ResearchBar(r.ts, r.open, r.high, r.low, r.close, r.volume) for r in rows]
         total_bars += len(rows)
     if total_bars > MAX_INPUT_BARS:

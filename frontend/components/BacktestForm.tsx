@@ -1,10 +1,14 @@
 "use client";
-// Backtest configuration form (§ Phase R3.0). Starts an INTERNAL historical research run. The action is
-// "Run Backtest" — never "Trade", "Execute", or "Place Order". It never enables trading, never creates a
+// Backtest configuration form (§ Phase R3.0 / R3.0A). Starts an INTERNAL historical research run. The action
+// is "Run Backtest" — never "Trade", "Execute", or "Place Order". It never enables trading, never creates a
 // broker order, never touches execution. Authorized by the server proxy (owner token injected server-side).
-import React, { useState } from "react";
-import { createBacktest, type BacktestCreateReq } from "@/lib/api";
+// R3.0A: a run MUST pin an explicit, immutable, checksum-verified research DATASET — there is no implicit
+// "latest"; the selected dataset's provider, adjustment, calendar, date range and checksum are shown before
+// the run starts, so every result is traceable to exact, frozen input bytes.
+import React, { useEffect, useState } from "react";
+import { createBacktest, fetchDatasets, type BacktestCreateReq } from "@/lib/api";
 import type { BacktestRun } from "@/lib/backtest";
+import { type ResearchDataset, rangeText, shortChecksum } from "@/lib/dataset";
 
 type Fields = {
   symbols: string; interval: string; start: string; end: string; starting_capital: string; currency: string;
@@ -24,17 +28,43 @@ export function BacktestForm({ connected, onRun }: { connected: boolean; onRun: 
   const [f, setF] = useState<Fields>(DEFAULTS);
   const [errors, setErrors] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [datasets, setDatasets] = useState<ResearchDataset[]>([]);
+  const [datasetId, setDatasetId] = useState<string>("");
+  const [dsLoaded, setDsLoaded] = useState(false);
   const set = (k: keyof Fields) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setF((p) => ({ ...p, [k]: e.target.value }));
+
+  useEffect(() => {
+    let live = true;
+    fetchDatasets()
+      .then((r) => { if (live) setDatasets(r.datasets.filter((d) => d.status === "COMPLETED")); })
+      .catch(() => { if (live) setDatasets([]); })
+      .finally(() => { if (live) setDsLoaded(true); });
+    return () => { live = false; };
+  }, []);
+
+  const selected = datasets.find((d) => d.dataset_id === datasetId) || null;
+
+  function chooseDataset(id: string) {
+    setDatasetId(id);
+    const d = datasets.find((x) => x.dataset_id === id);
+    if (d) {
+      // Constrain the run to the pinned dataset's coverage (editable, but validated server-side).
+      setF((p) => ({ ...p, symbols: d.symbols.join(", "), interval: d.interval || p.interval,
+        start: d.range_start || p.start, end: d.range_end || p.end }));
+    }
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErrors([]);
+    if (!datasetId) { setErrors(["select a research dataset to pin (no implicit 'latest')"]); return; }
     const symbols = f.symbols.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
     if (symbols.length === 0) { setErrors(["at least one symbol is required"]); return; }
     const req: BacktestCreateReq = {
       strategy_id: "OHLC_TREND_BASELINE", strategy_version: 1, symbols, interval: f.interval,
       start: f.start, end: f.end, starting_capital: f.starting_capital, currency: f.currency,
+      dataset_id: datasetId,
       max_concurrent_positions: Number(f.max_concurrent_positions),
       costs: { spread_bps: f.spread_bps, slippage_bps: f.slippage_bps,
         commission_per_share: f.commission_per_share, min_commission: f.min_commission },
@@ -64,8 +94,41 @@ export function BacktestForm({ connected, onRun }: { connected: boolean; onRun: 
         <b>OHLC_TREND_BASELINE v1</b>
         <span className="bt-hint">SMA 20/50 · ATR-14 stop (2×ATR) · long-only · deterministic · no optimizer</span>
       </div>
+
+      {/* § R3.0A — required dataset pin. The run reads ONLY these immutable, checksum-verified bars. */}
+      <div className="bt-ds">
+        <label className="bt-f bt-wide"><span className="label">Research dataset (required — pinned &amp; immutable)</span>
+          <select value={datasetId} onChange={(e) => chooseDataset(e.target.value)}>
+            <option value="">— select a completed dataset —</option>
+            {datasets.map((d) => (
+              <option key={d.dataset_id} value={d.dataset_id}>
+                {d.symbols.join("/")} · {d.interval} · {rangeText(d)} · {shortChecksum(d.dataset_checksum, 8)}
+              </option>
+            ))}
+          </select>
+        </label>
+        {dsLoaded && datasets.length === 0 ? (
+          <p className="bt-hint bt-ds-empty">No completed datasets yet. Build one on the <a href="/datasets">Datasets</a> page —
+            a backtest can only run against an explicit, immutable dataset (never implicit “latest”).</p>
+        ) : null}
+        {selected ? (
+          <div className="bt-ds-card">
+            <div className="bt-ds-g">
+              <div><span className="label">Provider</span><b>{selected.provider ?? "NO DATA"}</b></div>
+              <div><span className="label">Adjustment</span><b>{selected.adjustment_policy ?? "NO DATA"}</b></div>
+              <div><span className="label">Calendar</span><b>{selected.calendar_version ?? "NO DATA"}</b></div>
+              <div><span className="label">Symbols</span><b>{selected.symbols.join(", ")}</b></div>
+              <div><span className="label">Date range</span><b className="num">{rangeText(selected)}</b></div>
+              <div><span className="label">Bars</span><b className="num">{selected.row_count ?? "NO DATA"}</b></div>
+              <div className="bt-ds-ck"><span className="label">Dataset checksum</span>
+                <b className="num bt-ck">{selected.dataset_checksum ?? "NO DATA"}</b></div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
       <div className="bt-grid">
-        <label className="bt-f bt-wide"><span className="label">Symbols (US equities)</span>
+        <label className="bt-f bt-wide"><span className="label">Symbols (from the dataset)</span>
           <input value={f.symbols} onChange={set("symbols")} placeholder="NVDA, AAPL" /></label>
         <label className="bt-f"><span className="label">Interval</span>
           <select value={f.interval} onChange={set("interval")}><option value="1D">1D</option><option value="1h">1h</option></select></label>
@@ -86,11 +149,12 @@ export function BacktestForm({ connected, onRun }: { connected: boolean; onRun: 
       </div>
       {errors.length ? <ul className="bt-errs">{errors.map((x) => <li key={x}>⚠ {x}</li>)}</ul> : null}
       <div className="bt-actions">
-        <button type="submit" className="bt-run" disabled={busy || !connected}
-          title={connected ? "Run an internal historical research backtest" : "Backend not connected"}>
+        <button type="submit" className="bt-run" disabled={busy || !connected || !datasetId}
+          title={!datasetId ? "Select a research dataset to pin"
+            : connected ? "Run an internal historical research backtest" : "Backend not connected"}>
           {busy ? "Running backtest…" : "Run Backtest"}
         </button>
-        <span className="bt-safe">Research only · starts an internal historical run · never trades, never places an order</span>
+        <span className="bt-safe">Research only · pinned to an immutable dataset · never trades, never places an order</span>
       </div>
     </form>
   );

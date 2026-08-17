@@ -23,11 +23,14 @@ const READ_PATHS = new Set([
   "macro", "macro-context", "institutional-flow", "insider-cluster",
   "risk-status", "risk-config", "risk-events",   // § R2.0 Risk Control Center (read-only)
   "backtests",                                    // § R3.0 backtesting research (read-only list/detail)
+  "research-datasets",                            // § R3.0A immutable research OHLC datasets (read-only)
 ]);
 // Mutations require the OWNER token, supplied by the user (not stored) and enforced by the backend.
 // "autonomous" covers the token-gated /dashboard/autonomous/{arm,start,stop,disarm,kill,reset}.
 // "backtests" (POST) starts an INTERNAL historical research run — it never creates a broker order.
-const WRITE_PATHS = new Set(["emergency-stop", "resume", "risk-config", "autonomous", "backtests"]);
+// "research-datasets" (POST) builds an immutable research DATA dataset — never trades, never an order.
+const WRITE_PATHS = new Set(["emergency-stop", "resume", "risk-config", "autonomous", "backtests",
+  "research-datasets"]);
 
 async function forward(req: NextRequest, path: string[], method: "GET" | "POST") {
   // Enforce the path whitelist FIRST — a non-allowed path is 404 regardless of configuration.
@@ -86,6 +89,9 @@ async function forward(req: NextRequest, path: string[], method: "GET" | "POST")
   const target =
     // § R3.0: /backtests, /backtests/{id}, /backtests/{id}/{metrics|trades|equity|events} + POST /backtests.
     top === "backtests" ? `${BACKEND}/${path.map(encodeURIComponent).join("/")}${req.nextUrl.search}`
+    // § R3.0A: research-datasets → /research/datasets[/{id}[/coverage]] (GET list/detail/coverage + POST create).
+    : top === "research-datasets"
+      ? `${BACKEND}/research/datasets${path.length > 1 ? "/" + path.slice(1).map(encodeURIComponent).join("/") : ""}${req.nextUrl.search}`
     : RISK_MAP[top] ? `${BACKEND}/${RISK_MAP[top]}${req.nextUrl.search}`
     : (top === "ohlc" || top === "news" || top === "traders" || top === "fundamentals" || top === "options"
       || top === "ai-consensus" || top === "ai-history" || top === "data-completeness"

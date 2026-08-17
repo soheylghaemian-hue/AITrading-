@@ -17,6 +17,11 @@ export interface BacktestRun {
   end: string | null;
   asset_class?: string | null;
   result_checksum: string | null;
+  // § R3.0A — the immutable research dataset this run is pinned to (checksum-verified before the run).
+  dataset_id?: string | null;
+  dataset_checksum?: string | null;
+  dataset_adjustment_policy?: string | null;
+  dataset_calendar_version?: string | null;
   failure_code: string | null;
   failure_reason: string | null;
   created_at: string | null;

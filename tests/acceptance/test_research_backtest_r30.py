@@ -60,6 +60,37 @@ def _run(store, symbols, sessions, owner="operator", **over):
     return run_backtest(store, owner=owner, req=req)
 
 
+def _seed_dataset(store, symbol, sessions, closes, *, rng=1.0, owner="operator"):
+    """Seed a COMPLETED, checksum-verified research dataset whose daily bars mirror `_seed` (so a pinned
+    backtest over it produces the same result). Directly mirrors how `_seed` writes live ohlc_bars."""
+    from atp.research.backfill import normalize as norm
+    from atp.research.backfill.validate import dataset_checksum
+    prev = float(closes[0])
+    bars = []
+    for day, c in zip(sessions, closes):
+        c = float(c)
+        bars.append({"symbol": symbol, "interval": "1D", "ts": f"{day.isoformat()}T00:00:00+00:00",
+                     "session_date": day.isoformat(), "open": Decimal(str(prev)),
+                     "high": Decimal(str(c + rng)), "low": Decimal(str(c - rng)), "close": Decimal(str(c)),
+                     "volume": Decimal("1000"), "trade_count": 10, "source": norm.PROVIDER,
+                     "adjustment_policy": norm.ADJUSTMENT_POLICY})
+        prev = c
+    ds_id = "ds-" + symbol
+    store.rd_create_dataset(dataset_id=ds_id, owner=owner, request_checksum="sha256:seed-" + symbol,
+                            symbol_universe_json=json.dumps([symbol]), interval="1D", provider=norm.PROVIDER,
+                            provider_contract_version=norm.PROVIDER_CONTRACT_VERSION,
+                            adjustment_policy=norm.ADJUSTMENT_POLICY,
+                            normalization_policy=norm.NORMALIZATION_POLICY,
+                            calendar_version=cal.CALENDAR_VERSION, range_start=sessions[0].isoformat(),
+                            range_end=sessions[-1].isoformat(),
+                            missing_minute_threshold=str(norm.MISSING_MINUTE_THRESHOLD))
+    store.rd_advance_status(ds_id, "PLANNED", "RUNNING")
+    store.rd_write_and_finalize(ds_id, expected_from="RUNNING", status="COMPLETED", bars=bars,
+                                row_count=len(bars), dataset_checksum=dataset_checksum(bars),
+                                provider_adjusted_flag=True)
+    return ds_id
+
+
 # ---------------------------------------------------------------- point-in-time availability
 def test_availability_is_session_close_not_utc_naive_and_dst_correct():
     p = cal.resolve_policy("NVDA", "1D")
@@ -348,17 +379,26 @@ def test_api_validation_bounds_and_happy_path():
     s = _store()
     sess = _sessions(100)
     _seed(s, "NVDA", sess, _uptrend())
+    ds_id = _seed_dataset(s, "NVDA", sess, _uptrend())      # R3.0A: a run must pin an explicit dataset
     c = _control(s)
-    ok = c.BacktestCreate(symbols=["NVDA"], interval="1d", start=sess[0].isoformat(), end=sess[-1].isoformat())
+    ok = c.BacktestCreate(symbols=["NVDA"], interval="1d", start=sess[0].isoformat(),
+                          end=sess[-1].isoformat(), dataset_id=ds_id)
 
     with pytest.raises(HTTPException) as e401:
         c.create_backtest(ok, authorization="Bearer WRONG")
     assert e401.value.status_code == 401
 
+    # R3.0A: dataset_id is REQUIRED — a request without it is a 422 (no implicit 'latest').
+    no_ds = c.BacktestCreate(symbols=["NVDA"], interval="1d", start=sess[0].isoformat(), end=sess[-1].isoformat())
+    with pytest.raises(HTTPException) as e_missing:
+        c.create_backtest(no_ds, authorization="Bearer tok")
+    assert e_missing.value.status_code == 422
+    assert any("dataset_id is required" in x for x in e_missing.value.detail["errors"])
+
     for bad in [
-        c.BacktestCreate(symbols=["A", "B", "C", "D", "E", "F"], interval="1d", start=sess[0].isoformat(), end=sess[-1].isoformat()),
-        c.BacktestCreate(symbols=["NVDA"], interval="5m", start=sess[0].isoformat(), end=sess[-1].isoformat()),
-        c.BacktestCreate(symbols=["NVDA"], interval="1h", start="2020-01-01", end="2026-01-01"),  # >1y for 1h
+        c.BacktestCreate(symbols=["A", "B", "C", "D", "E", "F"], interval="1d", start=sess[0].isoformat(), end=sess[-1].isoformat(), dataset_id=ds_id),
+        c.BacktestCreate(symbols=["NVDA"], interval="5m", start=sess[0].isoformat(), end=sess[-1].isoformat(), dataset_id=ds_id),
+        c.BacktestCreate(symbols=["NVDA"], interval="1h", start="2020-01-01", end="2026-01-01", dataset_id=ds_id),  # >1y for 1h
     ]:
         with pytest.raises(HTTPException) as e:
             c.create_backtest(bad, authorization="Bearer tok")
@@ -366,6 +406,7 @@ def test_api_validation_bounds_and_happy_path():
 
     detail = c.create_backtest(ok, authorization="Bearer tok")
     assert detail["status"] == "COMPLETED" and detail["safety"]["execution"] == "DISABLED"
+    assert detail["dataset_id"] == ds_id                    # the run is pinned to the dataset
     rid = detail["run_id"]
 
     # one active run guard (leave a RUNNING run) → 409
@@ -397,7 +438,7 @@ def test_research_source_has_no_execution_call_identifiers():
     forbidden = ("placeOrder(", "submitOrder(", "createOrder(", "executeTrade(", ".place_order(",
                  "set_kill_switch(", "ib_async", "ibapi", "copy_trade(", "PaperBroker(", "ExecutionEngine(",
                  "Backtester(")
-    for f in root.glob("*.py"):
+    for f in root.rglob("*.py"):          # recurse into research/backfill/ (R3.0A) as well
         text = f.read_text()
         for tok in forbidden:
             assert tok not in text, f"{f.name} must not reference {tok}"

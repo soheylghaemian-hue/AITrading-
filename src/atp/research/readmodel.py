@@ -25,6 +25,7 @@ def run_summary(r) -> dict:
         "asset_class": r.asset_class, "status": r.status, "failure_code": r.failure_code,
         "failure_reason": r.failure_reason, "result_checksum": r.result_checksum,
         "created_at": r.created_at, "started_at": r.started_at, "ended_at": r.ended_at,
+        "dataset_id": getattr(r, "dataset_id", None), "dataset_checksum": getattr(r, "dataset_checksum", None),
     }
 
 
@@ -35,6 +36,11 @@ def run_detail(r) -> dict:
         "timestamp_policy_id": r.timestamp_policy_id, "timestamp_policy_version": r.timestamp_policy_version,
         "exchange_calendar_id": r.exchange_calendar_id, "exchange_calendar_version": r.exchange_calendar_version,
         "exchange_tz": r.exchange_tz, "session_calendar": r.session_calendar, "data_source": r.data_source,
+        "dataset_provider": getattr(r, "dataset_provider", None),
+        "dataset_provider_contract_version": getattr(r, "dataset_provider_contract_version", None),
+        "dataset_adjustment_policy": getattr(r, "dataset_adjustment_policy", None),
+        "dataset_normalization_policy": getattr(r, "dataset_normalization_policy", None),
+        "dataset_calendar_version": getattr(r, "dataset_calendar_version", None),
         "config_snapshot": _loads(r.config_snapshot_json, {}),
         "risk_config_snapshot": _loads(r.risk_config_snapshot_json, {}),
         "warnings": _loads(r.warnings_json, []), "missing_data": _loads(r.missing_data_json, None),

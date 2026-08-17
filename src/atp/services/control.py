@@ -32,6 +32,7 @@ from ..macrodata.readmodel import build_macro, build_macro_context
 from ..news.analysis import sentiment_label
 from ..riskcontrol import build_risk_config_view, build_risk_events, build_risk_status, validate_config
 from ..research import readmodel as bt_read
+from ..research import backfill as bf
 from ..research.runner import OneActiveRunError, ValidationError as BtValidationError, run_backtest
 from ..optflow.diagnostics import audit_options_provider
 from ..optflow.provider import resolve_provider as resolve_options_provider
@@ -57,6 +58,7 @@ class _Ctx:
     lock = threading.Lock()          # psycopg connection is not thread-safe across the uvicorn pool
     ready = False
     hb_task = None
+    backfill_provider = None         # test-injected MinuteAggregatesProvider; real provider is env-gated
 
 
 ctx = _Ctx()
@@ -422,7 +424,8 @@ def risk_config_update(body: RiskConfigUpdate, authorization: str | None = Heade
 # ---------------------------------------------------------------- § R3.0 backtesting (RESEARCH ONLY)
 class BacktestCreate(BaseModel):
     """POST /backtests body. Starts an INTERNAL historical research run — no trading fields, no order,
-    no execution. All values are validated + bounded before persistence."""
+    no execution. All values are validated + bounded before persistence. R3.0A: `dataset_id` is REQUIRED
+    — a run pins an explicit, immutable, checksum-verified research dataset (there is no implicit latest)."""
     strategy_id: str = "OHLC_TREND_BASELINE"
     strategy_version: int = 1
     symbols: list[str] = []
@@ -434,6 +437,7 @@ class BacktestCreate(BaseModel):
     costs: dict | None = None
     risk: dict | None = None
     max_concurrent_positions: int = 3
+    dataset_id: str | None = None
 
 
 @app.post("/backtests")
@@ -441,12 +445,18 @@ def create_backtest(body: BacktestCreate, authorization: str | None = Header(def
     """§ R3.0 — start a deterministic, bounded, INTERNAL historical research run. RESEARCH ONLY: it never
     enables trading, never creates or submits a broker/order/execution object, never touches the kill
     switch. Auth + strict validation (≤5 symbols, 1h/1D, bounded range) before any persistence; a data
-    problem fails the RUN (persisted FAILED with a code + audit), never crashes."""
+    problem fails the RUN (persisted FAILED with a code + audit), never crashes. R3.0A: `dataset_id` is
+    REQUIRED and the pinned dataset is validated (COMPLETED, symbols, interval, range, calendar,
+    adjustment/normalization, checksum) before the run is created."""
     _auth(authorization)
+    if not body.dataset_id:
+        raise HTTPException(422, {"detail": "validation failed",
+                                  "errors": ["dataset_id is required — pin an explicit COMPLETED research "
+                                             "dataset (no implicit 'latest')"]})
     try:
         with ctx.lock:
             run_id = run_backtest(ctx.store, owner="operator", req=body.model_dump(),
-                                  commit_ref=os.environ.get("ATP_COMMIT_REF"))
+                                  commit_ref=os.environ.get("ATP_COMMIT_REF"), dataset_id=body.dataset_id)
     except BtValidationError as e:
         raise HTTPException(422, {"detail": "validation failed", "errors": e.errors})
     except OneActiveRunError:
@@ -454,6 +464,81 @@ def create_backtest(body: BacktestCreate, authorization: str | None = Header(def
     with ctx.lock:
         row = ctx.store.bt_get_run(run_id)
     return bt_read.run_detail(row)
+
+
+# ------------------------------------------------------- § R3.0A research datasets (immutable, versioned)
+class DatasetCreate(BaseModel):
+    """POST /research/datasets body — request an immutable historical OHLC dataset (US equities, 1D). No
+    trading, no order, no execution. Bounded to the approved R3.0A universe/range before any provider call."""
+    symbols: list[str] = []
+    interval: str = "1D"
+    start: str | None = None
+    end: str | None = None
+
+
+def _resolve_backfill_provider():
+    """The real paid provider is DOUBLE-gated: it exists only when ATP_BACKFILL_ENABLED=1 AND MASSIVE_API_KEY
+    is set (the separate post-approval step). Tests inject `ctx.backfill_provider` (a mock). Otherwise None
+    → the endpoint refuses to issue any live/paid request."""
+    if ctx.backfill_provider is not None:
+        return ctx.backfill_provider
+    if os.environ.get("ATP_BACKFILL_ENABLED") != "1":
+        return None
+    key = os.environ.get("MASSIVE_API_KEY")
+    return bf.PolygonAggregatesProvider(key) if key else None
+
+
+@app.post("/research/datasets")
+def create_dataset(body: DatasetCreate, authorization: str | None = Header(default=None)) -> dict:
+    """§ R3.0A — build (or reuse) an immutable research dataset from split-adjusted 1-minute aggregates
+    normalized to RTH daily bars. RESEARCH DATA ONLY: never trades, never touches live `ohlc_bars`. The
+    real backfill is disabled unless explicitly enabled server-side (post-approval) — otherwise 403."""
+    _auth(authorization)
+    if not body.start or not body.end:
+        raise HTTPException(422, {"detail": "dataset request invalid", "error": "start and end are required"})
+    try:
+        req = bf.build_request(body.symbols, body.interval, body.start, body.end)
+    except bf.DatasetRequestError as e:
+        raise HTTPException(422, {"detail": "dataset request invalid", "error": str(e)})
+    provider = _resolve_backfill_provider()
+    if provider is None:
+        raise HTTPException(403, {"detail": "BACKFILL_DISABLED",
+                                  "message": "historical backfill is disabled on this server (requires "
+                                             "ATP_BACKFILL_ENABLED=1 + MASSIVE_API_KEY after separate approval)"})
+    try:
+        with ctx.lock:
+            result = bf.run_backfill(ctx.store, req, provider, owner="operator")
+            row = ctx.store.rd_get_dataset(result["dataset_id"])
+            detail = bf.dataset_detail(ctx.store, row)
+    except bf.BackfillConflict as e:
+        raise HTTPException(409, {"detail": "DATASET_REQUEST_IN_PROGRESS", "message": str(e)})
+    return detail
+
+
+@app.get("/research/datasets")
+def list_datasets(status: str | None = None, limit: int = 50, offset: int = 0) -> dict:
+    """Read-only list of research datasets (bounded page)."""
+    with ctx.lock:
+        rows = ctx.store.rd_list_datasets(owner="operator", status=status, limit=limit, offset=offset)
+        return bf.datasets_list(ctx.store, rows)
+
+
+@app.get("/research/datasets/{dataset_id}")
+def get_dataset(dataset_id: str) -> dict:
+    with ctx.lock:
+        row = ctx.store.rd_get_dataset(dataset_id)
+        if row is None:
+            raise HTTPException(404, {"detail": "not found"})
+        return bf.dataset_detail(ctx.store, row)
+
+
+@app.get("/research/datasets/{dataset_id}/coverage")
+def get_dataset_coverage(dataset_id: str) -> dict:
+    with ctx.lock:
+        row = ctx.store.rd_get_dataset(dataset_id)
+        if row is None:
+            raise HTTPException(404, {"detail": "not found"})
+        return bf.dataset_coverage(ctx.store, row)
 
 
 @app.get("/backtests")

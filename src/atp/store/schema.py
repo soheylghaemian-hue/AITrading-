@@ -509,6 +509,119 @@ def _migration_019(dialect: str) -> list[str]:
     ]
 
 
+# ---- § Phase R3.0A — immutable versioned research OHLC datasets (RESEARCH ONLY) ----
+_RD_TERMINAL = "('COMPLETED','FAILED')"
+_RD_CHILD_TABLES = ("research_ohlc_bars", "research_dataset_events")
+
+
+def _rd_triggers_sqlite() -> list[str]:
+    out = [
+        f"""CREATE TRIGGER IF NOT EXISTS trg_research_datasets_no_update_terminal
+            BEFORE UPDATE ON research_datasets WHEN OLD.status IN {_RD_TERMINAL}
+            BEGIN SELECT RAISE(ABORT, 'research_datasets: terminal dataset is immutable'); END""",
+        """CREATE TRIGGER IF NOT EXISTS trg_research_datasets_no_delete
+            BEFORE DELETE ON research_datasets
+            BEGIN SELECT RAISE(ABORT, 'research_datasets: datasets cannot be deleted'); END""",
+    ]
+    for tbl in _RD_CHILD_TABLES:
+        out += [
+            f"""CREATE TRIGGER IF NOT EXISTS trg_{tbl}_no_insert_terminal
+                BEFORE INSERT ON {tbl}
+                WHEN (SELECT status FROM research_datasets WHERE dataset_id = NEW.dataset_id) IN {_RD_TERMINAL}
+                BEGIN SELECT RAISE(ABORT, '{tbl}: parent dataset is terminal (immutable)'); END""",
+            f"""CREATE TRIGGER IF NOT EXISTS trg_{tbl}_no_update
+                BEFORE UPDATE ON {tbl}
+                BEGIN SELECT RAISE(ABORT, '{tbl}: rows are immutable (insert-only)'); END""",
+            f"""CREATE TRIGGER IF NOT EXISTS trg_{tbl}_no_delete
+                BEFORE DELETE ON {tbl}
+                BEGIN SELECT RAISE(ABORT, '{tbl}: rows cannot be deleted'); END""",
+        ]
+    return out
+
+
+def _rd_triggers_postgres() -> list[str]:
+    # `%%` is the psycopg literal-percent escape → PL/pgSQL receives a single `%` (the RAISE placeholder).
+    out = [
+        """CREATE OR REPLACE FUNCTION atp_rd_block_ds_update() RETURNS trigger AS $$
+           BEGIN IF OLD.status IN ('COMPLETED','FAILED') THEN
+             RAISE EXCEPTION 'research_datasets: terminal dataset is immutable'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql""",
+        """CREATE OR REPLACE FUNCTION atp_rd_block_ds_delete() RETURNS trigger AS $$
+           BEGIN RAISE EXCEPTION 'research_datasets: datasets cannot be deleted'; END; $$ LANGUAGE plpgsql""",
+        """CREATE OR REPLACE FUNCTION atp_rd_block_child_insert() RETURNS trigger AS $$
+           BEGIN IF (SELECT status FROM research_datasets WHERE dataset_id = NEW.dataset_id) IN ('COMPLETED','FAILED')
+             THEN RAISE EXCEPTION '%%: parent dataset is terminal (immutable)', TG_TABLE_NAME; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql""",
+        """CREATE OR REPLACE FUNCTION atp_rd_block_child_mutate() RETURNS trigger AS $$
+           BEGIN RAISE EXCEPTION '%%: rows are immutable', TG_TABLE_NAME; END; $$ LANGUAGE plpgsql""",
+        "DROP TRIGGER IF EXISTS trg_research_datasets_no_update ON research_datasets",
+        "CREATE TRIGGER trg_research_datasets_no_update BEFORE UPDATE ON research_datasets FOR EACH ROW EXECUTE FUNCTION atp_rd_block_ds_update()",
+        "DROP TRIGGER IF EXISTS trg_research_datasets_no_delete ON research_datasets",
+        "CREATE TRIGGER trg_research_datasets_no_delete BEFORE DELETE ON research_datasets FOR EACH ROW EXECUTE FUNCTION atp_rd_block_ds_delete()",
+    ]
+    for tbl in _RD_CHILD_TABLES:
+        out += [
+            f"DROP TRIGGER IF EXISTS trg_{tbl}_no_insert ON {tbl}",
+            f"CREATE TRIGGER trg_{tbl}_no_insert BEFORE INSERT ON {tbl} FOR EACH ROW EXECUTE FUNCTION atp_rd_block_child_insert()",
+            f"DROP TRIGGER IF EXISTS trg_{tbl}_no_upd ON {tbl}",
+            f"CREATE TRIGGER trg_{tbl}_no_upd BEFORE UPDATE ON {tbl} FOR EACH ROW EXECUTE FUNCTION atp_rd_block_child_mutate()",
+            f"DROP TRIGGER IF EXISTS trg_{tbl}_no_del ON {tbl}",
+            f"CREATE TRIGGER trg_{tbl}_no_del BEFORE DELETE ON {tbl} FOR EACH ROW EXECUTE FUNCTION atp_rd_block_child_mutate()",
+        ]
+    return out
+
+
+def _migration_020(dialect: str) -> list[str]:
+    """§ Phase R3.0A — immutable, versioned research OHLC datasets built from historical 1-minute
+    aggregates, RTH-normalized to regular-session daily bars. NEVER overwrites the live `ohlc_bars`
+    (separate tables). A dataset is idempotent by `request_checksum`; COMPLETED/FAILED are terminal and
+    frozen by DATABASE triggers. A replacement dataset carries `supersedes_dataset_id` (the old dataset is
+    never mutated — 'superseded' is derived in the read model, there is no SUPERSEDED status). Also adds
+    NULLABLE dataset-pinning columns to backtest_runs (NULL for legacy/fixture runs; terminal rows are
+    never updated)."""
+    t = _types(dialect)
+    ts, txt, i, m, b = t["TS"], t["TXT"], t["INT"], t["MONEY"], t["BOOL"]
+    tables = [
+        f"""CREATE TABLE IF NOT EXISTS research_datasets (
+            dataset_id {txt} PRIMARY KEY, owner {txt} NOT NULL, request_checksum {txt} NOT NULL,
+            supersedes_dataset_id {txt}, retry_of_dataset_id {txt},
+            symbol_universe_json {txt} NOT NULL, interval {txt} NOT NULL, provider {txt} NOT NULL,
+            provider_contract_version {txt} NOT NULL, adjustment_policy {txt} NOT NULL,
+            normalization_policy {txt} NOT NULL, calendar_version {txt} NOT NULL,
+            range_start {ts} NOT NULL, range_end {ts} NOT NULL,
+            status {txt} NOT NULL CHECK (status IN ('PLANNED','RUNNING','COMPLETED','FAILED')),
+            row_count {i}, missing_minute_threshold {txt}, raw_pages_checksum {txt}, dataset_checksum {txt},
+            provider_adjusted_flag {b}, warnings_json {txt}, missing_data_json {txt},
+            failure_code {txt}, failure_reason {txt},
+            created_at {ts} NOT NULL, started_at {ts}, ended_at {ts}, updated_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS research_ohlc_bars (
+            dataset_id {txt} NOT NULL REFERENCES research_datasets(dataset_id),
+            symbol {txt} NOT NULL, interval {txt} NOT NULL, ts {ts} NOT NULL, session_date {txt} NOT NULL,
+            open {m} NOT NULL, high {m} NOT NULL, low {m} NOT NULL, close {m} NOT NULL, volume {m} NOT NULL,
+            trade_count {i}, source {txt} NOT NULL, adjustment_policy {txt} NOT NULL, created_at {ts} NOT NULL,
+            PRIMARY KEY (dataset_id, symbol, interval, ts))""",
+        f"""CREATE TABLE IF NOT EXISTS research_dataset_events (
+            id {txt} PRIMARY KEY, dataset_id {txt} NOT NULL REFERENCES research_datasets(dataset_id),
+            seq {i}, ts {ts}, event_type {txt} NOT NULL, severity {txt}, symbol {txt}, details_json {txt},
+            created_at {ts} NOT NULL)""",
+    ]
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS ix_research_datasets_req ON research_datasets(request_checksum, status)",
+        "CREATE INDEX IF NOT EXISTS ix_research_datasets_owner ON research_datasets(owner, status)",
+        "CREATE INDEX IF NOT EXISTS ix_research_bars_ds ON research_ohlc_bars(dataset_id, symbol, interval, ts)",
+        "CREATE INDEX IF NOT EXISTS ix_research_events_ds ON research_dataset_events(dataset_id, event_type)",
+    ]
+    pins = [
+        f"ALTER TABLE backtest_runs ADD COLUMN dataset_id {txt}",
+        f"ALTER TABLE backtest_runs ADD COLUMN dataset_provider {txt}",
+        f"ALTER TABLE backtest_runs ADD COLUMN dataset_provider_contract_version {txt}",
+        f"ALTER TABLE backtest_runs ADD COLUMN dataset_adjustment_policy {txt}",
+        f"ALTER TABLE backtest_runs ADD COLUMN dataset_normalization_policy {txt}",
+        f"ALTER TABLE backtest_runs ADD COLUMN dataset_calendar_version {txt}",
+        f"ALTER TABLE backtest_runs ADD COLUMN dataset_checksum {txt}",
+    ]
+    triggers = _rd_triggers_postgres() if dialect == "postgres" else _rd_triggers_sqlite()
+    return tables + indexes + pins + triggers
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -530,6 +643,7 @@ MIGRATIONS = [
     (17, "risk_control_center", _migration_017),
     (18, "research_backtesting", _migration_018),
     (19, "backtest_actual_risk", _migration_019),
+    (20, "research_datasets", _migration_020),
 ]
 
 

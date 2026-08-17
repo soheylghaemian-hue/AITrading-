@@ -20,6 +20,7 @@ import type { Macro, MacroContext } from "./macro";
 import type { InstitutionalFlow, InsiderCluster } from "./institutional";
 import type { RiskStatus, RiskConfigView, RiskEvents } from "./risk";
 import type { BacktestRun, BacktestMetrics, BacktestTrade, EquityPoint, BacktestEvent } from "./backtest";
+import type { ResearchDataset, DatasetCoverage } from "./dataset";
 
 // Where the browser sends dashboard calls. Default: the SAME-ORIGIN server proxy ("/api"), which
 // forwards to the private backend and injects the read token server-side — so no token ever
@@ -477,6 +478,8 @@ export interface BacktestCreateReq {
   strategy_id?: string; strategy_version?: number; symbols: string[]; interval: string;
   start: string; end: string; starting_capital?: string; currency?: string;
   costs?: Record<string, string>; risk?: Record<string, string>; max_concurrent_positions?: number;
+  // § R3.0A — a run MUST pin an explicit, immutable, checksum-verified research dataset (no implicit latest).
+  dataset_id?: string;
 }
 
 export async function createBacktest(
@@ -539,4 +542,48 @@ export async function fetchBacktestEvents(runId: string, signal?: AbortSignal): 
   if (!res.ok) throw new Error(`backend ${res.status}`);
   const b = await res.json();
   return Array.isArray(b.events) ? b.events : [];
+}
+
+// § R3.0A — Research OHLC datasets (read-only over the same-origin proxy; POST authorized server-side).
+// A dataset is immutable research DATA — never a trade, never an order. On no backend / non-OK the caller
+// renders NO DATA (never fabricates coverage). The real backfill (POST) is disabled server-side unless
+// explicitly enabled after approval → a 403 BACKFILL_DISABLED is surfaced honestly, not hidden.
+export async function fetchDatasets(signal?: AbortSignal): Promise<{ count: number; datasets: ResearchDataset[] }> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/research-datasets`, { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  const b = await res.json();
+  return { count: b.count ?? 0, datasets: Array.isArray(b.datasets) ? b.datasets : [] };
+}
+
+export async function fetchDataset(datasetId: string, signal?: AbortSignal): Promise<ResearchDataset> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/research-datasets/${encodeURIComponent(datasetId)}`, { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  return res.json();
+}
+
+export async function fetchDatasetCoverage(datasetId: string, signal?: AbortSignal): Promise<DatasetCoverage> {
+  if (!API_BASE) throw new Error("NO_BACKEND");
+  const res = await fetch(`${API_BASE}/dashboard/research-datasets/${encodeURIComponent(datasetId)}/coverage`, { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  return res.json();
+}
+
+export interface DatasetCreateReq { symbols: string[]; interval: string; start: string; end: string; }
+
+export async function createDataset(
+  req: DatasetCreateReq, token = "",
+): Promise<{ ok: boolean; detail: string; disabled?: boolean; conflict?: boolean; data?: ResearchDataset }> {
+  if (!API_BASE) return { ok: false, detail: "no backend configured" };
+  const res = await fetch(`${API_BASE}/dashboard/research-datasets`, {
+    method: "POST", headers: mutHeaders(token, true), body: JSON.stringify(req),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (res.ok) return { ok: true, detail: "created", data: body as ResearchDataset };
+  const d = body?.detail;
+  const detail = typeof d === "string" ? d
+    : d?.message || d?.error || d?.detail || (res.status === 401 ? "not authorized" : `${res.status}`);
+  return { ok: false, detail, disabled: d?.detail === "BACKFILL_DISABLED" || res.status === 403,
+    conflict: res.status === 409, data: body };
 }

@@ -24,6 +24,7 @@ const NAV = [
   { href: "/ai-brain", label: "AI Brain", d: "M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 6 0V6a2 2 0 0 0-3-2ZM15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-6 0" },
   { href: "/risk", label: "Risk Center", d: "M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7ZM12 8v4M12 15v.5" },
   { href: "/backtesting", label: "Backtesting", d: "M3 3v18h18M7 15l3-4 3 3 5-7" },
+  { href: "/datasets", label: "Datasets", d: "M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3ZM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" },
   { href: "/system", label: "System", d: "M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" },
 ];
 
@@ -35,6 +36,7 @@ function titleFor(path: string): [string, string] {
   if (path.startsWith("/ai-brain")) return ["AI Brain", "Human-readable decisions and agent reasoning"];
   if (path.startsWith("/risk")) return ["Risk Center", "Your risk mandate and live budget"];
   if (path.startsWith("/backtesting")) return ["Backtesting", "Research only — historical strategy validation, never live trading"];
+  if (path.startsWith("/datasets")) return ["Datasets", "Research data only — immutable, checksum-verified historical OHLC"];
   if (path.startsWith("/system")) return ["System", "Service health and diagnostics"];
   return ["Overview", ""];
 }

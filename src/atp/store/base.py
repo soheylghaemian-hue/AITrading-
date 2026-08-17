@@ -514,6 +514,14 @@ class BacktestRunRow:
     started_at: str | None
     ended_at: str | None
     updated_at: str
+    # § R3.0A — nullable dataset pin (NULL for legacy/fixture runs)
+    dataset_id: str | None = None
+    dataset_provider: str | None = None
+    dataset_provider_contract_version: str | None = None
+    dataset_adjustment_policy: str | None = None
+    dataset_normalization_policy: str | None = None
+    dataset_calendar_version: str | None = None
+    dataset_checksum: str | None = None
 
 
 @dataclass(slots=True)
@@ -596,6 +604,51 @@ class BacktestMetricsRow:
     run_id: str
     metrics_json: str
     computed_at: str
+
+
+@dataclass(slots=True)
+class ResearchDatasetRow:
+    dataset_id: str
+    owner: str
+    request_checksum: str
+    supersedes_dataset_id: str | None
+    retry_of_dataset_id: str | None
+    symbol_universe_json: str
+    interval: str
+    provider: str
+    provider_contract_version: str
+    adjustment_policy: str
+    normalization_policy: str
+    calendar_version: str
+    range_start: str
+    range_end: str
+    status: str
+    row_count: int | None
+    missing_minute_threshold: str | None
+    raw_pages_checksum: str | None
+    dataset_checksum: str | None
+    provider_adjusted_flag: bool | None
+    warnings_json: str | None
+    missing_data_json: str | None
+    failure_code: str | None
+    failure_reason: str | None
+    created_at: str
+    started_at: str | None
+    ended_at: str | None
+    updated_at: str
+
+
+@dataclass(slots=True)
+class ResearchDatasetEventRow:
+    id: str
+    dataset_id: str
+    seq: int | None
+    ts: str | None
+    event_type: str
+    severity: str | None
+    symbol: str | None
+    details_json: str | None
+    created_at: str
 
 
 # --------------------------------------------------------------------------- shared SQL impl
@@ -1774,23 +1827,30 @@ class SqlStore(Store):
         "timestamp_policy_version,exchange_calendar_id,exchange_calendar_version,exchange_tz,"
         "session_calendar,data_source,config_snapshot_json,risk_config_snapshot_json,status,failure_code,"
         "failure_reason,warnings_json,missing_data_json,commit_ref,result_checksum,created_at,started_at,"
-        "ended_at,updated_at")
+        "ended_at,updated_at,dataset_id,dataset_provider,dataset_provider_contract_version,"
+        "dataset_adjustment_policy,dataset_normalization_policy,dataset_calendar_version,dataset_checksum")
 
     def bt_create_run(self, *, run_id, owner, strategy_id, strategy_version, strategy_config_json,
                       strategy_checksum, engine_version, symbol_universe_json, interval, start_ts, end_ts,
                       asset_class, timestamp_policy_id, timestamp_policy_version, exchange_calendar_id,
                       exchange_calendar_version, exchange_tz, session_calendar, data_source,
-                      config_snapshot_json, risk_config_snapshot_json, commit_ref=None) -> None:
-        """Create a run in QUEUED. The run row is never deleted (DB trigger); it only transitions."""
+                      config_snapshot_json, risk_config_snapshot_json, commit_ref=None, dataset_pin=None) -> None:
+        """Create a run in QUEUED. The run row is never deleted (DB trigger); it only transitions.
+        `dataset_pin` (optional) = {dataset_id, provider, provider_contract_version, adjustment_policy,
+        normalization_policy, calendar_version, checksum} for a research-dataset-pinned run; NULL otherwise."""
         now = utcnow_iso()
+        p = dataset_pin or {}
         with self.tx() as cur:
-            self._exec(cur, f"INSERT INTO backtest_runs ({self._BT_RUN_COLS}) VALUES ({','.join(['?'] * 32)})",
+            self._exec(cur, f"INSERT INTO backtest_runs ({self._BT_RUN_COLS}) VALUES ({','.join(['?'] * 39)})",
                        (run_id, owner, strategy_id, int(strategy_version), strategy_config_json,
                         strategy_checksum, engine_version, symbol_universe_json, interval, start_ts, end_ts,
                         asset_class, timestamp_policy_id, int(timestamp_policy_version), exchange_calendar_id,
                         exchange_calendar_version, exchange_tz, session_calendar, data_source,
                         config_snapshot_json, risk_config_snapshot_json, "QUEUED", None, None, None, None,
-                        commit_ref, None, now, None, None, now))
+                        commit_ref, None, now, None, None, now,
+                        p.get("dataset_id"), p.get("provider"), p.get("provider_contract_version"),
+                        p.get("adjustment_policy"), p.get("normalization_policy"), p.get("calendar_version"),
+                        p.get("checksum")))
 
     def bt_advance_status(self, run_id: str, expected_from: str, to: str) -> bool:
         """Optimistic state transition. Returns False if the run is not in `expected_from` (or the DB
@@ -1999,3 +2059,151 @@ class SqlStore(Store):
                        (status, result_checksum, warnings_json, missing_data_json, failure_code,
                         failure_reason, now, now, run_id, expected_from))
             return cur.rowcount > 0
+
+    # ---- § R3.0A research OHLC datasets (immutable, versioned; NEVER touch live ohlc_bars) ----
+    _RD_DS_COLS = (
+        "dataset_id,owner,request_checksum,supersedes_dataset_id,retry_of_dataset_id,symbol_universe_json,"
+        "interval,provider,provider_contract_version,adjustment_policy,normalization_policy,calendar_version,"
+        "range_start,range_end,status,row_count,missing_minute_threshold,raw_pages_checksum,dataset_checksum,"
+        "provider_adjusted_flag,warnings_json,missing_data_json,failure_code,failure_reason,created_at,"
+        "started_at,ended_at,updated_at")
+
+    def rd_create_dataset(self, *, dataset_id, owner, request_checksum, symbol_universe_json, interval,
+                          provider, provider_contract_version, adjustment_policy, normalization_policy,
+                          calendar_version, range_start, range_end, missing_minute_threshold=None,
+                          supersedes_dataset_id=None, retry_of_dataset_id=None) -> None:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO research_datasets ({self._RD_DS_COLS}) VALUES ({','.join(['?'] * 28)})",
+                       (dataset_id, owner, request_checksum, supersedes_dataset_id, retry_of_dataset_id,
+                        symbol_universe_json, interval, provider, provider_contract_version, adjustment_policy,
+                        normalization_policy, calendar_version, range_start, range_end, "PLANNED", None,
+                        (None if missing_minute_threshold is None else str(missing_minute_threshold)),
+                        None, None, None, None, None, None, None, now, None, None, now))
+
+    def rd_advance_status(self, dataset_id: str, expected_from: str, to: str) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            if to == "RUNNING":
+                self._exec(cur, "UPDATE research_datasets SET status=?, started_at=?, updated_at=? "
+                           "WHERE dataset_id=? AND status=?", (to, now, now, dataset_id, expected_from))
+            else:
+                self._exec(cur, "UPDATE research_datasets SET status=?, updated_at=? WHERE dataset_id=? AND status=?",
+                           (to, now, dataset_id, expected_from))
+            return cur.rowcount > 0
+
+    def rd_write_and_finalize(self, dataset_id: str, *, expected_from: str, status: str, bars=(), events=(),
+                              row_count=None, raw_pages_checksum=None, dataset_checksum=None,
+                              provider_adjusted_flag=None, warnings_json=None, missing_data_json=None,
+                              failure_code=None, failure_reason=None) -> bool:
+        """Persist all normalized bars + events AND finalize the dataset in ONE transaction (child inserts
+        while non-terminal → triggers allow; terminal transition last). Atomic + then frozen."""
+        now = utcnow_iso()
+        with self.tx() as cur:
+            for barr in bars:
+                self._exec(cur, "INSERT INTO research_ohlc_bars (dataset_id,symbol,interval,ts,session_date,"
+                           "open,high,low,close,volume,trade_count,source,adjustment_policy,created_at) "
+                           "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                           (dataset_id, barr["symbol"], barr["interval"], barr["ts"], barr["session_date"],
+                            money_str(barr["open"]), money_str(barr["high"]), money_str(barr["low"]),
+                            money_str(barr["close"]), money_str(barr["volume"]),
+                            (None if barr.get("trade_count") is None else int(barr["trade_count"])),
+                            barr["source"], barr["adjustment_policy"], now))
+            for e in events:
+                self._exec(cur, "INSERT INTO research_dataset_events (id,dataset_id,seq,ts,event_type,severity,"
+                           "symbol,details_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                           (f"{dataset_id}-e{e['seq']}", dataset_id, int(e["seq"]), e.get("ts"), e["event_type"],
+                            e.get("severity"), e.get("symbol"), json.dumps(e.get("details") or {}), now))
+            self._exec(cur, "UPDATE research_datasets SET status=?, row_count=?, raw_pages_checksum=?, "
+                       "dataset_checksum=?, provider_adjusted_flag=?, warnings_json=?, missing_data_json=?, "
+                       "failure_code=?, failure_reason=?, ended_at=?, updated_at=? WHERE dataset_id=? AND status=?",
+                       (status, (None if row_count is None else int(row_count)), raw_pages_checksum,
+                        dataset_checksum, (None if provider_adjusted_flag is None else (1 if provider_adjusted_flag else 0)),
+                        warnings_json, missing_data_json, failure_code, failure_reason, now, now,
+                        dataset_id, expected_from))
+            return cur.rowcount > 0
+
+    def rd_get_dataset(self, dataset_id: str) -> ResearchDatasetRow | None:
+        r = self._one(f"SELECT {self._RD_DS_COLS} FROM research_datasets WHERE dataset_id=?", (dataset_id,))
+        if not r:
+            return None
+        r = list(r)
+        r[19] = None if r[19] is None else bool(r[19])   # provider_adjusted_flag → bool
+        return ResearchDatasetRow(*r)
+
+    def rd_find_by_request_checksum(self, request_checksum: str):
+        """Idempotency lookup → (completed_row_or_None, running_row_or_None). Never returns FAILED."""
+        rows = self._all(f"SELECT {self._RD_DS_COLS} FROM research_datasets WHERE request_checksum=? "
+                         "ORDER BY created_at DESC", (request_checksum,))
+        completed = running = None
+        for raw in rows:
+            raw = list(raw)
+            raw[19] = None if raw[19] is None else bool(raw[19])
+            row = ResearchDatasetRow(*raw)
+            if row.status == "COMPLETED" and completed is None:
+                completed = row
+            elif row.status in ("RUNNING", "PLANNED") and running is None:
+                running = row
+        return completed, running
+
+    def rd_list_datasets(self, *, owner: str | None = None, status: str | None = None, limit: int = 50,
+                         offset: int = 0) -> list[ResearchDatasetRow]:
+        n, off = max(1, min(100, int(limit))), max(0, int(offset))
+        where, params = [], []
+        if owner:
+            where.append("owner=?"); params.append(owner)
+        if status:
+            where.append("status=?"); params.append(status)
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        rows = self._all(f"SELECT {self._RD_DS_COLS} FROM research_datasets{clause} "
+                         "ORDER BY created_at DESC LIMIT ? OFFSET ?", (*params, n, off))
+        out = []
+        for raw in rows:
+            raw = list(raw)
+            raw[19] = None if raw[19] is None else bool(raw[19])
+            out.append(ResearchDatasetRow(*raw))
+        return out
+
+    def rd_superseded_by(self, dataset_id: str) -> list[str]:
+        """Derived (not a mutation): dataset_ids that declare this one as their `supersedes_dataset_id`."""
+        return [r[0] for r in self._all(
+            "SELECT dataset_id FROM research_datasets WHERE supersedes_dataset_id=? ORDER BY created_at",
+            (dataset_id,))]
+
+    def rd_list_bars(self, dataset_id: str, symbol: str | None = None, limit: int = 5000) -> list[tuple]:
+        n = max(1, min(60000, int(limit)))
+        if symbol:
+            return self._all("SELECT dataset_id,symbol,interval,ts,session_date,open,high,low,close,volume,"
+                             "trade_count,source,adjustment_policy FROM research_ohlc_bars "
+                             "WHERE dataset_id=? AND symbol=? ORDER BY symbol, ts ASC LIMIT ?",
+                             (dataset_id, symbol, n))
+        return self._all("SELECT dataset_id,symbol,interval,ts,session_date,open,high,low,close,volume,"
+                         "trade_count,source,adjustment_policy FROM research_ohlc_bars "
+                         "WHERE dataset_id=? ORDER BY symbol, ts ASC LIMIT ?", (dataset_id, n))
+
+    def rd_list_bars_range(self, dataset_id: str, symbol: str, interval: str, start_ts: str, end_ts: str,
+                           limit: int = 60000) -> list[OhlcBarRow]:
+        """Read a pinned dataset's bars in [start_ts, end_ts] as OhlcBarRow (so R3's replay reuses the same
+        shape). Read-only."""
+        n = max(1, min(60000, int(limit)))
+        rows = self._all("SELECT symbol,interval,ts,open,high,low,close,volume,source,created_at "
+                         "FROM research_ohlc_bars WHERE dataset_id=? AND symbol=? AND interval=? "
+                         "AND ts>=? AND ts<=? ORDER BY ts ASC LIMIT ?",
+                         (dataset_id, symbol, interval, start_ts, end_ts, n))
+        return [OhlcBarRow(r[0], r[1], r[2], to_decimal(r[3]), to_decimal(r[4]), to_decimal(r[5]),
+                           to_decimal(r[6]), to_decimal(r[7]), r[8], r[9]) for r in rows]
+
+    def rd_count_bars(self, dataset_id: str, symbol: str | None = None) -> int:
+        if symbol:
+            r = self._one("SELECT COUNT(*) FROM research_ohlc_bars WHERE dataset_id=? AND symbol=?",
+                          (dataset_id, symbol))
+        else:
+            r = self._one("SELECT COUNT(*) FROM research_ohlc_bars WHERE dataset_id=?", (dataset_id,))
+        return int(r[0]) if r else 0
+
+    def rd_list_events(self, dataset_id: str, limit: int = 500, offset: int = 0) -> list[ResearchDatasetEventRow]:
+        n, off = max(1, min(2000, int(limit))), max(0, int(offset))
+        rows = self._all("SELECT id,dataset_id,seq,ts,event_type,severity,symbol,details_json,created_at "
+                         "FROM research_dataset_events WHERE dataset_id=? ORDER BY created_at ASC, id ASC "
+                         "LIMIT ? OFFSET ?", (dataset_id, n, off))
+        return [ResearchDatasetEventRow(*r) for r in rows]
