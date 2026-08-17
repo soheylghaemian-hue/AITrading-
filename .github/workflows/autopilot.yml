@@ -1,0 +1,29 @@
+name: Autopilot Safety Gate
+
+on:
+  pull_request:
+    paths:
+      - "src/atp/autopilot/**"
+      - "src/atp/brain/**"
+      - "autopilot/**"
+      - "tests/test_autopilot*"
+      - "tests/test_brain_contracts.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-boundaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e '.[dev]'
+      - run: python -m pytest tests/test_autopilot.py tests/test_autopilot_import_graph.py tests/test_brain_contracts.py
+      - name: Confirm the core has no network or secret client
+        run: >-
+          ! grep -R -E 'api\.openai\.com|api\.anthropic\.com|API_KEY|urllib\.request|requests\.(post|get)'
+          src/atp/autopilot src/atp/brain
