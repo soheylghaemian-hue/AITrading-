@@ -406,11 +406,16 @@ def _bt_triggers_postgres() -> list[str]:
              RAISE EXCEPTION 'backtest_runs: terminal run is immutable'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql""",
         """CREATE OR REPLACE FUNCTION atp_bt_block_run_delete() RETURNS trigger AS $$
            BEGIN RAISE EXCEPTION 'backtest_runs: runs cannot be deleted'; END; $$ LANGUAGE plpgsql""",
+        # NOTE: the `%%` is a psycopg escape for a LITERAL percent. psycopg parses the query string for
+        # placeholders (`%s`/`%b`/`%t`) even with empty params, so a bare `%` here would raise
+        # "only '%s','%b','%t' are allowed as placeholders". psycopg un-escapes `%%` → a single `%`,
+        # which is exactly the PL/pgSQL RAISE format placeholder for TG_TABLE_NAME. SQLite path is separate
+        # and unaffected. See tests/test_migration_postgres_placeholders_r30.py.
         """CREATE OR REPLACE FUNCTION atp_bt_block_child_insert() RETURNS trigger AS $$
            BEGIN IF (SELECT status FROM backtest_runs WHERE run_id = NEW.run_id) IN ('COMPLETED','FAILED','CANCELLED')
-             THEN RAISE EXCEPTION '%: parent run is terminal (immutable)', TG_TABLE_NAME; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql""",
+             THEN RAISE EXCEPTION '%%: parent run is terminal (immutable)', TG_TABLE_NAME; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql""",
         """CREATE OR REPLACE FUNCTION atp_bt_block_child_mutate() RETURNS trigger AS $$
-           BEGIN RAISE EXCEPTION '%: rows are immutable', TG_TABLE_NAME; END; $$ LANGUAGE plpgsql""",
+           BEGIN RAISE EXCEPTION '%%: rows are immutable', TG_TABLE_NAME; END; $$ LANGUAGE plpgsql""",
         "DROP TRIGGER IF EXISTS trg_bt_runs_no_update ON backtest_runs",
         "CREATE TRIGGER trg_bt_runs_no_update BEFORE UPDATE ON backtest_runs FOR EACH ROW EXECUTE FUNCTION atp_bt_block_run_update()",
         "DROP TRIGGER IF EXISTS trg_bt_runs_no_delete ON backtest_runs",
