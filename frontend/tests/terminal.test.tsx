@@ -112,7 +112,7 @@ describe("MarketTerminal /markets/[symbol]", () => {
   it("renders header + AI panel + tabs, chart loading on first paint (fetch effect not run under SSR)", () => {
     const h = r(<MarketTerminal s={base} symbol="NVDA" connected />);
     expect(h).toContain("NVIDIA Corporation");
-    expect(h).toContain("AI Market Analysis");
+    expect(h).toContain("AI Explanation");            // §UX-1: the AI explanation panel
     expect(h).toContain("Loading market history");   // OHLC arrives via effect on the client, not SSR
     expect(h).not.toContain('data-layer="price"');   // nothing fabricated before data lands
   });

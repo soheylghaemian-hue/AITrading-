@@ -1,34 +1,81 @@
 "use client";
-// Market Intelligence Terminal — composes the header, interactive chart, AI analysis panel and research
-// tabs for /markets/[symbol]. Pure sub-components do the rendering; this is the wiring. Frontend only.
-// Candles come from the durable OHLC endpoint (GET /market/{symbol}/ohlc) reached through the same-origin
-// server proxy — never the browser holding a token, never a parallel API client. On no data / error the
-// chart shows NO DATA; nothing is fabricated.
+// Market Intelligence Terminal (§ Phase UX-1) — institutional command-center IA for /markets/[symbol].
+// Order (critical decision context first, minimal scrolling): symbol header → primary summary row
+// (AI · Risk · Macro · Governance · Data Completeness) → research tab bar → compact chart (~300–350px)
+// beside the fixed AI explanation panel → compact intelligence-card grid → detailed selected-tab content.
+//
+// Every domain is fetched ONCE here (no duplicate fetching) and fed to BOTH the compact cards and the
+// detail panes (the pure *List components). Candles/indicators come from the durable OHLC endpoint via
+// the same-origin proxy; nothing is fabricated — missing data renders NO DATA, never zero. Read-only:
+// no trade/order control, EXECUTION stays explicitly disabled, the kill switch is never mutated here.
 import React, { useEffect, useState } from "react";
 import type { Snapshot } from "@/lib/types";
 import { instrumentRef } from "@/lib/instruments";
-import { symbolQuote } from "@/lib/market";
-import { fetchOhlc, fetchTraders, fetchFundamentals, fetchOptions, fetchConsensus, fetchMacroContext, fetchInstitutionalFlow, fetchRiskStatus } from "@/lib/api";
+import { symbolQuote, type Quote } from "@/lib/market";
+import {
+  fetchOhlc, fetchTraders, fetchFundamentals, fetchOptions, fetchConsensus, fetchMacroContext,
+  fetchInstitutionalFlow, fetchRiskStatus, fetchNews, fetchGovernance, fetchCompleteness,
+} from "@/lib/api";
+import { NO_DATA, isPresent, price, num, spread as fmtSpread } from "@/lib/format";
+import { humanStatus } from "@/lib/errors";
 import type { OhlcBar } from "@/lib/ohlc";
-import type { TraderConsensus } from "@/lib/traders";
-import type { FundamentalsData } from "@/lib/fundamentals";
-import type { OptionsData } from "@/lib/options";
-import type { AiConsensus } from "@/lib/consensus";
-import type { MacroContext } from "@/lib/macro";
-import type { InstitutionalFlow } from "@/lib/institutional";
-import type { RiskStatus } from "@/lib/risk";
+import type { NewsItem } from "@/lib/news";
 import { Dot } from "@/components/ui";
-import { RiskCard } from "./RiskCard";
 import { TerminalHeader } from "./TerminalHeader";
 import { DataQuality } from "./DataQuality";
 import { MarketChart } from "./MarketChart";
 import { AiAnalysisPanel } from "./AiAnalysisPanel";
 import { AiSummary } from "./AiSummary";
 import { MacroContextCard } from "./MacroContextCard";
-import { InstitutionalPanel } from "./InstitutionalPanel";
-import { ResearchTabs } from "./ResearchTabs";
+import { RiskCard } from "./RiskCard";
+import {
+  GovernanceCard, CompletenessCard, NewsCard, FundamentalsCard, OptionsCard, TradersCard,
+  InstitutionalCard, InsiderClusterCard,
+} from "./IntelCards";
+import { NewsList } from "./NewsFeed";
+import { FundamentalsList } from "./FundamentalsFeed";
+import { OptionsList } from "./OptionsFeed";
+import { TradersList } from "./TradersFeed";
+import { AiHistoryFeed } from "./AiHistoryFeed";
 
-type OhlcState = { bars: OhlcBar[] | null; loading: boolean; error: string | null };
+type FetchState<T> = { data: T | null; loading: boolean; error: string | null };
+
+// One symbol-keyed fetch per domain. Abort on unmount/symbol change; an AbortError never clobbers data.
+function useDomainFetch<T>(fetcher: (signal: AbortSignal) => Promise<T>, key: string): FetchState<T> {
+  const [state, setState] = useState<FetchState<T>>({ data: null, loading: true, error: null });
+  useEffect(() => {
+    let cancelled = false;
+    const ctrl = new AbortController();
+    setState((s) => ({ data: s.data, loading: true, error: null }));
+    fetcher(ctrl.signal)
+      .then((r) => { if (!cancelled) setState({ data: r, loading: false, error: null }); })
+      .catch((e: any) => {
+        if (cancelled || e?.name === "AbortError") return;
+        setState({ data: null, loading: false, error: e?.message === "NO_BACKEND" ? "no backend configured" : "unavailable" });
+      });
+    return () => { cancelled = true; ctrl.abort(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return state;
+}
+
+const TABS = ["Overview", "News", "Fundamentals", "Options", "Traders", "AI History"] as const;
+type Tab = (typeof TABS)[number];
+
+function OverviewPane({ quote }: { quote: Quote | null }) {
+  if (!quote) return <div className="ndbox"><div className="nd">{NO_DATA}</div><p>No quote for this instrument yet.</p></div>;
+  const cells: [string, React.ReactNode][] = [
+    ["Last", price(quote.last)],
+    ["Bid / Ask", `${price(quote.bid)} / ${price(quote.ask)}`],
+    ["Spread", fmtSpread(quote.bid, quote.ask)],
+    ["Volume", isPresent(quote.volume) ? num(quote.volume, 0) : NO_DATA],
+    ["Source", quote.source || NO_DATA],
+    ["Latency", isPresent(quote.latency) ? Math.round(quote.latency as number) + "ms" : NO_DATA],
+    ["Feed", quote.realtime ? "Realtime" : "Delayed"],
+    ["Status", humanStatus(quote.status)],
+  ];
+  return <div className="ov">{cells.map(([k, v]) => <div className="ovc" key={k}><div className="label">{k}</div><div className="v num">{v}</div></div>)}</div>;
+}
 
 export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; symbol: string; connected: boolean }) {
   const refData = instrumentRef(symbol);
@@ -39,17 +86,10 @@ export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; s
   const ai = dec ? { action: dec.action, entry: dec.entry, stop: dec.stop, target: dec.target } : null;
 
   const [iv, setIv] = useState("1m");
-  const [ohlc, setOhlc] = useState<OhlcState>({ bars: null, loading: true, error: null });
-  const [traders, setTraders] = useState<TraderConsensus | null>(null);
-  const [fundamentals, setFundamentals] = useState<FundamentalsData | null>(null);
-  const [options, setOptions] = useState<OptionsData | null>(null);
-  const [consensus, setConsensus] = useState<AiConsensus | null>(null);
-  const [macro, setMacro] = useState<MacroContext | null>(null);
-  const [institutional, setInstitutional] = useState<InstitutionalFlow | null>(null);
-  const [risk, setRisk] = useState<RiskStatus | null>(null);
+  const [ohlc, setOhlc] = useState<{ bars: OhlcBar[] | null; loading: boolean; error: string | null }>({ bars: null, loading: true, error: null });
+  const [tab, setTab] = useState<Tab>("Overview");
 
-  // Fetch OHLC whenever the symbol or timeframe changes. AbortController + a cancelled flag guard against
-  // a stale response landing after a fast symbol switch (NVDA → AAPL → SPY) overwriting the newer request.
+  // OHLC has its own interval dependency; the rest are symbol-keyed. All fetched ONCE, reused everywhere.
   useEffect(() => {
     let cancelled = false;
     const ctrl = new AbortController();
@@ -63,72 +103,90 @@ export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; s
     return () => { cancelled = true; ctrl.abort(); };
   }, [symbol, iv]);
 
-  // §G2.5: fetch the quality-weighted trader consensus and feed it to the AI Brain conviction inputs.
-  // Read-only intelligence signal; null → NO DATA. Never a trading decision or copy-trade.
-  useEffect(() => {
-    let cancelled = false;
-    const ctrl = new AbortController();
-    fetchTraders(symbol, ctrl.signal)
-      .then((r) => { if (!cancelled) setTraders(r); })
-      .catch(() => { if (!cancelled) setTraders(null); });
-    fetchFundamentals(symbol, ctrl.signal)
-      .then((r) => { if (!cancelled) setFundamentals(r); })
-      .catch(() => { if (!cancelled) setFundamentals(null); });
-    fetchOptions(symbol, ctrl.signal)
-      .then((r) => { if (!cancelled) setOptions(r); })
-      .catch(() => { if (!cancelled) setOptions(null); });
-    fetchConsensus(symbol, ctrl.signal)
-      .then((r) => { if (!cancelled) setConsensus(r); })
-      .catch(() => { if (!cancelled) setConsensus(null); });
-    fetchMacroContext(symbol, ctrl.signal)                  // §R1.2 macro context for this symbol
-      .then((r) => { if (!cancelled) setMacro(r); })
-      .catch(() => { if (!cancelled) setMacro(null); });
-    fetchInstitutionalFlow(symbol, ctrl.signal)             // §R1.3 institutional 13F changes + insiders
-      .then((r) => { if (!cancelled) setInstitutional(r); })
-      .catch(() => { if (!cancelled) setInstitutional(null); });
-    fetchRiskStatus(ctrl.signal)                            // §R2.0 global capital-protection state (read-only)
-      .then((r) => { if (!cancelled) setRisk(r); })
-      .catch(() => { if (!cancelled) setRisk(null); });
-    return () => { cancelled = true; ctrl.abort(); };
-  }, [symbol]);
+  const consensus = useDomainFetch((sig) => fetchConsensus(symbol, sig), symbol);
+  const traders = useDomainFetch((sig) => fetchTraders(symbol, sig), symbol);
+  const fundamentals = useDomainFetch((sig) => fetchFundamentals(symbol, sig), symbol);
+  const options = useDomainFetch((sig) => fetchOptions(symbol, sig), symbol);
+  const macro = useDomainFetch((sig) => fetchMacroContext(symbol, sig), symbol);
+  const institutional = useDomainFetch((sig) => fetchInstitutionalFlow(symbol, sig), symbol);
+  const risk = useDomainFetch((sig) => fetchRiskStatus(sig), symbol);
+  const news = useDomainFetch<{ symbol: string; items: NewsItem[] }>((sig) => fetchNews(symbol, 30, sig), symbol);
+  const governance = useDomainFetch((sig) => fetchGovernance(symbol, sig), symbol);
+  const completeness = useDomainFetch((sig) => fetchCompleteness(symbol, sig), symbol);
 
-  // Header change% is derived from the REAL fetched candles (first→last close), not the snapshot. No bars → NO DATA.
   const bars = ohlc.bars || [];
   const change = bars.length > 1 ? (bars[bars.length - 1].close - bars[0].close) / (bars[0].close || 1) : null;
 
-  // AI Brain conviction inputs: each is a real 0-100 signal or NO DATA. Only Trader Consensus is wired
-  // in this phase (from the quality-weighted score); the others get their feeds later. No fabricated total.
   const convictionInputs = [
     { label: "Price Action", value: null as number | null },
     { label: "News", value: null as number | null },
-    { label: "Fundamentals", value: fundamentals?.quality_score ?? null },
-    { label: "Options Flow", value: options?.options_score ?? null },
-    { label: "Trader Consensus", value: traders?.weighted_score ?? null },
-    { label: "Institutional Flow", value: institutional?.accumulation_score ?? null },  // §R1.3
-    { label: "Insider Activity", value: institutional?.insider_score ?? null },         // §R1.3
-    { label: "Insider Cluster", value: institutional?.insider_cluster?.score ?? null }, // §R1.4
-    { label: "Macro", value: macro?.score ?? null },        // §R1.2 wired to the macro environment score
+    { label: "Fundamentals", value: fundamentals.data?.quality_score ?? null },
+    { label: "Options Flow", value: options.data?.options_score ?? null },
+    { label: "Trader Consensus", value: traders.data?.weighted_score ?? null },
+    { label: "Institutional Flow", value: institutional.data?.accumulation_score ?? null },
+    { label: "Insider Activity", value: institutional.data?.insider_score ?? null },
+    { label: "Insider Cluster", value: institutional.data?.insider_cluster?.score ?? null },
+    { label: "Macro", value: macro.data?.score ?? null },
     { label: "Risk", value: null as number | null },
   ];
+
+  const open = (t: Tab) => () => setTab(t);
 
   return (
     <div className="term">
       {!connected ? (
         <div className="banner"><Dot tone="r" />Live backend not reachable — showing&nbsp;<b>NO DATA</b>. No values are fabricated.</div>
       ) : null}
+
       <TerminalHeader symbol={symbol} refData={refData} quote={quote} mode={s?.mode} change={change} connected={connected} />
-      <AiSummary data={consensus} />
-      <MacroContextCard data={macro} />
-      <InstitutionalPanel data={institutional} />
-      <RiskCard data={risk} />
-      <DataQuality quote={quote} refData={refData} />
-      <div className="term-main">
-        <div className="card term-chart">
-          <MarketChart bars={ohlc.bars} loading={ohlc.loading} error={ohlc.error} interval={iv} onInterval={setIv} ai={ai} />
-        </div>
-        <AiAnalysisPanel dec={dec} risk={s?.trading_risk || null} mode={s?.mode} executionEnabled={s?.execution_enabled} convictionInputs={convictionInputs} />
+
+      {/* ── primary summary row: the 5-second decision context ── */}
+      <div className="summary-row">
+        <AiSummary data={consensus.data} />
+        <RiskCard data={risk.data} />
+        <MacroContextCard data={macro.data} />
+        <GovernanceCard data={governance.data} />
+        <CompletenessCard data={completeness.data} />
       </div>
-      <ResearchTabs quote={quote} decisions={decisions} symbol={symbol} />
+
+      {/* ── research tab bar (moved directly below the summary) ── */}
+      <div className="tabs" role="tablist" aria-label="Research tabs">
+        {TABS.map((t) => (
+          <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t}</button>
+        ))}
+      </div>
+
+      {/* ── compact chart + fixed AI explanation panel (side by side) ── */}
+      <div className="term-main">
+        <div className="card term-chart compact">
+          <MarketChart bars={ohlc.bars} loading={ohlc.loading} error={ohlc.error} interval={iv} onInterval={setIv} ai={ai} compact />
+        </div>
+        <AiAnalysisPanel dec={dec} risk={s?.trading_risk || null} mode={s?.mode} executionEnabled={s?.execution_enabled}
+          convictionInputs={convictionInputs} consensus={consensus.data} governance={governance.data}
+          riskStatus={risk.data?.status ?? null} completeness={completeness.data} />
+      </div>
+
+      {/* ── compact intelligence-card grid (always visible; click → detail tab) ── */}
+      <div className="intel-grid">
+        <NewsCard items={news.data?.items ?? null} onOpen={open("News")} />
+        <FundamentalsCard data={fundamentals.data} onOpen={open("Fundamentals")} />
+        <OptionsCard data={options.data} onOpen={open("Options")} />
+        <TradersCard data={traders.data} onOpen={open("Traders")} />
+        <InstitutionalCard data={institutional.data} />
+        <InsiderClusterCard data={institutional.data} />
+        <div className="icard neu"><div className="ic-head"><span className="label">Market Data Quality</span></div>
+          <div className="ic-body ic-dq"><DataQuality quote={quote} refData={refData} /></div></div>
+      </div>
+
+      {/* ── detailed selected-tab content (reuses the same fetched data — no re-fetch) ── */}
+      <div className="card" id="term-detail">
+        {tab === "Overview" && <OverviewPane quote={quote} />}
+        {tab === "News" && <NewsList items={news.data?.items ?? null} loading={news.loading} error={news.error} />}
+        {tab === "Fundamentals" && <FundamentalsList data={fundamentals.data} loading={fundamentals.loading} error={fundamentals.error} symbol={symbol} />}
+        {tab === "Options" && <OptionsList data={options.data} loading={options.loading} error={options.error} symbol={symbol} />}
+        {tab === "Traders" && <TradersList data={traders.data} loading={traders.loading} error={traders.error} symbol={symbol} />}
+        {tab === "AI History" && <AiHistoryFeed symbol={symbol} />}
+      </div>
     </div>
   );
 }

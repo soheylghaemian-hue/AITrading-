@@ -22,12 +22,18 @@ export interface AiOverlay {
 /** Chart geometry, shared with the interactive crosshair layer (MarketChart). */
 export const CHART_GEO = { W: 1040, PL: 8, PR: 54 };
 
-export function CandleChart({ bars, ai }: { bars: OhlcBar[]; interval?: string; ai?: AiOverlay | null }) {
+export function CandleChart({ bars, ai, compact }: { bars: OhlcBar[]; interval?: string; ai?: AiOverlay | null; compact?: boolean }) {
   const data = (bars || []).filter(isValidBar);       // real bars only — never fabricate/patch
   if (data.length < 2) return null;
 
   const { W, PL, PR } = CHART_GEO, PW = W - PL - PR;
-  const P = { t: 10, h: 280 }, V = { t: 304, h: 40 }, R = { t: 356, h: 64 }, M = { t: 436, h: 96 };
+  // §UX-1: a compact geometry (~300–350px tall on desktop) that still keeps ALL panels — price,
+  // volume, RSI-14 and MACD — so no indicator is dropped to save height. Default geometry unchanged.
+  const P = compact ? { t: 8, h: 230 } : { t: 10, h: 280 };
+  const V = compact ? { t: 246, h: 34 } : { t: 304, h: 40 };
+  const R = compact ? { t: 288, h: 48 } : { t: 356, h: 64 };
+  const M = compact ? { t: 348, h: 70 } : { t: 436, h: 96 };
+  const VBH = compact ? 432 : 560;
   const closes = data.map((b) => b.close);
   const e20 = ema(20, closes), e50 = ema(50, closes), e200 = ema(200, closes);
   const vw = vwap(data), r14 = rsi(14, closes), mac = macd(closes);
@@ -45,9 +51,9 @@ export function CandleChart({ bars, ai }: { bars: OhlcBar[]; interval?: string; 
   const line = (vals: number[]) => vals.map((v, i) => `${x(i).toFixed(1)},${yP(v).toFixed(1)}`).join(" ");
 
   return (
-    <svg viewBox={`0 0 ${W} 560`} preserveAspectRatio="xMidYMid meet" role="img"
+    <svg viewBox={`0 0 ${W} ${VBH}`} preserveAspectRatio="xMidYMid meet" role="img"
       aria-label={`Candlestick chart with EMA20/50/200, VWAP, RSI-14 and MACD (${data.length} bars)`}
-      style={{ width: "100%", height: "auto", display: "block", minWidth: 680 }}>
+      style={{ width: "100%", height: "auto", display: "block", minWidth: compact ? 520 : 680 }}>
 
       {/* price grid + right axis */}
       {[0, 1, 2, 3, 4].map((g) => {

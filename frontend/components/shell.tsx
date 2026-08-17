@@ -1,10 +1,10 @@
 "use client";
 // App shell: owns the single useSnapshot() poll, provides it via context, and renders the sidebar +
 // status strip around every page. Client-only (hooks). Presentational views stay pure & testable.
-import React, { createContext, useContext, useState } from "react";
+import React, { createContext, useContext, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useSnapshot } from "@/lib/useSnapshot";
-import { emergencyStop } from "@/lib/api";
+import { emergencyStop, fetchRiskStatus } from "@/lib/api";
 import type { SnapshotState } from "@/lib/types";
 import { statusStrip } from "@/lib/select";
 import { StatusPill } from "./ui";
@@ -41,8 +41,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const path = usePathname() || "/";
   const { data, connected } = useDashboard();
   const [stopping, setStopping] = useState(false);
+  // Kill-switch state for the global safety strip (§ UX-1), from the R2.0 /risk/status read-model.
+  // Read-only poll; an AbortError never clobbers a good value. Visible on every primary page.
+  const [kill, setKill] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const ctrl = new AbortController();
+    const tick = () => fetchRiskStatus(ctrl.signal)
+      .then((r) => { if (!cancelled) setKill(r.kill_switch ?? null); })
+      .catch((e: any) => { if (!cancelled && e?.name !== "AbortError") setKill(null); });
+    tick();
+    const id = setInterval(tick, 15000);
+    return () => { cancelled = true; ctrl.abort(); clearInterval(id); };
+  }, []);
   const [title, sub] = titleFor(path);
-  const pills = statusStrip(data, connected);
+  const pills = statusStrip(data, connected, kill);
   const mode = pills.find((p) => p.key === "mode")!;
   const system = pills.find((p) => p.key === "system")!;
 

@@ -28,13 +28,14 @@ function StateBox({ kind }: { kind: "loading" | "error" | "empty" }) {
   );
 }
 
-export function MarketChart({ bars, loading, error, interval, onInterval, ai }: {
+export function MarketChart({ bars, loading, error, interval, onInterval, ai, compact }: {
   bars: OhlcBar[] | null;
   loading: boolean;
   error: string | null;
   interval: string;
   onInterval: (iv: string) => void;
   ai?: AiOverlay | null;
+  compact?: boolean;
 }) {
   const clean = (bars || []).filter(isValidBar);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -96,7 +97,7 @@ export function MarketChart({ bars, loading, error, interval, onInterval, ai }: 
           : error ? <StateBox kind="error" />
           : hasChart ? (
             <>
-              <CandleChart bars={visible} interval={interval} ai={ai} />
+              <CandleChart bars={visible} interval={interval} ai={ai} compact={compact} />
               {hover ? <div className="cross-v" style={{ left: hover.px }} /> : null}
               {b ? (
                 <div className="chart-tip num">

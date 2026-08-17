@@ -630,3 +630,78 @@ a.newsrow:hover{background:var(--line-soft)}
 .rc-link:hover{text-decoration:underline}
 @media (max-width:900px){.rf-grid{grid-template-columns:1fr 1fr}}
 @media (max-width:640px){.rf-grid{grid-template-columns:1fr}.rs-meta{gap:14px}}
+
+/* ============================ UX-1 institutional terminal ============================ */
+/* primary summary row — the 5-second decision context (AI · Risk · Macro · Gov · Completeness) */
+.summary-row{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;align-items:start}
+.summary-row>.card{padding:14px}
+
+/* compact chart: cap height so the chart never dominates (target ~300–350px on desktop) */
+.term-chart.compact{padding:12px}
+.term-chart.compact .chartbox svg{max-height:360px}
+
+/* compact intelligence-card grid (always visible; click → detail tab) */
+.intel-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:12px}
+.icard{display:flex;flex-direction:column;gap:8px;text-align:left;background:var(--surface);
+  border:1px solid var(--line);border-left:3px solid var(--line);border-radius:var(--r-sm);padding:13px 14px;min-width:0}
+.icard.pos{border-left-color:var(--pos)} .icard.neg{border-left-color:var(--neg)}
+.icard.warn{border-left-color:var(--warn)} .icard.neu{border-left-color:var(--line)}
+.icard-btn{cursor:pointer;font-family:inherit;color:inherit;width:100%;transition:.15s}
+.icard-btn:hover{border-color:var(--line-soft);background:var(--panel)}
+.icard-btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.icard-wide{grid-column:1/-1}
+.ic-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ic-head .label{margin-right:auto}
+.ic-open{color:var(--faint);font-size:13px}
+.ic-badge{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.6px;padding:2px 7px;border-radius:5px;border:1px solid transparent}
+.ic-badge.pos,.ic-badge.approved,.ic-badge.ready,.ic-badge.acc{color:var(--pos);background:var(--pos-bg);border-color:rgba(52,211,153,.3)}
+.ic-badge.neg,.ic-badge.blocked,.ic-badge.insufficient,.ic-badge.red{color:var(--neg);background:var(--neg-bg);border-color:rgba(248,113,113,.3)}
+.ic-badge.warn,.ic-badge.partial,.ic-badge.conflict,.ic-badge.mixed{color:var(--warn);background:var(--warn-bg);border-color:rgba(245,158,11,.3)}
+.ic-badge.neu{color:var(--dim);background:var(--line-soft)}
+.ic-ndb{font-family:var(--mono);font-size:10px;letter-spacing:1px;color:var(--faint)}
+.ic-body{display:flex;flex-direction:column;gap:5px}
+.ic-nd{font-family:var(--mono);font-size:11px;letter-spacing:1.5px;color:var(--faint);padding:6px 0}
+.ic-metric{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px}
+.ic-metric .k{color:var(--dim)} .ic-metric b{color:var(--ink);font-weight:600}
+.ic-metric b.pos{color:var(--pos)} .ic-metric b.neg{color:var(--neg)} .ic-metric b.mixed{color:var(--warn)}
+.ic-sig{font-size:12px;color:var(--dim);line-height:1.4}
+.ic-clip{overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.ic-note{font-size:10.5px;color:var(--faint);font-family:var(--mono)}
+.ic-dq .dq{padding:0;border:0;background:none}
+
+/* AI explanation panel — drivers / risks / conflicts / missing inputs */
+.ai-expl{margin-top:4px}
+.ai-list{list-style:none;margin:4px 0 0;padding:0;display:flex;flex-direction:column;gap:3px;font-size:12.5px}
+.ai-list.pos li{color:var(--pos)} .ai-list.neg li{color:var(--neg)} .ai-list.warn li{color:var(--warn)}
+.ai-missing{font-size:12px;color:var(--faint);font-family:var(--mono)}
+
+/* Capital Readiness */
+.readiness{display:flex;flex-direction:column;gap:14px}
+.readiness.ready{border-color:rgba(52,211,153,.4)} .readiness.blocked{border-color:rgba(248,113,113,.35)}
+.rd-head{display:flex;align-items:flex-start;gap:18px;flex-wrap:wrap}
+.rd-verdict{font-size:24px;font-weight:700;letter-spacing:.5px;margin-top:4px}
+.rd-verdict.ready{color:var(--pos)} .rd-verdict.blocked{color:var(--neg)} .rd-verdict.nodata{color:var(--faint)}
+.rd-disclaimer{font-size:12px;color:var(--dim);margin:2px 0 0;max-width:420px;margin-left:auto}
+.rd-checks{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:2px 18px}
+.rd-check{display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px solid var(--line-soft);font-size:13px}
+.rd-label{color:var(--ink);font-weight:500}
+.rd-detail{margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--dim);text-align:right}
+.rd-check.blocked .rd-detail{color:var(--neg)} .rd-check.warning .rd-detail{color:var(--warn)}
+.rd-pill{display:inline-flex;align-items:center;gap:7px;padding:6px 11px;border-radius:999px;border:1px solid var(--line);background:var(--panel);font-size:11.5px;font-weight:600;color:var(--dim)}
+.rd-pill b{color:var(--ink)} .rd-pill.ready b{color:var(--pos)} .rd-pill.blocked b{color:var(--neg)}
+
+/* responsive: tablet → 2-col summaries, mobile → single column; tabs scroll horizontally */
+@media (max-width:1200px){.summary-row{grid-template-columns:repeat(3,minmax(0,1fr))}.rd-checks{grid-template-columns:1fr 1fr}}
+@media (max-width:900px){
+  .summary-row{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .intel-grid{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
+  .rd-checks{grid-template-columns:1fr}
+  .tabs{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .tabs button{white-space:nowrap}
+}
+@media (max-width:640px){
+  .summary-row{grid-template-columns:1fr}
+  .intel-grid{grid-template-columns:1fr}
+  .rd-disclaimer{margin-left:0}
+  .term-chart.compact .chartbox svg{max-height:300px}
+}

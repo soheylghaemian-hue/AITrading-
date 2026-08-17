@@ -5,8 +5,17 @@ import type { Snapshot } from "./types";
 export type Tone = "g" | "t" | "o" | "r" | "grey";
 export interface Pill { key: string; label: string; value: string; tone: Tone; }
 
-/** The top status strip. Always includes an explicit EXECUTION pill. Off/unreachable → honest NO DATA. */
-export function statusStrip(s: Snapshot | null, connected: boolean): Pill[] {
+/** Kill-switch pill from the R2.0 Risk Control state. ARMED = safety in place (normal); STOPPED =
+ *  engaged/trading halted; unknown → NO DATA. Never fabricated. */
+function killPill(killSwitch: string | null | undefined): Pill {
+  if (killSwitch === "STOPPED") return { key: "kill", label: "KILL SWITCH", value: "STOPPED", tone: "r" };
+  if (killSwitch === "ARMED") return { key: "kill", label: "KILL SWITCH", value: "ARMED", tone: "g" };
+  return { key: "kill", label: "KILL SWITCH", value: "NO DATA", tone: "grey" };
+}
+
+/** The top status strip. Always includes explicit EXECUTION + KILL SWITCH pills. Off/unreachable →
+ *  honest NO DATA. `killSwitch` comes from the R2.0 /risk/status read-model (optional). */
+export function statusStrip(s: Snapshot | null, connected: boolean, killSwitch?: string | null): Pill[] {
   if (!connected || !s) {
     return [
       { key: "system", label: "SYSTEM", value: "OFFLINE", tone: "grey" },
@@ -14,6 +23,7 @@ export function statusStrip(s: Snapshot | null, connected: boolean): Pill[] {
       { key: "execution", label: "EXECUTION", value: "DISABLED", tone: "grey" },
       { key: "data", label: "DATA", value: "NO DATA", tone: "grey" },
       { key: "broker", label: "BROKER", value: "NO DATA", tone: "grey" },
+      killPill(killSwitch),
     ];
   }
   const isLive = (s.mode || "").toUpperCase() === "LIVE";
@@ -31,6 +41,7 @@ export function statusStrip(s: Snapshot | null, connected: boolean): Pill[] {
     { key: "execution", label: "EXECUTION", value: execEnabled ? "ENABLED" : "DISABLED", tone: execEnabled ? "o" : "grey" },
     { key: "data", label: "DATA", value: realtime ? "REALTIME" : "NO DATA", tone: realtime ? "t" : "grey" },
     { key: "broker", label: "BROKER", value: broker ? "CONNECTED" : "DISCONNECTED", tone: broker ? "g" : "r" },
+    killPill(killSwitch),
   ];
 }
 
