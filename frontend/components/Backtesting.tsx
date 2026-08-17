@@ -64,7 +64,10 @@ const METRIC_ROWS: [string, string, (m: Record<string, unknown>) => string][] = 
   ["Expectancy", "expectancy", (m) => metricText(m.expectancy, 2)],
   ["Payoff Ratio", "payoff_ratio", (m) => metricText(m.payoff_ratio, 2)],
   ["Trades", "num_trades", (m) => metricText(m.num_trades, 0)],
-  ["Exposure Time", "exposure_time", (m) => (typeof m.exposure_time === "number" ? pctText(m.exposure_time) : metricText(m.exposure_time))],
+  // R3.1A: aggregate position-time ÷ portfolio timeline = avg concurrent positions (NOT a 0-100% fraction);
+  // render as a plain number. Falls back to the legacy `exposure_time` value for old runs.
+  ["Avg Concurrent Positions", "avg_concurrent_positions",
+    (m) => metricText(m.avg_concurrent_positions ?? m.exposure_time, 2)],
   ["Turnover", "turnover", (m) => metricText(m.turnover, 2, "×")],
   ["Total Commissions", "total_commissions", (m) => "$" + metricText(m.total_commissions, 2)],
   ["Total Slippage", "total_slippage", (m) => "$" + metricText(m.total_slippage, 2)],

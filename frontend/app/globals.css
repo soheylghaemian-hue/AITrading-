@@ -842,3 +842,9 @@ a.newsrow:hover{background:var(--line-soft)}
   max-height:240px;overflow-y:auto;margin-top:8px}
 @media (max-width:1100px){.ds-build-grid{grid-template-columns:repeat(2,1fr)}.bt-ds-g{grid-template-columns:repeat(2,1fr)}.bt-ds-ck{grid-column:span 2}}
 @media (max-width:640px){.ds-build-grid,.bt-ds-g,.ds-meta,.ds-detail-head{grid-template-columns:1fr}.bt-ds-ck,.ds-m-wide{grid-column:auto}}
+
+/* § R3.1A — AI Validation research view */
+.vd-insufficient{border-color:rgba(250,204,21,.35);background:rgba(250,204,21,.05)}
+.vd-ins-tag{font-family:var(--mono);font-size:14px;font-weight:700;letter-spacing:1px;color:var(--warn)}
+.vd-insufficient p{color:var(--dim);font-size:13px;margin:8px 0 0;line-height:1.6}
+.vd-note{display:flex;flex-direction:column;gap:8px}

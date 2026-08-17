@@ -118,6 +118,10 @@ def compute_metrics(equity_points: list[dict], trades: list[dict], *, starting_c
         "avg_loss": (round(_mean(losses), 4) if losses else NO_DATA),
         "payoff_ratio": (round(_mean(wins) / abs(_mean(losses)), 4) if (wins and losses) else NOT_APPLICABLE),
         "num_trades": n_trades,
+        # R3.1A: this metric is Σ bars_held (all symbols) ÷ portfolio-timeline bars = average concurrent
+        # open positions (legitimately >1 multi-asset). Corrected label is `avg_concurrent_positions`;
+        # `exposure_time` is retained UNCHANGED (same value) for backward-compatible API/old runs.
+        "avg_concurrent_positions": (NO_DATA if exposure_time is None else round(exposure_time, 4)),
         "exposure_time": (NO_DATA if exposure_time is None else round(exposure_time, 4)),
         "turnover": (NO_DATA if turnover is None else round(turnover, 4)),
         "total_commissions": round(float(total_comm), 2),

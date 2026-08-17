@@ -24,6 +24,7 @@ const READ_PATHS = new Set([
   "risk-status", "risk-config", "risk-events",   // § R2.0 Risk Control Center (read-only)
   "backtests",                                    // § R3.0 backtesting research (read-only list/detail)
   "research-datasets",                            // § R3.0A immutable research OHLC datasets (read-only)
+  "research-validation", "research-intel",        // § R3.1A AI-validation read-models (GET-only, no runner)
 ]);
 // Mutations require the OWNER token, supplied by the user (not stored) and enforced by the backend.
 // "autonomous" covers the token-gated /dashboard/autonomous/{arm,start,stop,disarm,kill,reset}.
@@ -92,6 +93,11 @@ async function forward(req: NextRequest, path: string[], method: "GET" | "POST")
     // § R3.0A: research-datasets → /research/datasets[/{id}[/coverage]] (GET list/detail/coverage + POST create).
     : top === "research-datasets"
       ? `${BACKEND}/research/datasets${path.length > 1 ? "/" + path.slice(1).map(encodeURIComponent).join("/") : ""}${req.nextUrl.search}`
+    // § R3.1A: research-validation/* → /research/validation/*  and  research-intel/* → /research/intel/*  (GET-only).
+    : top === "research-validation"
+      ? `${BACKEND}/research/validation${path.length > 1 ? "/" + path.slice(1).map(encodeURIComponent).join("/") : ""}${req.nextUrl.search}`
+    : top === "research-intel"
+      ? `${BACKEND}/research/intel${path.length > 1 ? "/" + path.slice(1).map(encodeURIComponent).join("/") : ""}${req.nextUrl.search}`
     : RISK_MAP[top] ? `${BACKEND}/${RISK_MAP[top]}${req.nextUrl.search}`
     : (top === "ohlc" || top === "news" || top === "traders" || top === "fundamentals" || top === "options"
       || top === "ai-consensus" || top === "ai-history" || top === "data-completeness"

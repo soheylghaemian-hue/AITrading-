@@ -622,6 +622,137 @@ def _migration_020(dialect: str) -> list[str]:
     return tables + indexes + pins + triggers
 
 
+# --------------------------------------------------------------------------- § R3.1A immutable triggers
+# Insert-only, write-once tables (snapshots/inputs/outcomes/events/metrics): ANY update or delete is
+# rejected. `research_validation_runs` is status-terminal (RUNNING → COMPLETED|FAILED|INSUFFICIENT): a
+# terminal run is frozen, and no run may be deleted. Supersede-not-mutate: a corrected snapshot is a NEW
+# row referencing the old via `supersedes_snapshot_id`; the original is never changed.
+_RI_IMMUTABLE_TABLES = ("research_intel_snapshots", "research_intel_snapshot_inputs",
+                        "research_intel_outcomes", "research_intel_collection_events",
+                        "research_validation_metrics")
+_RV_TERMINAL = "('COMPLETED','FAILED','INSUFFICIENT')"
+
+
+def _ri_triggers_sqlite() -> list[str]:
+    out: list[str] = []
+    for tbl in _RI_IMMUTABLE_TABLES:
+        out += [
+            f"""CREATE TRIGGER IF NOT EXISTS trg_{tbl}_no_update BEFORE UPDATE ON {tbl}
+                BEGIN SELECT RAISE(ABORT, '{tbl}: rows are immutable (insert-only)'); END""",
+            f"""CREATE TRIGGER IF NOT EXISTS trg_{tbl}_no_delete BEFORE DELETE ON {tbl}
+                BEGIN SELECT RAISE(ABORT, '{tbl}: rows cannot be deleted'); END""",
+        ]
+    out += [
+        f"""CREATE TRIGGER IF NOT EXISTS trg_rv_runs_no_update_terminal
+            BEFORE UPDATE ON research_validation_runs WHEN OLD.status IN {_RV_TERMINAL}
+            BEGIN SELECT RAISE(ABORT, 'research_validation_runs: terminal run is immutable'); END""",
+        """CREATE TRIGGER IF NOT EXISTS trg_rv_runs_no_delete
+            BEFORE DELETE ON research_validation_runs
+            BEGIN SELECT RAISE(ABORT, 'research_validation_runs: runs cannot be deleted'); END""",
+    ]
+    return out
+
+
+def _ri_triggers_postgres() -> list[str]:
+    # `%%` is the psycopg literal-percent escape → PL/pgSQL receives a single `%` (the RAISE placeholder).
+    out = [
+        """CREATE OR REPLACE FUNCTION atp_ri_block_mutate() RETURNS trigger AS $$
+           BEGIN RAISE EXCEPTION '%%: rows are immutable', TG_TABLE_NAME; END; $$ LANGUAGE plpgsql""",
+        """CREATE OR REPLACE FUNCTION atp_rv_block_run_update() RETURNS trigger AS $$
+           BEGIN IF OLD.status IN ('COMPLETED','FAILED','INSUFFICIENT') THEN
+             RAISE EXCEPTION 'research_validation_runs: terminal run is immutable'; END IF;
+             RETURN NEW; END; $$ LANGUAGE plpgsql""",
+    ]
+    for tbl in _RI_IMMUTABLE_TABLES:
+        out += [
+            f"DROP TRIGGER IF EXISTS trg_{tbl}_no_upd ON {tbl}",
+            f"CREATE TRIGGER trg_{tbl}_no_upd BEFORE UPDATE ON {tbl} FOR EACH ROW EXECUTE FUNCTION atp_ri_block_mutate()",
+            f"DROP TRIGGER IF EXISTS trg_{tbl}_no_del ON {tbl}",
+            f"CREATE TRIGGER trg_{tbl}_no_del BEFORE DELETE ON {tbl} FOR EACH ROW EXECUTE FUNCTION atp_ri_block_mutate()",
+        ]
+    out += [
+        "DROP TRIGGER IF EXISTS trg_rv_runs_no_update ON research_validation_runs",
+        "CREATE TRIGGER trg_rv_runs_no_update BEFORE UPDATE ON research_validation_runs "
+        "FOR EACH ROW EXECUTE FUNCTION atp_rv_block_run_update()",
+        "DROP TRIGGER IF EXISTS trg_rv_runs_no_delete ON research_validation_runs",
+        "CREATE TRIGGER trg_rv_runs_no_delete BEFORE DELETE ON research_validation_runs "
+        "FOR EACH ROW EXECUTE FUNCTION atp_ri_block_mutate()",
+    ]
+    return out
+
+
+def _migration_021(dialect: str) -> list[str]:
+    """§ Phase R3.1A — immutable point-in-time AI/consensus intelligence collection + validation substrate.
+    RESEARCH DATA ONLY: no trading, no orders, no execution, never touches live `ohlc_bars`. Forward-only
+    snapshots (one per pilot symbol per completed NYSE session) with a canonical input envelope + provenance;
+    outcomes are pinned to a COMPLETED immutable research dataset ONLY after a horizon matures. All six tables
+    are DATABASE-immutable (insert-only, except validation_runs which is status-terminal). Additive; never
+    touches migrations 18/19/20 or live tables."""
+    t = _types(dialect)
+    ts, txt, i, b = t["TS"], t["TXT"], t["INT"], t["BOOL"]
+    tables = [
+        f"""CREATE TABLE IF NOT EXISTS research_intel_snapshots (
+            snapshot_id {txt} PRIMARY KEY, universe_id {txt} NOT NULL, universe_version {txt} NOT NULL,
+            sampling_policy_version {txt} NOT NULL, outcome_policy_version {txt} NOT NULL,
+            symbol {txt} NOT NULL, asset_class {txt} NOT NULL, exchange {txt} NOT NULL, currency {txt} NOT NULL,
+            exchange_tz {txt} NOT NULL, calendar_id {txt} NOT NULL, calendar_version {txt} NOT NULL,
+            decision_ts {ts} NOT NULL, decision_session_date {txt} NOT NULL, is_early_close {b},
+            decision_price {txt}, decision_price_source {txt}, decision_price_provenance_status {txt},
+            consensus_score {txt}, consensus_direction {txt}, consensus_confidence {txt}, consensus_status {txt},
+            governance_status {txt}, governance_reasons_json {txt}, data_completeness {txt},
+            expected_outcome_contract_json {txt} NOT NULL, adjustment_policy {txt} NOT NULL,
+            horizons_json {txt} NOT NULL, inputs_checksum {txt} NOT NULL, snapshot_checksum {txt} NOT NULL,
+            commit_sha {txt} NOT NULL, supersedes_snapshot_id {txt}, status {txt} NOT NULL,
+            created_at {ts} NOT NULL,
+            UNIQUE (symbol, calendar_version, decision_session_date, sampling_policy_version))""",
+        f"""CREATE TABLE IF NOT EXISTS research_intel_snapshot_inputs (
+            snapshot_id {txt} NOT NULL REFERENCES research_intel_snapshots(snapshot_id),
+            component_name {txt} NOT NULL, canonical_value_json {txt}, component_score {txt},
+            component_status {txt}, source_provider {txt}, source_event_ts {ts},
+            source_published_or_filed_ts {ts}, source_observed_ts {ts}, source_available_ts {ts},
+            provenance_status {txt} NOT NULL CHECK (provenance_status IN ('VERIFIED','OBSERVED_ONLY','UNKNOWN')),
+            missing_data_reason {txt}, freshness_state {txt}, created_at {ts} NOT NULL,
+            PRIMARY KEY (snapshot_id, component_name))""",
+        f"""CREATE TABLE IF NOT EXISTS research_intel_outcomes (
+            snapshot_id {txt} NOT NULL REFERENCES research_intel_snapshots(snapshot_id),
+            horizon_sessions {i} NOT NULL, snapshot_checksum {txt} NOT NULL,
+            dataset_id {txt} REFERENCES research_datasets(dataset_id), dataset_checksum {txt},
+            provider_contract_version {txt}, adjustment_policy {txt},
+            decision_bar_ts {ts}, decision_price {txt}, outcome_bar_ts {ts}, outcome_price {txt},
+            return_pct {txt}, direction_expected {txt}, direction_actual {txt}, direction_correct {b},
+            classification {txt}, neutral_threshold_pct {txt}, outcome_policy_version {txt} NOT NULL,
+            status {txt} NOT NULL CHECK (status IN ('MATURED','FAILED')), failure_code {txt},
+            evaluation_ts {ts} NOT NULL, commit_sha {txt} NOT NULL, created_at {ts} NOT NULL,
+            PRIMARY KEY (snapshot_id, horizon_sessions))""",
+        f"""CREATE TABLE IF NOT EXISTS research_intel_collection_events (
+            id {txt} PRIMARY KEY, snapshot_id {txt} REFERENCES research_intel_snapshots(snapshot_id),
+            event_type {txt} NOT NULL, severity {txt}, ts {ts}, symbol {txt}, session_date {txt},
+            details_json {txt}, commit_sha {txt}, created_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS research_validation_runs (
+            run_id {txt} PRIMARY KEY, universe_id {txt} NOT NULL, universe_version {txt} NOT NULL,
+            validation_policy_version {txt} NOT NULL, outcome_policy_version {txt} NOT NULL,
+            sampling_policy_version {txt} NOT NULL, gate_id {txt} NOT NULL,
+            snapshot_set_checksum {txt}, outcome_set_checksum {txt}, dataset_ids_json {txt},
+            commit_sha {txt} NOT NULL, result_checksum {txt},
+            status {txt} NOT NULL CHECK (status IN ('RUNNING','COMPLETED','FAILED','INSUFFICIENT')),
+            gate_report_json {txt}, created_at {ts} NOT NULL, started_at {ts}, ended_at {ts},
+            updated_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS research_validation_metrics (
+            run_id {txt} NOT NULL REFERENCES research_validation_runs(run_id),
+            metric_group {txt} NOT NULL, metrics_json {txt}, created_at {ts} NOT NULL,
+            PRIMARY KEY (run_id, metric_group))""",
+    ]
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS ix_ri_snap_symbol ON research_intel_snapshots(symbol, decision_session_date)",
+        "CREATE INDEX IF NOT EXISTS ix_ri_snap_universe ON research_intel_snapshots(universe_id, decision_session_date)",
+        "CREATE INDEX IF NOT EXISTS ix_ri_out_status ON research_intel_outcomes(status, horizon_sessions)",
+        "CREATE INDEX IF NOT EXISTS ix_ri_events_snap ON research_intel_collection_events(snapshot_id, event_type)",
+        "CREATE INDEX IF NOT EXISTS ix_rv_runs_status ON research_validation_runs(status, created_at)",
+    ]
+    triggers = _ri_triggers_postgres() if dialect == "postgres" else _ri_triggers_sqlite()
+    return tables + indexes + triggers
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -644,6 +775,7 @@ MIGRATIONS = [
     (18, "research_backtesting", _migration_018),
     (19, "backtest_actual_risk", _migration_019),
     (20, "research_datasets", _migration_020),
+    (21, "research_intel_validation", _migration_021),
 ]
 
 

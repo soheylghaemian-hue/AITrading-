@@ -115,7 +115,10 @@ def _checksum(decisions, trades, equity_points, metrics) -> str:
         "trades": [[t["symbol"], t["entry_ts"], str(t["entry_price"]), str(t.get("exit_price")),
                     str(t["quantity"]), str(t.get("net_pnl")), t.get("exit_reason")] for t in trades],
         "equity": [[e["seq"], str(e["equity"])] for e in equity_points],
-        "metrics": {k: v for k, v in metrics.items() if k not in ("daily_returns", "monthly_returns")},
+        # `avg_concurrent_positions` (R3.1A) is a pure display ALIAS of `exposure_time` (same value) — it is
+        # excluded from the fingerprint so the deterministic result_checksum stays byte-stable vs older runs.
+        "metrics": {k: v for k, v in metrics.items()
+                    if k not in ("daily_returns", "monthly_returns", "avg_concurrent_positions")},
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
 

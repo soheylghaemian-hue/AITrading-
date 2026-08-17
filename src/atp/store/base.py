@@ -656,6 +656,112 @@ class ResearchDatasetEventRow:
     created_at: str
 
 
+# --------------------------------------------------------------------------- § R3.1A intel/validation rows
+@dataclass(slots=True)
+class ResearchIntelSnapshotRow:
+    snapshot_id: str
+    universe_id: str
+    universe_version: str
+    sampling_policy_version: str
+    outcome_policy_version: str
+    symbol: str
+    asset_class: str
+    exchange: str
+    currency: str
+    exchange_tz: str
+    calendar_id: str
+    calendar_version: str
+    decision_ts: str
+    decision_session_date: str
+    is_early_close: bool | None
+    decision_price: str | None
+    decision_price_source: str | None
+    decision_price_provenance_status: str | None
+    consensus_score: str | None
+    consensus_direction: str | None
+    consensus_confidence: str | None
+    consensus_status: str | None
+    governance_status: str | None
+    governance_reasons_json: str | None
+    data_completeness: str | None
+    expected_outcome_contract_json: str
+    adjustment_policy: str
+    horizons_json: str
+    inputs_checksum: str
+    snapshot_checksum: str
+    commit_sha: str
+    supersedes_snapshot_id: str | None
+    status: str
+    created_at: str
+
+
+@dataclass(slots=True)
+class ResearchIntelInputRow:
+    snapshot_id: str
+    component_name: str
+    canonical_value_json: str | None
+    component_score: str | None
+    component_status: str | None
+    source_provider: str | None
+    source_event_ts: str | None
+    source_published_or_filed_ts: str | None
+    source_observed_ts: str | None
+    source_available_ts: str | None
+    provenance_status: str
+    missing_data_reason: str | None
+    freshness_state: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
+class ResearchIntelOutcomeRow:
+    snapshot_id: str
+    horizon_sessions: int
+    snapshot_checksum: str
+    dataset_id: str | None
+    dataset_checksum: str | None
+    provider_contract_version: str | None
+    adjustment_policy: str | None
+    decision_bar_ts: str | None
+    decision_price: str | None
+    outcome_bar_ts: str | None
+    outcome_price: str | None
+    return_pct: str | None
+    direction_expected: str | None
+    direction_actual: str | None
+    direction_correct: bool | None
+    classification: str | None
+    neutral_threshold_pct: str | None
+    outcome_policy_version: str
+    status: str
+    failure_code: str | None
+    evaluation_ts: str
+    commit_sha: str
+    created_at: str
+
+
+@dataclass(slots=True)
+class ResearchValidationRunRow:
+    run_id: str
+    universe_id: str
+    universe_version: str
+    validation_policy_version: str
+    outcome_policy_version: str
+    sampling_policy_version: str
+    gate_id: str
+    snapshot_set_checksum: str | None
+    outcome_set_checksum: str | None
+    dataset_ids_json: str | None
+    commit_sha: str
+    result_checksum: str | None
+    status: str
+    gate_report_json: str | None
+    created_at: str
+    started_at: str | None
+    ended_at: str | None
+    updated_at: str
+
+
 # --------------------------------------------------------------------------- shared SQL impl
 class SqlStore(Store):
     """DB-agnostic SQL implementation. Subclasses supply a DB-API connection, the parameter
@@ -2273,3 +2379,187 @@ class SqlStore(Store):
                          "FROM research_dataset_events WHERE dataset_id=? ORDER BY created_at ASC, id ASC "
                          "LIMIT ? OFFSET ?", (dataset_id, n, off))
         return [ResearchDatasetEventRow(*r) for r in rows]
+
+    # ---- § R3.1A immutable point-in-time intelligence snapshots + outcomes + validation ----
+    _RI_SNAP_COLS = (
+        "snapshot_id,universe_id,universe_version,sampling_policy_version,outcome_policy_version,symbol,"
+        "asset_class,exchange,currency,exchange_tz,calendar_id,calendar_version,decision_ts,"
+        "decision_session_date,is_early_close,decision_price,decision_price_source,"
+        "decision_price_provenance_status,consensus_score,consensus_direction,consensus_confidence,"
+        "consensus_status,governance_status,governance_reasons_json,data_completeness,"
+        "expected_outcome_contract_json,adjustment_policy,horizons_json,inputs_checksum,snapshot_checksum,"
+        "commit_sha,supersedes_snapshot_id,status,created_at")
+    _RI_IN_COLS = (
+        "snapshot_id,component_name,canonical_value_json,component_score,component_status,source_provider,"
+        "source_event_ts,source_published_or_filed_ts,source_observed_ts,source_available_ts,"
+        "provenance_status,missing_data_reason,freshness_state,created_at")
+    _RI_OUT_COLS = (
+        "snapshot_id,horizon_sessions,snapshot_checksum,dataset_id,dataset_checksum,provider_contract_version,"
+        "adjustment_policy,decision_bar_ts,decision_price,outcome_bar_ts,outcome_price,return_pct,"
+        "direction_expected,direction_actual,direction_correct,classification,neutral_threshold_pct,"
+        "outcome_policy_version,status,failure_code,evaluation_ts,commit_sha,created_at")
+    _RV_RUN_COLS = (
+        "run_id,universe_id,universe_version,validation_policy_version,outcome_policy_version,"
+        "sampling_policy_version,gate_id,snapshot_set_checksum,outcome_set_checksum,dataset_ids_json,"
+        "commit_sha,result_checksum,status,gate_report_json,created_at,started_at,ended_at,updated_at")
+
+    def ri_write_snapshot(self, *, snapshot: dict, inputs: list[dict], event: dict) -> bool:
+        """ATOMIC forward-only write of one immutable snapshot + its canonical input envelope + a collection
+        event, in ONE transaction. Idempotent: if the snapshot already exists (deterministic snapshot_id →
+        one per symbol/session/policy) nothing is written and False is returned. The inputs FK + single
+        transaction make an input/decision without a persisted snapshot impossible."""
+        s, now = snapshot, utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO research_intel_snapshots ({self._RI_SNAP_COLS}) "
+                       f"VALUES ({','.join(['?'] * 34)}) ON CONFLICT(snapshot_id) DO NOTHING",
+                       (s["snapshot_id"], s["universe_id"], s["universe_version"], s["sampling_policy_version"],
+                        s["outcome_policy_version"], s["symbol"], s["asset_class"], s["exchange"], s["currency"],
+                        s["exchange_tz"], s["calendar_id"], s["calendar_version"], s["decision_ts"],
+                        s["decision_session_date"], (1 if s.get("is_early_close") else 0),
+                        s.get("decision_price"), s.get("decision_price_source"),
+                        s.get("decision_price_provenance_status"), s.get("consensus_score"),
+                        s.get("consensus_direction"), s.get("consensus_confidence"), s.get("consensus_status"),
+                        s.get("governance_status"), s.get("governance_reasons_json"), s.get("data_completeness"),
+                        s["expected_outcome_contract_json"], s["adjustment_policy"], s["horizons_json"],
+                        s["inputs_checksum"], s["snapshot_checksum"], s["commit_sha"],
+                        s.get("supersedes_snapshot_id"), s.get("status", "COLLECTED"), now))
+            if cur.rowcount <= 0:
+                return False
+            for c in inputs:
+                self._exec(cur, f"INSERT INTO research_intel_snapshot_inputs ({self._RI_IN_COLS}) "
+                           f"VALUES ({','.join(['?'] * 14)})",
+                           (s["snapshot_id"], c["component_name"], c.get("canonical_value_json"),
+                            c.get("component_score"), c.get("component_status"), c.get("source_provider"),
+                            c.get("source_event_ts"), c.get("source_published_or_filed_ts"),
+                            c.get("source_observed_ts"), c.get("source_available_ts"), c["provenance_status"],
+                            c.get("missing_data_reason"), c.get("freshness_state"), now))
+            self._add_intel_event(cur, event, now)
+            return True
+
+    def ri_add_event(self, event: dict) -> None:
+        with self.tx() as cur:
+            self._add_intel_event(cur, event, utcnow_iso())
+
+    def _add_intel_event(self, cur, event: dict, now: str) -> None:
+        self._exec(cur, "INSERT INTO research_intel_collection_events (id,snapshot_id,event_type,severity,ts,"
+                   "symbol,session_date,details_json,commit_sha,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                   (event.get("id") or new_id(), event.get("snapshot_id"), event["event_type"],
+                    event.get("severity"), event.get("ts") or now, event.get("symbol"),
+                    event.get("session_date"), json.dumps(event.get("details") or {}),
+                    event.get("commit_sha"), now))
+
+    def _snap_row(self, r) -> ResearchIntelSnapshotRow:
+        r = list(r)
+        r[14] = None if r[14] is None else bool(r[14])
+        return ResearchIntelSnapshotRow(*r)
+
+    def ri_get_snapshot(self, snapshot_id: str) -> ResearchIntelSnapshotRow | None:
+        r = self._one(f"SELECT {self._RI_SNAP_COLS} FROM research_intel_snapshots WHERE snapshot_id=?",
+                      (snapshot_id,))
+        return self._snap_row(r) if r else None
+
+    def ri_list_snapshots(self, *, universe_id: str | None = None, symbol: str | None = None,
+                          limit: int = 2000) -> list[ResearchIntelSnapshotRow]:
+        n = max(1, min(20000, int(limit)))
+        where, params = [], []
+        if universe_id:
+            where.append("universe_id=?"); params.append(universe_id)
+        if symbol:
+            where.append("symbol=?"); params.append(symbol.upper())
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        rows = self._all(f"SELECT {self._RI_SNAP_COLS} FROM research_intel_snapshots{clause} "
+                         "ORDER BY decision_session_date ASC, symbol ASC LIMIT ?", (*params, n))
+        return [self._snap_row(r) for r in rows]
+
+    def ri_list_inputs(self, snapshot_id: str) -> list[ResearchIntelInputRow]:
+        rows = self._all(f"SELECT {self._RI_IN_COLS} FROM research_intel_snapshot_inputs WHERE snapshot_id=? "
+                         "ORDER BY component_name ASC", (snapshot_id,))
+        return [ResearchIntelInputRow(*r) for r in rows]
+
+    def ri_write_outcome(self, outcome: dict) -> bool:
+        """Write ONE immutable terminal outcome (MATURED|FAILED) for (snapshot, horizon). Idempotent (a row
+        is written once; a matured/failed outcome is never rewritten). Never reads live `ohlc_bars`."""
+        o, now = outcome, utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO research_intel_outcomes ({self._RI_OUT_COLS}) "
+                       f"VALUES ({','.join(['?'] * 23)}) ON CONFLICT(snapshot_id,horizon_sessions) DO NOTHING",
+                       (o["snapshot_id"], int(o["horizon_sessions"]), o["snapshot_checksum"], o.get("dataset_id"),
+                        o.get("dataset_checksum"), o.get("provider_contract_version"), o.get("adjustment_policy"),
+                        o.get("decision_bar_ts"), o.get("decision_price"), o.get("outcome_bar_ts"),
+                        o.get("outcome_price"), o.get("return_pct"), o.get("direction_expected"),
+                        o.get("direction_actual"),
+                        (None if o.get("direction_correct") is None else (1 if o["direction_correct"] else 0)),
+                        o.get("classification"), o.get("neutral_threshold_pct"), o["outcome_policy_version"],
+                        o["status"], o.get("failure_code"), now, o["commit_sha"], now))
+            return cur.rowcount > 0
+
+    def _out_row(self, r) -> ResearchIntelOutcomeRow:
+        r = list(r)
+        r[14] = None if r[14] is None else bool(r[14])
+        return ResearchIntelOutcomeRow(*r)
+
+    def ri_list_outcomes(self, *, snapshot_id: str | None = None, status: str | None = None,
+                         limit: int = 20000) -> list[ResearchIntelOutcomeRow]:
+        n = max(1, min(200000, int(limit)))
+        where, params = [], []
+        if snapshot_id:
+            where.append("snapshot_id=?"); params.append(snapshot_id)
+        if status:
+            where.append("status=?"); params.append(status)
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        rows = self._all(f"SELECT {self._RI_OUT_COLS} FROM research_intel_outcomes{clause} LIMIT ?",
+                         (*params, n))
+        return [self._out_row(r) for r in rows]
+
+    def ri_existing_outcome_keys(self) -> set:
+        """(snapshot_id, horizon) pairs already terminal (MATURED|FAILED) — so the evaluator skips them."""
+        return {(r[0], int(r[1])) for r in self._all(
+            "SELECT snapshot_id,horizon_sessions FROM research_intel_outcomes")}
+
+    def ri_count_events(self, event_type: str | None = None) -> int:
+        if event_type:
+            r = self._one("SELECT COUNT(*) FROM research_intel_collection_events WHERE event_type=?",
+                          (event_type,))
+        else:
+            r = self._one("SELECT COUNT(*) FROM research_intel_collection_events")
+        return int(r[0]) if r else 0
+
+    # ---- validation runs ----
+    def rv_create_run(self, *, run_id, universe_id, universe_version, validation_policy_version,
+                      outcome_policy_version, sampling_policy_version, gate_id, commit_sha) -> None:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO research_validation_runs ({self._RV_RUN_COLS}) "
+                       f"VALUES ({','.join(['?'] * 18)})",
+                       (run_id, universe_id, universe_version, validation_policy_version, outcome_policy_version,
+                        sampling_policy_version, gate_id, None, None, None, commit_sha, None, "RUNNING", None,
+                        now, now, None, now))
+
+    def rv_finalize_run(self, run_id: str, *, expected_from: str, status: str, snapshot_set_checksum=None,
+                        outcome_set_checksum=None, dataset_ids_json=None, result_checksum=None,
+                        gate_report_json=None, metrics: list[dict] = ()) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            for m in metrics:
+                self._exec(cur, "INSERT INTO research_validation_metrics (run_id,metric_group,metrics_json,"
+                           "created_at) VALUES (?,?,?,?)", (run_id, m["metric_group"], m["metrics_json"], now))
+            self._exec(cur, "UPDATE research_validation_runs SET status=?, snapshot_set_checksum=?, "
+                       "outcome_set_checksum=?, dataset_ids_json=?, result_checksum=?, gate_report_json=?, "
+                       "ended_at=?, updated_at=? WHERE run_id=? AND status=?",
+                       (status, snapshot_set_checksum, outcome_set_checksum, dataset_ids_json, result_checksum,
+                        gate_report_json, now, now, run_id, expected_from))
+            return cur.rowcount > 0
+
+    def rv_get_run(self, run_id: str) -> ResearchValidationRunRow | None:
+        r = self._one(f"SELECT {self._RV_RUN_COLS} FROM research_validation_runs WHERE run_id=?", (run_id,))
+        return ResearchValidationRunRow(*r) if r else None
+
+    def rv_list_runs(self, limit: int = 50) -> list[ResearchValidationRunRow]:
+        n = max(1, min(200, int(limit)))
+        rows = self._all(f"SELECT {self._RV_RUN_COLS} FROM research_validation_runs "
+                         "ORDER BY created_at DESC LIMIT ?", (n,))
+        return [ResearchValidationRunRow(*r) for r in rows]
+
+    def rv_list_metrics(self, run_id: str) -> list[tuple]:
+        return self._all("SELECT metric_group,metrics_json FROM research_validation_metrics WHERE run_id=? "
+                         "ORDER BY metric_group ASC", (run_id,))

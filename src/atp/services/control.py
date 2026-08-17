@@ -33,6 +33,8 @@ from ..news.analysis import sentiment_label
 from ..riskcontrol import build_risk_config_view, build_risk_events, build_risk_status, validate_config
 from ..research import readmodel as bt_read
 from ..research import backfill as bf
+from ..research.validation import readmodel as val_read
+from ..research.intel.legacy_diag import reconcile_legacy
 from ..research.runner import OneActiveRunError, ValidationError as BtValidationError, run_backtest
 from ..optflow.diagnostics import audit_options_provider
 from ..optflow.provider import resolve_provider as resolve_options_provider
@@ -525,6 +527,40 @@ def get_dataset_coverage(dataset_id: str) -> dict:
         if row is None:
             raise HTTPException(404, {"detail": "not found"})
         return bf.dataset_coverage(ctx.store, row)
+
+
+# ------------------------------------------------------ § R3.1A AI-validation (RESEARCH DATA ONLY, GET-only)
+# NO POST that runs collection / evaluation / validation — those are external one-shot workers
+# (python -m atp.research.intel.worker | atp.research.validation.worker), never HTTP-triggered.
+@app.get("/research/validation/coverage")
+def research_validation_coverage() -> dict:
+    """Collection coverage, effective vs raw sample counts, provenance quality, pilot policy versions, the
+    legacy reconciliation diagnostic, and the frozen evidence gate. Read-only; never trades."""
+    with ctx.lock:
+        return val_read.coverage_view(ctx.store)
+
+
+@app.get("/research/validation/runs")
+def research_validation_runs(limit: int = 50) -> dict:
+    with ctx.lock:
+        return val_read.runs_view(ctx.store.rv_list_runs(limit=limit))
+
+
+@app.get("/research/validation/runs/{run_id}")
+def research_validation_run(run_id: str) -> dict:
+    with ctx.lock:
+        row = ctx.store.rv_get_run(run_id)
+        if row is None:
+            raise HTTPException(404, {"detail": "not found"})
+        return val_read.run_detail(ctx.store, row)
+
+
+@app.get("/research/intel/legacy-reconciliation")
+def research_intel_legacy_reconciliation() -> dict:
+    """READ-ONLY diagnostic proving the legacy governance/prediction orphan + NVDA discrepancy. Never
+    modifies legacy rows."""
+    with ctx.lock:
+        return reconcile_legacy(ctx.store)
 
 
 @app.get("/backtests")
