@@ -49,7 +49,14 @@ jobs:
       - run: python -m pytest tests/test_autopilot*.py tests/test_brain_contracts.py
       - name: Reject tracked secret files
         run: |
-          if git ls-files | grep -E '(^|/)(\.env($|\.)|atp\.env$|.*\.(pem|key)$)'; then
+          blocked_files="$(
+            git ls-files \
+              | grep -E '(^|/)(\.env($|\.)|atp\.env$|.*\.(pem|key)$)' \
+              | grep -Ev '(^|/)\.env\.(example|sample|template)$' \
+              || true
+          )"
+          if [ -n "$blocked_files" ]; then
+            printf '%s\n' "$blocked_files"
             echo 'Tracked secret-like file detected'
             exit 1
           fi
