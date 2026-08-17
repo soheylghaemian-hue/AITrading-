@@ -156,36 +156,43 @@ export function MarketTerminal({ s, symbol, connected }: { s: Snapshot | null; s
         ))}
       </div>
 
-      {/* ── compact chart + fixed AI explanation panel (side by side) ── */}
-      <div className="term-main">
-        <div className="card term-chart compact">
+      {/* ── workbench (§ UX-1.1): two independently-flowing columns. Flat DOM order — chart, AI, intel,
+          detail — so mobile stacks them in that semantic order; on desktop CSS grid-areas place the
+          chart/intel/detail in the LEFT column and the AI panel in the RIGHT column (sticky + bounded,
+          internal scroll). The AI panel no longer determines the left column's height, so the chart is
+          never stretched and the intelligence cards start immediately below it. ── */}
+      <div className="workbench">
+        <div className="card term-chart compact wb-chart">
           <MarketChart bars={ohlc.bars} loading={ohlc.loading} error={ohlc.error} interval={iv} onInterval={setIv} ai={ai} compact />
         </div>
-        <AiAnalysisPanel dec={dec} risk={s?.trading_risk || null} mode={s?.mode} executionEnabled={s?.execution_enabled}
-          convictionInputs={convictionInputs} consensus={consensus.data} governance={governance.data}
-          riskStatus={risk.data?.status ?? null} completeness={completeness.data} />
-      </div>
 
-      {/* ── compact intelligence-card grid (always visible; click → detail tab) ── */}
-      <div className="intel-grid">
-        <NewsCard items={news.data?.items ?? null} onOpen={open("News")} />
-        <FundamentalsCard data={fundamentals.data} onOpen={open("Fundamentals")} />
-        <OptionsCard data={options.data} onOpen={open("Options")} />
-        <TradersCard data={traders.data} onOpen={open("Traders")} />
-        <InstitutionalCard data={institutional.data} />
-        <InsiderClusterCard data={institutional.data} />
-        <div className="icard neu"><div className="ic-head"><span className="label">Market Data Quality</span></div>
-          <div className="ic-body ic-dq"><DataQuality quote={quote} refData={refData} /></div></div>
-      </div>
+        <div className="wb-ai">
+          <AiAnalysisPanel dec={dec} risk={s?.trading_risk || null} mode={s?.mode} executionEnabled={s?.execution_enabled}
+            convictionInputs={convictionInputs} consensus={consensus.data} governance={governance.data}
+            riskStatus={risk.data?.status ?? null} completeness={completeness.data} />
+        </div>
 
-      {/* ── detailed selected-tab content (reuses the same fetched data — no re-fetch) ── */}
-      <div className="card" id="term-detail">
-        {tab === "Overview" && <OverviewPane quote={quote} />}
-        {tab === "News" && <NewsList items={news.data?.items ?? null} loading={news.loading} error={news.error} />}
-        {tab === "Fundamentals" && <FundamentalsList data={fundamentals.data} loading={fundamentals.loading} error={fundamentals.error} symbol={symbol} />}
-        {tab === "Options" && <OptionsList data={options.data} loading={options.loading} error={options.error} symbol={symbol} />}
-        {tab === "Traders" && <TradersList data={traders.data} loading={traders.loading} error={traders.error} symbol={symbol} />}
-        {tab === "AI History" && <AiHistoryFeed symbol={symbol} />}
+        {/* compact intelligence-card grid — begins directly below the chart in the left column */}
+        <div className="intel-grid wb-intel">
+          <NewsCard items={news.data?.items ?? null} onOpen={open("News")} />
+          <FundamentalsCard data={fundamentals.data} onOpen={open("Fundamentals")} />
+          <OptionsCard data={options.data} onOpen={open("Options")} />
+          <TradersCard data={traders.data} onOpen={open("Traders")} />
+          <InstitutionalCard data={institutional.data} />
+          <InsiderClusterCard data={institutional.data} />
+          <div className="icard neu"><div className="ic-head"><span className="label">Market Data Quality</span></div>
+            <div className="ic-body ic-dq"><DataQuality quote={quote} refData={refData} /></div></div>
+        </div>
+
+        {/* detailed selected-tab content (reuses the same fetched data — no re-fetch) */}
+        <div className="card wb-detail" id="term-detail">
+          {tab === "Overview" && <OverviewPane quote={quote} />}
+          {tab === "News" && <NewsList items={news.data?.items ?? null} loading={news.loading} error={news.error} />}
+          {tab === "Fundamentals" && <FundamentalsList data={fundamentals.data} loading={fundamentals.loading} error={fundamentals.error} symbol={symbol} />}
+          {tab === "Options" && <OptionsList data={options.data} loading={options.loading} error={options.error} symbol={symbol} />}
+          {tab === "Traders" && <TradersList data={traders.data} loading={traders.loading} error={traders.error} symbol={symbol} />}
+          {tab === "AI History" && <AiHistoryFeed symbol={symbol} />}
+        </div>
       </div>
     </div>
   );

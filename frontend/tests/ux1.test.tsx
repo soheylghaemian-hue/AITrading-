@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { MarketTerminal } from "@/components/terminal/MarketTerminal";
 import { statusStrip } from "@/lib/select";
 import { computeReadiness } from "@/lib/readiness";
 import { CandleChart } from "@/components/CandleChart";
@@ -13,6 +16,60 @@ import {
 import type { OhlcBar } from "@/lib/ohlc";
 
 const r = (el: React.ReactElement) => renderToStaticMarkup(el);
+const CSS = readFileSync(join(__dirname, "..", "app", "globals.css"), "utf8");
+/** Extract the declaration block of a single CSS rule by its exact selector prefix. */
+function ruleBlock(css: string, selector: string): string {
+  const i = css.indexOf(selector + "{");
+  if (i < 0) return "";
+  return css.slice(i, css.indexOf("}", i));
+}
+
+// ---- UX-1.1 workbench layout — no dead space, independent columns ----------
+describe("UX-1.1 workbench — chart never inherits the AI panel height", () => {
+  const base: any = {
+    mode: "paper", connected: true, execution_enabled: false,
+    global_market_data: [{ region: "USA", symbol: "NVDA", source: "MASSIVE", status: "DATA_AVAILABLE", realtime: true, bid: 100.4, ask: 100.6, last: 100.5, volume: 1, latency_ms: 72, timestamp: "2026-08-15T14:30:00Z" }],
+    autonomous: { status: "ARMED", decisions: [] },
+  };
+  it("flat DOM order is chart → AI → intel → detail (so mobile stacks in semantic order)", () => {
+    const h = r(<MarketTerminal s={base} symbol="NVDA" connected />);
+    const iChart = h.indexOf("wb-chart"), iAi = h.indexOf("wb-ai"), iIntel = h.indexOf("wb-intel"), iDetail = h.indexOf("wb-detail");
+    expect(iChart).toBeGreaterThan(-1);
+    expect(iAi).toBeGreaterThan(iChart);
+    expect(iIntel).toBeGreaterThan(iAi);
+    expect(iDetail).toBeGreaterThan(iIntel);
+  });
+  it("intelligence grid follows the chart inside the workbench (left-column structure)", () => {
+    const h = r(<MarketTerminal s={base} symbol="NVDA" connected />);
+    expect(h).toContain("intel-grid wb-intel");
+    expect(h.indexOf("wb-chart")).toBeLessThan(h.indexOf("intel-grid wb-intel"));
+  });
+  it("workbench uses align-items:start (no grid stretch) and grid-areas — the buggy rule is gone", () => {
+    const wb = ruleBlock(CSS, ".workbench");
+    expect(wb).toContain("align-items:start");
+    expect(wb).toContain("grid-template-areas");
+    expect(CSS).not.toContain(".term-main{");   // the old single-row dead-space rule is removed
+  });
+  it("AI panel has a bounded desktop height with internal scroll", () => {
+    const ai = ruleBlock(CSS, ".wb-ai");
+    expect(ai).toContain("max-height:min(");
+    expect(ai).toContain("overflow-y:auto");
+    expect(ai).toContain("position:sticky");
+  });
+  it("mobile drops the desktop bound: single column, no forced height, no nested scroll", () => {
+    // the ≤1000px media query relaxes the AI panel back to natural flow
+    expect(CSS).toMatch(/@media \(max-width:1000px\)\{[^}]*\.workbench\{grid-template-columns:1fr/);
+    expect(CSS).toMatch(/\.wb-ai\{position:static;max-height:none;overflow:visible/);
+  });
+  it("no excessive min-height / stretch on the workbench or chart shell", () => {
+    for (const sel of [".workbench", ".wb-chart", ".term-chart", ".wb-intel", ".wb-detail"]) {
+      const b = ruleBlock(CSS, sel);
+      expect(b).not.toMatch(/min-height:\s*(100%|100vh)/);
+      expect(b).not.toMatch(/flex:\s*1\b/);
+      expect(b).not.toMatch(/align-items:\s*stretch/);
+    }
+  });
+});
 
 // ---- global safety strip (kill switch + execution always explicit) --------
 describe("global safety strip — execution + kill switch always explicit, never fabricated", () => {
