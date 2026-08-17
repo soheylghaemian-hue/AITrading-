@@ -493,6 +493,17 @@ def _migration_018(dialect: str) -> list[str]:
     return tables + indexes + triggers
 
 
+def _migration_019(dialect: str) -> list[str]:
+    """§ R3.0 hotfix — persist BOTH the expected (decision-derived) and the actual (gap-safe, computed at
+    the real fill) risk-per-share on each backtest trade, so a gap-up fill can be shown to never exceed
+    the configured risk budget. Additive columns only; no data change."""
+    m = _types(dialect)["MONEY"]
+    return [
+        f"ALTER TABLE backtest_trades ADD COLUMN expected_risk_per_share {m}",
+        f"ALTER TABLE backtest_trades ADD COLUMN actual_risk_per_share {m}",
+    ]
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -513,6 +524,7 @@ MIGRATIONS = [
     (16, "macro_core_cpi", _migration_016),
     (17, "risk_control_center", _migration_017),
     (18, "research_backtesting", _migration_018),
+    (19, "backtest_actual_risk", _migration_019),
 ]
 
 

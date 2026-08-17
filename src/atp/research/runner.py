@@ -137,14 +137,19 @@ def run_backtest(store, *, owner: str, req: dict, commit_ref: str | None = None)
     costs = Costs(_dec(normalized["costs"]["spread_bps"]), _dec(normalized["costs"]["slippage_bps"]),
                   _dec(normalized["costs"]["commission_per_share"]), _dec(normalized["costs"]["min_commission"]))
 
-    # Resolve the point-in-time availability policy for each symbol (fails the run if unknown).
+    # Resolve the point-in-time availability policy for each symbol (fails the run if unknown), and
+    # reject any date outside the versioned calendar's declared coverage (unknown holidays are unsafe).
     policy = None
     policy_error = None
-    for sym in symbols:
-        try:
-            policy = cal.resolve_policy(sym, interval)
-        except cal.PointInTimeError as e:
-            policy_error = str(e); break
+    if not cal.calendar_covers(start_dt, end_dt):
+        policy_error = (f"requested range {start_dt.date()}..{end_dt.date()} is outside the "
+                        f"{cal.CALENDAR_VERSION} calendar coverage {cal.CALENDAR_START}..{cal.CALENDAR_END}")
+    else:
+        for sym in symbols:
+            try:
+                policy = cal.resolve_policy(sym, interval)
+            except cal.PointInTimeError as e:
+                policy_error = str(e); break
 
     run_id = new_id()
     risk_cfg_row = store.get_risk_config()

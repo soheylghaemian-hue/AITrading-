@@ -63,7 +63,9 @@ def trades_view(rows) -> list[dict]:
              "quantity": _f(t.quantity), "gross_pnl": _f(t.gross_pnl), "commission": _f(t.commission),
              "slippage": _f(t.slippage), "net_pnl": _f(t.net_pnl),
              "return_pct": (None if t.return_pct is None else float(t.return_pct)), "bars_held": t.bars_held,
-             "exit_reason": t.exit_reason, "ambiguous": bool(t.ambiguous)} for t in rows]
+             "exit_reason": t.exit_reason, "ambiguous": bool(t.ambiguous),
+             "expected_risk_per_share": _f(t.expected_risk_per_share),
+             "actual_risk_per_share": _f(t.actual_risk_per_share)} for t in rows]
 
 
 def equity_view(rows) -> list[dict]:

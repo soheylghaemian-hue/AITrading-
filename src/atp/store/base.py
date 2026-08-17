@@ -559,6 +559,8 @@ class BacktestTradeRow:
     exit_reason: str | None
     ambiguous: bool
     created_at: str
+    expected_risk_per_share: str | None = None
+    actual_risk_per_share: str | None = None
 
 
 @dataclass(slots=True)
@@ -1908,9 +1910,10 @@ class SqlStore(Store):
         rows = self._all("SELECT id,run_id,symbol,side,entry_decision_id,exit_decision_id,entry_ts,"
                          "entry_fill_ts,entry_price,initial_stop_price,exit_ts,exit_fill_ts,exit_price,"
                          "quantity,gross_pnl,commission,slippage,net_pnl,return_pct,bars_held,exit_reason,"
-                         "ambiguous,created_at FROM backtest_trades WHERE run_id=? "
-                         "ORDER BY entry_ts ASC LIMIT ? OFFSET ?", (run_id, n, off))
-        return [BacktestTradeRow(*r[:21], bool(r[21]), r[22]) for r in rows]
+                         "ambiguous,created_at,expected_risk_per_share,actual_risk_per_share "
+                         "FROM backtest_trades WHERE run_id=? ORDER BY entry_ts ASC LIMIT ? OFFSET ?",
+                         (run_id, n, off))
+        return [BacktestTradeRow(*r[:21], bool(r[21]), r[22], r[23], r[24]) for r in rows]
 
     def bt_list_equity(self, run_id: str, limit: int = 50000) -> list[BacktestEquityPointRow]:
         n = max(1, min(50000, int(limit)))
@@ -1960,8 +1963,9 @@ class SqlStore(Store):
                 self._exec(cur, "INSERT INTO backtest_trades (id,run_id,symbol,side,entry_decision_id,"
                            "exit_decision_id,entry_ts,entry_fill_ts,entry_price,initial_stop_price,exit_ts,"
                            "exit_fill_ts,exit_price,quantity,gross_pnl,commission,slippage,net_pnl,return_pct,"
-                           "bars_held,exit_reason,ambiguous,created_at) "
-                           "VALUES (?,?,?,'LONG',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                           "bars_held,exit_reason,ambiguous,created_at,expected_risk_per_share,"
+                           "actual_risk_per_share) "
+                           "VALUES (?,?,?,'LONG',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                            (scoped(t["id"]), run_id, t["symbol"], scoped(t.get("entry_decision_id")),
                             scoped(t.get("exit_decision_id")),
                             t["entry_ts"], t["entry_fill_ts"], money_str(t["entry_price"]),
@@ -1970,7 +1974,8 @@ class SqlStore(Store):
                             money_str(t["commission"]), money_str(t["slippage"]), om(t.get("net_pnl")),
                             (None if t.get("return_pct") is None else str(t["return_pct"])),
                             (None if t.get("bars_held") is None else int(t["bars_held"])), t.get("exit_reason"),
-                            1 if t.get("ambiguous") else 0, now))
+                            1 if t.get("ambiguous") else 0, now,
+                            om(t.get("expected_risk_per_share")), om(t.get("actual_risk_per_share"))))
             for e in equity_points:
                 self._exec(cur, "INSERT INTO backtest_equity_points (run_id,seq,ts,cash,equity,realized_pnl,"
                            "unrealized_pnl,daily_pnl,gross_exposure_pct,net_exposure_pct,drawdown_pct) "

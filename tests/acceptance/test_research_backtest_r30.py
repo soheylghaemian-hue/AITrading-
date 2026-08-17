@@ -21,7 +21,10 @@ from atp.research import calendars as cal
 from atp.research.engine import Costs, replay
 from atp.research.risk_adapter import evaluate_sim_risk
 from atp.research.runner import OneActiveRunError, ValidationError, run_backtest
-from atp.research.strategy import OhlcTrendBaseline, PitContext, ResearchBar, atr, get_strategy
+from atp.research.strategy import (
+    ENTER_LONG, OhlcTrendBaseline, PitContext, ResearchBar, ResearchDecision, ResearchStrategy, atr,
+    get_strategy,
+)
 from atp.store import open_store
 
 
@@ -103,12 +106,16 @@ def test_next_candle_fill_and_costs():
 def test_risk_based_sizing_and_stop():
     s = _store()
     sess = _sessions(100)
-    _seed(s, "NVDA", sess, _uptrend(), rng=1.0)   # TR == 2 ⇒ ATR14 == 2 ⇒ 2·ATR == 4
+    _seed(s, "NVDA", sess, _uptrend(), rng=1.0)   # TR == 2 ⇒ ATR14 == 2 ⇒ 2·ATR == 4 (expected rps)
     run = s.bt_get_run(_run(s, ["NVDA"], sess, risk={"risk_per_trade_pct": "1"}))
     t = s.bt_list_trades(run.run_id)[0]
-    # risk_budget = 100000 * 1% = 1000; risk_per_share = 2*ATR = 4 ⇒ qty = floor(1000/4) = 250
-    assert Decimal(t.quantity) == 250
-    # stop persisted = entry-decision close − 2*ATR, and it is BELOW the entry fill.
+    # GAP-SAFE (correction #1): sizing uses the ACTUAL fill vs the persisted stop, not the decision-close.
+    # risk_budget = 100000·1% = 1000; expected rps = 4.00; actual rps = fill − stop = 4.02 (fill > close by
+    # the adverse cost) ⇒ qty = floor(1000/4.02) = 248, and 248·4.02 = 996.96 ≤ 1000 (budget never exceeded).
+    assert Decimal(t.expected_risk_per_share) == Decimal("4.00")
+    assert Decimal(t.actual_risk_per_share) == Decimal("4.02")
+    assert Decimal(t.quantity) == 248
+    assert Decimal(t.quantity) * Decimal(t.actual_risk_per_share) <= Decimal("1000")
     assert Decimal(t.initial_stop_price) < Decimal(t.entry_price)
 
 
@@ -125,8 +132,10 @@ def test_invalid_stop_distance_guard():
 
         def decide(self, ctx):
             b = ctx.bars[-1]
+            # a stop AT/ABOVE the entry ⇒ actual_risk_per_share (fill − stop) ≤ 0 ⇒ INVALID_STOP_DISTANCE
             return ResearchDecision(ts=b.ts, symbol=ctx.symbol, strategy_id="ZERO", strategy_version=1,
-                                    action=ENTER_LONG, evidence={"initial_stop": b.close, "risk_per_share": Decimal(0)})
+                                    action=ENTER_LONG,
+                                    evidence={"initial_stop": b.close + 10, "risk_per_share": Decimal(0)})
 
     days = ["2026-01-02", "2026-01-05", "2026-01-06"]   # consecutive NYSE sessions
     bars = [ResearchBar(f"{d}T00:00:00+00:00", Decimal(100), Decimal(100), Decimal(100), Decimal(100), Decimal(1))
@@ -392,3 +401,228 @@ def test_research_source_has_no_execution_call_identifiers():
         text = f.read_text()
         for tok in forbidden:
             assert tok not in text, f"{f.name} must not reference {tok}"
+
+
+# ============================ CTO hotfix — four correctness defects ============================
+_RCFG = {"capital": Decimal(100000), "max_daily_loss_pct": Decimal(2), "max_position_risk_pct": Decimal(3),
+         "max_portfolio_exposure_pct": Decimal(100), "max_drawdown_pct": Decimal(20),
+         "warning_threshold_pct": Decimal(80), "currency": "USD"}
+_COSTS = Costs(Decimal(2), Decimal(1), Decimal("0.005"), Decimal(1))
+
+
+class _EnterAt(ResearchStrategy):
+    """Fake strategy: emit ENTER_LONG whenever len(bars) is in `enter_lens`, with a stop = close − dist."""
+    strategy_id, version = "FAKE", 1
+
+    def __init__(self, enter_lens, dist=Decimal(10), warmup=1):
+        self.enter_lens, self._dist, self.warmup_bars = set(enter_lens), Decimal(str(dist)), warmup
+
+    @property
+    def config(self):
+        return {"enter_lens": sorted(self.enter_lens)}
+
+    def decide(self, ctx):
+        b = ctx.bars[-1]
+        base = dict(ts=b.ts, symbol=ctx.symbol, strategy_id="FAKE", strategy_version=1)
+        if len(ctx.bars) in self.enter_lens:
+            stop = b.close - self._dist
+            return ResearchDecision(**base, action=ENTER_LONG,
+                                    evidence={"initial_stop": stop, "risk_per_share": self._dist})
+        return ResearchDecision(**base, action="HOLD")
+
+
+def _bars(day_price):
+    """[(ts, o,h,l,c)] → ResearchBar list."""
+    return [ResearchBar(ts, Decimal(str(o)), Decimal(str(h)), Decimal(str(l)), Decimal(str(c)), Decimal(1000))
+            for ts, o, h, l, c in day_price]
+
+
+# ---- Defect 1: gap-safe sizing never exceeds the risk budget ----
+def test_gapup_fill_never_exceeds_risk_budget():
+    days = ["2026-06-01", "2026-06-02", "2026-06-03"]   # consecutive NYSE sessions
+    # decision at bar0 (close 100, stop 90); bar1 GAPS UP to open 130 (fill there); bar2 normal.
+    bars = _bars([(f"{days[0]}T00:00:00+00:00", 100, 101, 99, 100),
+                  (f"{days[1]}T00:00:00+00:00", 130, 131, 129, 130),   # gap-up open
+                  (f"{days[2]}T00:00:00+00:00", 130, 131, 129, 130)])
+    res = replay(symbols=["NVDA"], bars_by_symbol={"NVDA": bars}, policy=cal.resolve_policy("NVDA", "1D"),
+                 strategy=_EnterAt([1], dist=Decimal(10)), risk_config=_RCFG, costs=_COSTS,
+                 starting_capital=Decimal(100000), max_concurrent=1)
+    t = res.trades[0]
+    budget = Decimal(100000) * _RCFG["max_position_risk_pct"] / 100     # = 3000
+    exp_rps = Decimal(str(t["expected_risk_per_share"]))
+    act_rps = Decimal(str(t["actual_risk_per_share"]))
+    assert exp_rps == Decimal("10.00")                                 # decision-derived
+    assert act_rps > exp_rps                                           # gap widened the REAL risk/share
+    assert Decimal(t["initial_stop_price"]) == Decimal("90.00")        # stop persisted, NOT widened
+    assert t["quantity"] * act_rps <= budget                           # budget NEVER exceeded post-gap
+
+
+# ---- Defect 2: a symbol's same-timestamp close never leaks into another symbol's earlier open ----
+def _aaa_qty_with_bbb_close(bbb_bar2_close):
+    days = ["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04"]
+    bbb = _bars([(f"{days[0]}T00:00:00+00:00", 100, 101, 99, 100),
+                 (f"{days[1]}T00:00:00+00:00", 100, 101, 99, 100),
+                 (f"{days[2]}T00:00:00+00:00", 100, 101, 99, bbb_bar2_close),   # varies
+                 (f"{days[3]}T00:00:00+00:00", 100, 101, 99, 100)])
+    aaa = _bars([(f"{days[0]}T00:00:00+00:00", 100, 101, 99, 100),
+                 (f"{days[1]}T00:00:00+00:00", 100, 101, 99, 100),
+                 (f"{days[2]}T00:00:00+00:00", 100, 101, 99, 100),
+                 (f"{days[3]}T00:00:00+00:00", 100, 101, 99, 100)])
+    res = replay(symbols=["AAA", "BBB"], bars_by_symbol={"AAA": aaa, "BBB": bbb},
+                 policy=cal.resolve_policy("NVDA", "1D"),   # policy only carries interval; symbol-agnostic here
+                 strategy=None, risk_config=_RCFG, costs=_COSTS, starting_capital=Decimal(100000),
+                 max_concurrent=2) if False else None
+    # BBB enters at bar0, AAA enters at bar1 (fills at bar2 — the shared timestamp whose BBB close varies)
+    from atp.research.engine import replay as _replay
+    res = _replay(symbols=["AAA", "BBB"], bars_by_symbol={"AAA": aaa, "BBB": bbb},
+                  policy=cal.resolve_policy("NVDA", "1D"), strategy=_MultiFake(), risk_config=_RCFG,
+                  costs=_COSTS, starting_capital=Decimal(100000), max_concurrent=2)
+    a = [t for t in res.trades if t["symbol"] == "AAA"]
+    return a[0]["quantity"] if a else None
+
+
+class _MultiFake(ResearchStrategy):
+    strategy_id, version, warmup_bars = "MULTI", 1, 1
+
+    @property
+    def config(self):
+        return {}
+
+    def decide(self, ctx):
+        b = ctx.bars[-1]
+        base = dict(ts=b.ts, symbol=ctx.symbol, strategy_id="MULTI", strategy_version=1)
+        # BBB enters after 1 bar, AAA after 2 bars → AAA fills at bar2 (shared ts with BBB's varying close)
+        want = {"BBB": 1, "AAA": 2}.get(ctx.symbol)
+        if want is not None and len(ctx.bars) == want:
+            return ResearchDecision(**base, action=ENTER_LONG,
+                                    evidence={"initial_stop": b.close - 10, "risk_per_share": Decimal(10)})
+        return ResearchDecision(**base, action="HOLD")
+
+
+def test_multisymbol_open_ignores_other_symbol_same_ts_close():
+    q_low = _aaa_qty_with_bbb_close(100)
+    q_high = _aaa_qty_with_bbb_close(500)     # a huge same-timestamp close for BBB
+    assert q_low is not None and q_high is not None
+    assert q_low == q_high     # AAA's open sizing used BBB's PRIOR close, not its same-timestamp close
+
+
+# ---- Defect 3: daily state resets BEFORE the risk gate ----
+def _hbars(day, ohlc_list):
+    buckets = cal._session_hour_buckets(day)
+    assert len(ohlc_list) == len(buckets), (len(ohlc_list), len(buckets))
+    return [ResearchBar(b.isoformat(), Decimal(str(o)), Decimal(str(h)), Decimal(str(l)), Decimal(str(c)), Decimal(1000))
+            for b, (o, h, l, c) in zip(buckets, ohlc_list)]
+
+
+def test_daily_loss_blocks_same_session_and_resets_next_session():
+    from datetime import date
+    d1, d2 = date(2026, 6, 1), date(2026, 6, 2)          # two consecutive EDT sessions (7 buckets each)
+    # Session 1: enter (bar0), a violent crash below the stop (bar2) → big stop-out loss (> daily limit);
+    #            a later same-session entry signal (bar4) must be RISK_BLOCKED. Session 2 resets.
+    s1 = _hbars(d1, [(100, 101, 99, 100)] * 2 + [(100, 101, 40, 60)] + [(60, 61, 59, 60)] * 4)
+    s2 = _hbars(d2, [(60, 61, 59, 60)] * 7)
+    bars = s1 + s2
+    res = replay(symbols=["NVDA"], bars_by_symbol={"NVDA": bars}, policy=cal.resolve_policy("NVDA", "1h"),
+                 strategy=_EnterAt([1, 5, 9], dist=Decimal(10)), risk_config=_RCFG, costs=_COSTS,
+                 starting_capital=Decimal(100000), max_concurrent=1)
+    kinds = [e["event_type"] for e in res.events]
+    assert "RISK_BLOCKED" in kinds                       # same-day re-entry blocked by the daily loss
+    day2_entries = [e for e in res.events if e["event_type"] == "ENTRY_FILLED" and e["ts"][:10] == "2026-06-02"]
+    assert day2_entries                                  # next session's daily budget reset → entry allowed
+
+
+def test_daily_pnl_resets_at_session_boundary():
+    s = _store()
+    sess = _sessions(100)
+    _seed(s, "NVDA", sess, _uptrend())
+    run = s.bt_get_run(_run(s, ["NVDA"], sess))
+    eq = s.bt_list_equity(run.run_id)
+    # each 1D step is its own NY session → daily_pnl equals the day-over-day change, not a running total
+    assert any(p.daily_pnl is not None for p in eq)
+
+
+# ---- Defect 4: calendar range + timestamp-set membership ----
+def test_out_of_calendar_range_rejected():
+    s = _store()
+    sess = _sessions(100)
+    run = s.bt_get_run(_run(s, ["NVDA"], sess, start="2022-06-01", end="2022-10-01"))
+    assert run.status == "FAILED" and run.failure_code == "INSUFFICIENT_POINT_IN_TIME_METADATA"
+
+
+def test_coverage_membership_flags_out_of_session_bar():
+    s = _store()
+    sess = _sessions(100)
+    _seed(s, "NVDA", sess, _uptrend())
+    # inject a bar on a Saturday (never a session) — an unexpected out-of-session timestamp
+    s.insert_ohlc_bar(symbol="NVDA", interval="1D", ts="2026-01-17T00:00:00+00:00", open=1, high=1, low=1,
+                      close=1, volume=1, source="TEST")
+    run = s.bt_get_run(_run(s, ["NVDA"], sess))
+    assert run.status == "FAILED" and run.failure_code == "INSUFFICIENT_HISTORICAL_COVERAGE"
+    assert json.loads(run.missing_data_json)["symbols"][0]["out_of_session_bars"] >= 1
+
+
+def test_extra_bars_do_not_compensate_missing():
+    s = _store()
+    sess = _sessions(40)                                  # only 40 in-session bars (< 60 required)
+    _seed(s, "NVDA", sess, _uptrend(n=40, flat_until=20))
+    # add 30 out-of-session Saturday bars — they must NOT compensate the missing in-session bars
+    from datetime import date, timedelta
+    d = date(2026, 1, 17)
+    for _ in range(30):
+        while d.weekday() != 5:
+            d += timedelta(days=1)
+        s.insert_ohlc_bar(symbol="NVDA", interval="1D", ts=f"{d.isoformat()}T00:00:00+00:00", open=1, high=1,
+                          low=1, close=1, volume=1, source="TEST")
+        d += timedelta(days=7)
+    run = s.bt_get_run(_run(s, ["NVDA"], sess))
+    assert run.status == "FAILED" and run.failure_code == "INSUFFICIENT_HISTORICAL_COVERAGE"
+    assert json.loads(run.missing_data_json)["symbols"][0]["available_bars"] < 60   # in-session only
+
+
+def test_1h_expected_timestamps_membership():
+    from datetime import date, datetime, timezone
+    p = cal.resolve_policy("NVDA", "1h")
+
+    def buckets(d):
+        return cal.expected_bar_timestamps(datetime.combine(d, datetime.min.time(), tzinfo=timezone.utc),
+                                           datetime.combine(d, datetime.min.time(), tzinfo=timezone.utc), p)
+    edt = buckets(date(2026, 6, 1))                       # EDT session → 09:30–16:00 ET = 13:30–20:00 UTC
+    est = buckets(date(2026, 1, 5))                       # EST session → 14:30–21:00 UTC
+    assert len(edt) == 7 and "2026-06-01T13:00:00+00:00" in edt and "2026-06-01T19:00:00+00:00" in edt
+    assert "2026-06-01T03:00:00+00:00" not in edt         # an overnight bucket is NOT expected
+    assert len(est) == 7 and "2026-01-05T14:00:00+00:00" in est
+    assert len(buckets(date(2026, 11, 27))) == 4          # early close (day after Thanksgiving)
+    assert buckets(date(2026, 1, 17)) == set()            # Saturday → no session
+    assert buckets(date(2026, 1, 19)) == set()            # MLK holiday → no session
+
+
+def test_daily_timestamp_convention_is_utc_midnight():
+    from datetime import datetime, timezone
+    p = cal.resolve_policy("NVDA", "1D")
+    exp = cal.expected_bar_timestamps(datetime(2026, 6, 1, tzinfo=timezone.utc),
+                                      datetime(2026, 6, 1, tzinfo=timezone.utc), p)
+    assert exp == {"2026-06-01T00:00:00+00:00"}           # provider convention: UTC-midnight bucket label
+    # and that UTC-midnight bar becomes available at the real session close (20:00 UTC in EDT)
+    assert cal.available_at("2026-06-01T00:00:00+00:00", p).isoformat() == "2026-06-01T20:00:00+00:00"
+
+
+# ---- Defect 5: fill timestamps are session-based and chronologically valid ----
+def test_fill_timestamps_session_based_and_ordered():
+    s = _store()
+    sess = _sessions(100)
+    _seed(s, "NVDA", sess, _uptrend())
+    t = s.bt_list_trades(s.bt_get_run(_run(s, ["NVDA"], sess)).run_id)[0]
+    # 1D entry fill = session OPEN (13:30/14:30 UTC), never UTC midnight, never the bar close
+    assert t.entry_fill_ts.endswith("13:30:00+00:00") or t.entry_fill_ts.endswith("14:30:00+00:00")
+    assert not t.entry_fill_ts.endswith("00:00:00+00:00")
+    # entry decision < entry fill < exit fill, all distinct and chronological
+    assert t.entry_ts < t.entry_fill_ts < t.exit_fill_ts
+
+
+# ---- Deterministic reference (golden checksum) ----
+def test_deterministic_reference_checksum():
+    s = _store()
+    sess = _sessions(100)
+    _seed(s, "NVDA", sess, _uptrend())      # NVDA, 100 sessions from 2026-01-05, flat<52 then +0.8, rng 1
+    run = s.bt_get_run(_run(s, ["NVDA"], sess))
+    assert run.result_checksum == "3301d3bd2b41fd277568882f6d6afdb9912e3c37ed7a92f81028462e985619ea"

@@ -32,6 +32,10 @@ POLICY_VERSION = 1
 SESSION_CALENDAR = "US_EQUITY_RTH"
 ASSET_CLASS = "US_EQUITY"
 SUPPORTED_INTERVALS = ("1h", "1D")
+# Declared authoritative coverage of the versioned NYSE calendar table below. A request touching any
+# date outside this window cannot be evaluated safely (unknown holidays) → INSUFFICIENT_POINT_IN_TIME_METADATA.
+CALENDAR_START = date(2023, 1, 1)
+CALENDAR_END = date(2027, 12, 31)
 
 
 class PointInTimeError(Exception):
@@ -176,3 +180,46 @@ def is_contiguous(prev_ts: str, next_ts: str, policy: AvailabilityPolicy) -> boo
     """True if `next_ts` is the calendar-expected successor of `prev_ts` (a session boundary counts as
     contiguous; a skipped in-session bar does not)."""
     return parse_ts(next_ts) == next_expected_bar(prev_ts, policy)
+
+
+def calendar_covers(start: datetime, end: datetime) -> bool:
+    """Whether [start, end] lies entirely inside the versioned calendar's declared coverage."""
+    return (CALENDAR_START <= start.astimezone(timezone.utc).date()
+            and end.astimezone(timezone.utc).date() <= CALENDAR_END)
+
+
+def bar_open_utc(bar_ts: str, policy: AvailabilityPolicy) -> datetime:
+    """The LOGICAL open time of a bar (when a next-bar-open fill actually executes). For 1D this is the
+    session open (09:30 ET → UTC), NOT the UTC-midnight bucket label; for 1h it is the bucket start."""
+    dt = parse_ts(bar_ts)
+    return session_open_utc(dt.date()) if policy.interval == "1D" else dt
+
+
+def norm_ts(ts: str) -> str:
+    """Canonical UTC ISO key for timestamp-set membership (dialect/format-agnostic)."""
+    return parse_ts(ts).isoformat()
+
+
+def _session_hour_buckets(d: date) -> list[datetime]:
+    o, c = session_open_utc(d), session_close_utc(d)
+    b, out = o.replace(minute=0, second=0, microsecond=0), []
+    while b < c:
+        out.append(b)
+        b += timedelta(hours=1)
+    return out
+
+
+def expected_bar_timestamps(start: datetime, end: datetime, policy: AvailabilityPolicy) -> set[str]:
+    """The EXACT set of expected bar-open timestamps (canonical UTC ISO) over [start, end] from the
+    SESSION calendar — used for membership-based coverage (not just counts)."""
+    out: set[str] = set()
+    d, last = start.astimezone(timezone.utc).date(), end.astimezone(timezone.utc).date()
+    while d <= last:
+        if is_session_day(d):
+            if policy.interval == "1D":
+                out.add(datetime.combine(d, time(0, 0), tzinfo=timezone.utc).isoformat())
+            else:
+                for b in _session_hour_buckets(d):
+                    out.add(b.isoformat())
+        d += timedelta(days=1)
+    return out
