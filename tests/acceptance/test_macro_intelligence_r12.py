@@ -234,6 +234,18 @@ def test_gold_from_polygon(monkeypatch):
     assert m.oil == 78.5 and m.gold == 2410.0                # oil (FRED) + gold (Polygon)
 
 
+def test_series_latest_falls_back_past_unreleased_point(monkeypatch):
+    # Newest observation is '.' (month not yet released) → fall back to the last real value, not None.
+    urls = []
+    def fake(req, timeout=None):
+        urls.append(req.full_url)
+        return _Resp({"observations": [{"value": "."}, {"value": "3.4"}, {"value": "3.5"}]})
+    monkeypatch.setattr("atp.macrodata.provider.urlopen", fake)
+    v = FredMacroProvider(api_key="K")._series_latest("CPILFESL", "pc1")
+    assert v == 3.4                                          # most recent REAL value (skips the '.')
+    assert "limit=1&" not in urls[0] and "limit=12" in urls[0]   # window >1 so a fallback exists
+
+
 def test_gold_no_polygon_key_is_no_data(monkeypatch):
     monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
     monkeypatch.setattr("atp.macrodata.provider.urlopen",

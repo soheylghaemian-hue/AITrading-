@@ -151,8 +151,11 @@ class FredMacroProvider(MacroProvider):
     def _series_latest(self, series_id: str, units: str = "lin") -> float | None:
         if not self._api_key:
             return None
+        # Ask for a short recent window (not just 1): the newest month/day can be unreleased ('.') —
+        # especially for pc1 (year-over-year). The parser takes the most recent REAL value, so a
+        # not-yet-published latest point falls back to the last released one instead of NO DATA.
         q = urlencode({"series_id": series_id, "api_key": self._api_key, "file_type": "json",
-                       "sort_order": "desc", "limit": "1", "units": units})
+                       "sort_order": "desc", "limit": "12", "units": units})
         try:
             req = Request(f"{self._base}/fred/series/observations?{q}", headers={"Accept": "application/json"})
             with urlopen(req, timeout=self._timeout) as resp:  # noqa: S310 — fixed https host
