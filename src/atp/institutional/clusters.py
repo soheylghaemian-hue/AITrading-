@@ -154,11 +154,23 @@ def build_insider_cluster(store, symbol: str, now: datetime | None = None) -> di
     txns = store.list_insider_transactions(sym, 500)
     windows = {w: detect_cluster(txns, w, now) for w in WINDOWS}
     headline = windows[PRIMARY_WINDOW]
-    if not txns or headline["cluster_type"] is None:
+    if not txns:
+        # Truly no Form 4 data for this symbol → NO DATA (never a fabricated cluster).
         return {"symbol": sym, "status": "NO DATA", "cluster_type": None, "score": None,
                 "insider_count": 0, "time_window": f"{PRIMARY_WINDOW}d", "participants": [],
                 "buy_count": 0, "sell_count": 0, "total_shares": 0.0, "total_value": 0.0,
                 "summary": "No Form 4 data", "windows": windows}
+    if headline["cluster_type"] is None:
+        # Form 4 data EXISTS, but nothing in the primary (30d) window → no CURRENT cluster (not NO DATA).
+        wider = next((windows[w] for w in (90, 30, 7)
+                      if windows[w]["cluster_type"] in (ACCUMULATION, DISTRIBUTION)), None)
+        summary = (f"No insider cluster in the last {PRIMARY_WINDOW}d — {wider['cluster_type'].lower()} "
+                   f"cluster in the {wider['time_window']} window"
+                   if wider else f"No insider activity in the last {PRIMARY_WINDOW} days")
+        return {"symbol": sym, "status": "COMPLETE", "cluster_type": NONE, "score": None,
+                "insider_count": 0, "time_window": f"{PRIMARY_WINDOW}d", "participants": [],
+                "buy_count": 0, "sell_count": 0, "total_shares": 0.0, "total_value": 0.0,
+                "summary": summary, "windows": windows}
     return {"symbol": sym, "status": "COMPLETE", "cluster_type": headline["cluster_type"],
             "score": headline["score"], "insider_count": headline["insider_count"],
             "time_window": headline["time_window"], "participants": headline["participants"],

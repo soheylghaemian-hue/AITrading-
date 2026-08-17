@@ -125,6 +125,25 @@ def test_missing_data_is_no_data(store):
     assert r["cluster_type"] is None and r["score"] is None   # never a fabricated cluster
 
 
+def test_data_exists_but_no_recent_cluster(store):
+    # Transactions exist but all OUTSIDE every window → COMPLETE + NONE (NOT "No Form 4 data").
+    _seed(store, "AAPL", [tx("A", "Director", "SELL", 10000, 300.0, 200)])
+    r = build_insider_cluster(store, "AAPL", NOW)
+    assert r["status"] == "COMPLETE"                          # data exists → not NO DATA
+    assert r["cluster_type"] == NONE and r["score"] is None
+    assert "Form 4 data" not in r["summary"]                 # honest wording
+
+
+def test_older_window_cluster_is_surfaced(store):
+    # Two sellers ~60 days ago → inside 90d but not 30d → headline NONE, but the 90d cluster is surfaced.
+    _seed(store, "AAPL", [tx("Chair Amy", "Chairman", "SELL", 30000, 300.0, 60),
+                          tx("Dir Ken", "Director", "SELL", 5000, 305.0, 62)])
+    r = build_insider_cluster(store, "AAPL", NOW)
+    assert r["status"] == "COMPLETE" and r["cluster_type"] == NONE   # no CURRENT (30d) cluster
+    assert r["windows"][90]["cluster_type"] == DISTRIBUTION
+    assert "90d" in r["summary"] and "distribution" in r["summary"].lower()
+
+
 def test_collector_persists_clusters_immutably(store):
     class FakeHoldings:
         _ciks = []

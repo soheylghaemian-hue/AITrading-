@@ -106,8 +106,12 @@ def _num(x) -> float | None:
 FRED_SERIES = {
     "fed_rate": "FEDFUNDS", "treasury_10y": "DGS10", "treasury_2y": "DGS2",
     "cpi": "CPIAUCSL", "core_cpi": "CPILFESL", "unemployment": "UNRATE",
-    "vix": "VIXCLS", "dxy": "DTWEXBGS", "oil": "DCOILWTICO", "gold": "GOLDPMGBD228NLBM",
+    "vix": "VIXCLS", "dxy": "DTWEXBGS", "oil": "DCOILWTICO",
+    # gold: FRED's LBMA fixing series is discontinued → gold comes from Polygon (see _polygon_gold).
 }
+# CPI series are INDEX levels; request the year-over-year percent change (pc1) so they are real
+# inflation rates, not index points (~318) that would look like "318% inflation".
+FRED_UNITS = {"cpi": "pc1", "core_cpi": "pc1"}
 
 
 def parse_fred_observation(payload: dict | None) -> float | None:
@@ -118,6 +122,14 @@ def parse_fred_observation(payload: dict | None) -> float | None:
         v = _num((o or {}).get("value"))
         if v is not None:
             return v
+    return None
+
+
+def parse_polygon_prev(payload: dict | None) -> float | None:
+    """Latest close from a Polygon /v2/aggs/ticker/{t}/prev response → float (or None). No fabrication."""
+    res = ((payload or {}).get("results") or [])
+    if res and isinstance(res[0], dict):
+        return _num(res[0].get("c"))
     return None
 
 
@@ -136,11 +148,11 @@ class FredMacroProvider(MacroProvider):
     def configured(self) -> bool:
         return bool(self._api_key)
 
-    def _series_latest(self, series_id: str) -> float | None:
+    def _series_latest(self, series_id: str, units: str = "lin") -> float | None:
         if not self._api_key:
             return None
         q = urlencode({"series_id": series_id, "api_key": self._api_key, "file_type": "json",
-                       "sort_order": "desc", "limit": "1"})
+                       "sort_order": "desc", "limit": "1", "units": units})
         try:
             req = Request(f"{self._base}/fred/series/observations?{q}", headers={"Accept": "application/json"})
             with urlopen(req, timeout=self._timeout) as resp:  # noqa: S310 — fixed https host
@@ -150,11 +162,28 @@ class FredMacroProvider(MacroProvider):
         except Exception:
             return None
 
+    def _polygon_gold(self) -> float | None:
+        """Gold ($/oz) from Polygon (C:XAUUSD prev close) via MASSIVE_API_KEY — FRED's gold fixing series
+        is discontinued. Read-only; key in the header only. No key / not entitled / error → None (NO DATA)."""
+        key = os.environ.get("MASSIVE_API_KEY")
+        if not key:
+            return None
+        base = (os.environ.get("OPTIONS_API_URL") or "https://api.polygon.io").rstrip("/")
+        try:
+            req = Request(f"{base}/v2/aggs/ticker/C:XAUUSD/prev",
+                          headers={"Accept": "application/json", "Authorization": f"Bearer {key}"})
+            with urlopen(req, timeout=self._timeout) as resp:  # noqa: S310 — fixed https host
+                return parse_polygon_prev(json.loads(resp.read().decode("utf-8")))
+        except (HTTPError, URLError, ValueError, TimeoutError):
+            return None
+        except Exception:
+            return None
+
     def _read(self, *fields: str) -> MacroMetrics | None:
         m = MacroMetrics()
         got = False
         for fld in fields:
-            v = self._series_latest(FRED_SERIES[fld])
+            v = self._series_latest(FRED_SERIES[fld], FRED_UNITS.get(fld, "lin"))
             if v is not None:
                 setattr(m, fld, v)
                 got = True
@@ -165,7 +194,13 @@ class FredMacroProvider(MacroProvider):
     def get_employment(self): return self._read("unemployment")
     def get_currency(self): return self._read("dxy")
     def get_volatility(self): return self._read("vix")
-    def get_market_regime_data(self): return self._read("oil", "gold")
+
+    def get_market_regime_data(self):
+        m = self._read("oil") or MacroMetrics()            # WTI from FRED (works)
+        gold = self._polygon_gold()                        # gold from Polygon (FRED series discontinued)
+        if gold is not None:
+            m.gold = gold
+        return m if m.any_present() else None
 
 
 PROVIDERS: dict[str, type[MacroProvider]] = {

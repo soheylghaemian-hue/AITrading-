@@ -16,6 +16,7 @@ from atp.completeness.engine import compute_completeness
 from atp.macrodata.collector import MacroCollector
 from atp.macrodata.provider import (
     FredMacroProvider, MacroMetrics, MacroProvider, NullMacroProvider, parse_fred_observation,
+    parse_polygon_prev,
     resolve_provider,
 )
 from atp.macrodata.readmodel import build_macro, build_macro_context
@@ -191,3 +192,51 @@ def test_macro_source_has_no_broker_tokens():
         text = f.read_text()
         for token in forbidden:
             assert token not in text, f"{f.name} must not reference {token}"
+
+
+# ------------------------------------------------------------------ FRED units + Polygon gold (fixes)
+import json as _json  # noqa: E402
+
+
+class _Resp:
+    def __init__(self, payload): self._b = _json.dumps(payload).encode()
+    def read(self): return self._b
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+
+def test_parse_polygon_prev():
+    assert parse_polygon_prev({"results": [{"c": 2400.5}]}) == 2400.5
+    assert parse_polygon_prev({"results": []}) is None
+    assert parse_polygon_prev({}) is None                    # no data → None (never fabricated)
+
+
+def test_cpi_requested_as_yoy_percent(monkeypatch):
+    urls = []
+    def fake(req, timeout=None):
+        urls.append(req.full_url)
+        return _Resp({"observations": [{"value": "3.1"}]})
+    monkeypatch.setattr("atp.macrodata.provider.urlopen", fake)
+    m = FredMacroProvider(api_key="K").get_inflation()
+    assert m.cpi == 3.1                                       # a real YoY rate, not a ~318 index level
+    assert any("CPIAUCSL" in u and "units=pc1" in u for u in urls)   # headline CPI requested as YoY %
+
+
+def test_gold_from_polygon(monkeypatch):
+    monkeypatch.setenv("MASSIVE_API_KEY", "PK")
+    def fake(req, timeout=None):
+        url = req.full_url
+        if "C:XAUUSD/prev" in url:
+            return _Resp({"results": [{"c": 2410.0}]})       # Polygon gold
+        return _Resp({"observations": [{"value": "78.5"}]})  # FRED oil
+    monkeypatch.setattr("atp.macrodata.provider.urlopen", fake)
+    m = FredMacroProvider(api_key="K").get_market_regime_data()
+    assert m.oil == 78.5 and m.gold == 2410.0                # oil (FRED) + gold (Polygon)
+
+
+def test_gold_no_polygon_key_is_no_data(monkeypatch):
+    monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
+    monkeypatch.setattr("atp.macrodata.provider.urlopen",
+                        lambda req, timeout=None: _Resp({"observations": [{"value": "78.5"}]}))
+    m = FredMacroProvider(api_key="K").get_market_regime_data()
+    assert m.oil == 78.5 and m.gold is None                  # no Polygon key → gold NO DATA (honest)
