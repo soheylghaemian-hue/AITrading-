@@ -1,0 +1,12 @@
+{
+  "goal_id": "trader-brain-think-v1",
+  "objective": "Build research-only THINK contracts that convert temporal evidence into competing beliefs and falsifiable scenarios with explicit invalidation conditions.",
+  "success_criteria": [
+    "Multiple competing hypotheses are preserved",
+    "Confidence is calibrated and bounded",
+    "Every scenario has machine-checkable invalidation conditions",
+    "No order, broker, leverage or execution capability is introduced"
+  ],
+  "allowed_paths": ["src/atp/brain/", "src/atp/research/", "tests/", "docs/"],
+  "max_iterations": 2
+}

@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["author", "summary", "patch", "changed_files"],
+  "properties": {
+    "author": {"type": "string", "enum": ["claude"]},
+    "summary": {"type": "string", "maxLength": 2000},
+    "patch": {"type": "string"},
+    "changed_files": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 80,
+      "uniqueItems": true,
+      "items": {"type": "string"}
+    }
+  }
+}

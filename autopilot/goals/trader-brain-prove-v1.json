@@ -1,0 +1,12 @@
+{
+  "goal_id": "trader-brain-prove-v1",
+  "objective": "Build a deterministic PROVE harness for walk-forward, embargoed and cost-aware evaluation of research proposals.",
+  "success_criteria": [
+    "Training and evaluation windows cannot overlap",
+    "Costs, delays and abstentions are represented explicitly",
+    "Results include reproducible checksums and failure reasons",
+    "Only research and shadow proposals are evaluated"
+  ],
+  "allowed_paths": ["src/atp/brain/", "src/atp/research/", "tests/", "docs/"],
+  "max_iterations": 2
+}

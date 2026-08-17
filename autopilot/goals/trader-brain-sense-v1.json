@@ -1,0 +1,12 @@
+{
+  "goal_id": "trader-brain-sense-v1",
+  "objective": "Build research-only SENSE contracts for point-in-time evidence acquisition, provenance, freshness and contradiction detection without calling external providers.",
+  "success_criteria": [
+    "Every evidence item has event, observed and available timestamps",
+    "Future leakage and stale evidence fail closed",
+    "Contradictory evidence remains visible instead of being averaged away",
+    "Deterministic tests and documentation pass"
+  ],
+  "allowed_paths": ["src/atp/brain/", "src/atp/research/", "tests/", "docs/"],
+  "max_iterations": 2
+}

@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["objective", "instructions_for_claude", "acceptance_tests", "risks"],
+  "properties": {
+    "objective": {"type": "string"},
+    "instructions_for_claude": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "string"}},
+    "acceptance_tests": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "string"}},
+    "risks": {"type": "array", "maxItems": 20, "items": {"type": "string"}}
+  }
+}

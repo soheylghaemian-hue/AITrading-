@@ -1,0 +1,19 @@
+{
+  "goal_id": "claude-writes-codex-orchestrates",
+  "objective": "Implement the bounded goal supplied by the trusted trigger",
+  "success_criteria": [
+    "Codex plans and reviews but never authors repository changes",
+    "Claude is the sole author of a structured unified patch",
+    "All deterministic backend, frontend and safety checks pass",
+    "Only a draft pull request is published"
+  ],
+  "allowed_paths": [
+    "src/atp/autopilot/",
+    "src/atp/brain/",
+    "src/atp/research/",
+    "tests/",
+    "docs/",
+    "frontend/"
+  ],
+  "max_iterations": 2
+}

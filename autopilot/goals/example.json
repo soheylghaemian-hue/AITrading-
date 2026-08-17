@@ -1,0 +1,16 @@
+{
+  "goal_id": "example-research-improvement",
+  "objective": "Improve one bounded research component without touching trading authority",
+  "success_criteria": [
+    "All existing and new tests pass",
+    "No production, broker, execution, leverage, secret or real-money path changes",
+    "The result includes deterministic evidence"
+  ],
+  "allowed_paths": [
+    "src/atp/research/",
+    "src/atp/brain/",
+    "tests/",
+    "docs/"
+  ],
+  "max_iterations": 5
+}
