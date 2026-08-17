@@ -8,9 +8,11 @@ export interface ValidationCoverage {
     calendar_version: string; currency: string };
   policies: Record<string, string>;
   coverage: {
-    raw_snapshot_count: number; effective_canonical_sessions: number; unique_symbols: number;
-    symbols: string[]; matured_total: number; failed_total: number;
-    by_horizon: Record<string, { matured: number; failed: number; effective_samples: number }>;
+    raw_snapshot_count: number; captured_snapshots: number; effective_canonical_sessions: number;
+    unique_symbols: number; symbols: string[]; matured_total: number; graded_total: number;
+    abstained_total: number; failed_total: number;
+    by_horizon: Record<string, { matured: number; graded: number; abstained: number; failed: number;
+      effective_graded_sessions: number }>;
   };
   raw_operational_prediction_count: number;
   confidence: { is_probability: boolean; note: string; probability_calibration: string };

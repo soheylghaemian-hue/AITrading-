@@ -38,14 +38,18 @@ def is_supported_symbol(symbol: str) -> bool:
 SAMPLING_POLICY_VERSION = "US_EQUITY_PILOT_SESSION_CLOSE_V1"
 # One canonical snapshot per symbol per COMPLETED NYSE session, anchored to the real session close
 # (16:00 ET normal / 13:00 ET early close, DST-correct via the versioned calendar) + a fixed settle delay.
+# The scheduled sampling TARGET is close+settle. Collection is permitted only within a NARROW post-target
+# window; a worker outside it records an honest missed sample (§ correction 2) — it never stamps late data
+# as if it existed at the target. The persisted `decision_ts` is the ACTUAL capture time, not the target.
 SETTLE_MINUTES = 10
-POST_CLOSE_WINDOW_HOURS = 6      # collection is allowed only within [close+settle, close+settle+window]
+POST_CLOSE_WINDOW_MINUTES = 30   # collection allowed only within [target, target+30min]
 
 # ---- outcome policy -------------------------------------------------------------------------------
 OUTCOME_POLICY_VERSION = "US_EQUITY_RTH_OUTCOME_V1"
 HORIZONS: tuple[int, ...] = (1, 3, 5, 20)         # trading sessions
 NEUTRAL_THRESHOLD_PCT = Decimal("1.0")            # preregistered fixed band (NOT tuned to performance)
 ADJUSTMENT_POLICY = "MASSIVE_SPLIT_ADJUSTED_RTH_V1"
+NORMALIZATION_POLICY = "US_EQUITY_RTH_DAILY_FROM_1MIN_V1"
 PROVIDER_CONTRACT_VERSION = "polygon-aggs-1min-chunked-v2"
 DATASET_INTERVAL = "1D"
 
@@ -106,21 +110,22 @@ def last_completed_session(now: datetime):
 
 def eligible_session(now: datetime) -> dict:
     """Derive the eligible just-completed session for `now` (verified UTC), forward-only. Collection is
-    permitted ONLY inside the bounded post-close window [close+settle, close+settle+window]; outside it the
-    session is honestly skipped (never reconstructed/backdated). Returns
-    {eligible, session_date, decision_ts, is_early_close, reason}."""
+    permitted ONLY inside the narrow window [target, target+POST_CLOSE_WINDOW_MINUTES] where
+    target = close+settle; outside it the session is honestly skipped (never reconstructed/backdated).
+    Returns {eligible, session_date, scheduled_target_ts, is_early_close, reason}. The persisted decision_ts
+    is the ACTUAL capture time (set by the collector), never the scheduled target."""
     now = now.astimezone(timezone.utc)
     d = last_completed_session(now)
     if d is None:
         return {"eligible": False, "reason": "NO_COMPLETED_SESSION_IN_CALENDAR"}
     close = cal.session_close_utc(d)
-    decision_ts = close + timedelta(minutes=SETTLE_MINUTES)
-    window_end = decision_ts + timedelta(hours=POST_CLOSE_WINDOW_HOURS)
-    if now < decision_ts:
+    target = close + timedelta(minutes=SETTLE_MINUTES)
+    window_end = target + timedelta(minutes=POST_CLOSE_WINDOW_MINUTES)
+    if now < target:
         return {"eligible": False, "session_date": d.isoformat(), "reason": "BEFORE_SETTLE_WINDOW"}
     if now > window_end:
         return {"eligible": False, "session_date": d.isoformat(), "reason": "AFTER_COLLECTION_WINDOW"}
-    return {"eligible": True, "session_date": d.isoformat(), "decision_ts": decision_ts.isoformat(),
+    return {"eligible": True, "session_date": d.isoformat(), "scheduled_target_ts": target.isoformat(),
             "is_early_close": cal.is_early_close(d), "reason": None}
 
 
