@@ -209,8 +209,8 @@ jobs:
           python -m pip install -e '.[dev,live]'
           python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/claude.json --declared-only
           jq -r '.patch' .autopilot/claude.json > .autopilot/candidate.patch
-          git apply --check --whitespace=error .autopilot/candidate.patch
-          git apply --whitespace=error .autopilot/candidate.patch
+          git apply --check --recount --whitespace=error .autopilot/candidate.patch
+          git apply --recount --whitespace=error .autopilot/candidate.patch
           python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/claude.json
       - name: Run deterministic evidence suite
         run: |
@@ -370,8 +370,8 @@ jobs:
           git apply --check --whitespace=error .autopilot/candidate.patch
           git apply --whitespace=error .autopilot/candidate.patch
           jq -r '.patch' .autopilot/repair.json > .autopilot/repair.patch
-          git apply --check --whitespace=error .autopilot/repair.patch
-          git apply --whitespace=error .autopilot/repair.patch
+          git apply --check --recount --whitespace=error .autopilot/repair.patch
+          git apply --recount --whitespace=error .autopilot/repair.patch
           python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}"
       - name: Re-run deterministic evidence suite
         run: |
