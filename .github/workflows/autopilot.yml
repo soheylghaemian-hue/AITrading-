@@ -210,17 +210,23 @@ jobs:
           python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/claude.json --declared-only
           python -c 'import json; from pathlib import Path; source = Path(".autopilot/claude.json"); patch = json.loads(source.read_text(encoding="utf-8"))["patch"]; Path(".autopilot/candidate.patch").write_text(patch.rstrip(chr(13) + chr(10)) + chr(10), encoding="utf-8")'
           git apply --check --recount --whitespace=error .autopilot/candidate.patch
-          git apply --recount --whitespace=error .autopilot/candidate.patch
-          git ls-files --others --exclude-standard -z | xargs -0 -r git add --intent-to-add --
+          git apply --intent-to-add --recount --whitespace=error .autopilot/candidate.patch
           python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/claude.json
+          git diff --check
+          git diff --binary HEAD > .autopilot/candidate.patch
+          sha256sum .autopilot/candidate.patch > .autopilot/candidate.patch.sha256
       - name: Run deterministic evidence suite
         run: |
           set -euo pipefail
           python -m pytest 2>&1 | tee .autopilot/test-evidence.txt
           (cd frontend && npm ci && npm test -- --run && npm run build) 2>&1 | tee -a .autopilot/test-evidence.txt
           git diff --check
-          git diff --binary HEAD > .autopilot/candidate.patch
-          sha256sum .autopilot/candidate.patch > .autopilot/candidate.patch.sha256
+          sha256sum -c .autopilot/candidate.patch.sha256
+          git diff --binary HEAD > .autopilot/post-test.patch
+          if ! cmp --silent .autopilot/candidate.patch .autopilot/post-test.patch; then
+            echo "Tests changed the candidate worktree; refusing mutable evidence"
+            exit 2
+          fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: candidate-${{ github.run_id }}
@@ -257,7 +263,7 @@ jobs:
           printf '%s' "${PLAN_JSON}" > .autopilot/plan.json
           sha256sum -c .autopilot/candidate.patch.sha256
           git apply --check --whitespace=error .autopilot/candidate.patch
-          git apply --whitespace=error .autopilot/candidate.patch
+          git apply --intent-to-add --whitespace=error .autopilot/candidate.patch
       - name: Codex independently reviews read-only
         id: codex-review
         uses: openai/codex-action@c385816875cc2fc8e033ed9d1cba96f8c331210e
@@ -298,7 +304,7 @@ jobs:
         run: |
           sha256sum -c .autopilot/candidate.patch.sha256
           git apply --check --whitespace=error .autopilot/candidate.patch
-          git apply --whitespace=error .autopilot/candidate.patch
+          git apply --intent-to-add --whitespace=error .autopilot/candidate.patch
           printf '%s\n' "${GOAL_FILE}" > .autopilot/goal-path.txt
           printf '%s' "${PLAN_JSON}" > .autopilot/plan.json
           printf '%s' "${REVIEW_JSON}" > .autopilot/review.json
@@ -369,20 +375,28 @@ jobs:
           python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/repair.json --declared-only
           sha256sum -c .autopilot/candidate.patch.sha256
           git apply --check --whitespace=error .autopilot/candidate.patch
-          git apply --whitespace=error .autopilot/candidate.patch
+          git apply --intent-to-add --whitespace=error .autopilot/candidate.patch
+          git add -A
+          git -c user.name=autopilot-gate -c user.email=autopilot-gate@users.noreply.github.com -c commit.gpgsign=false commit -m "Temporary candidate baseline"
           python -c 'import json; from pathlib import Path; source = Path(".autopilot/repair.json"); patch = json.loads(source.read_text(encoding="utf-8"))["patch"]; Path(".autopilot/repair.patch").write_text(patch.rstrip(chr(13) + chr(10)) + chr(10), encoding="utf-8")'
           git apply --check --recount --whitespace=error .autopilot/repair.patch
-          git apply --recount --whitespace=error .autopilot/repair.patch
-          git ls-files --others --exclude-standard -z | xargs -0 -r git add --intent-to-add --
-          python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}"
+          git apply --intent-to-add --recount --whitespace=error .autopilot/repair.patch
+          python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/repair.json
+          git diff --check HEAD^
+          git diff --binary HEAD^ > .autopilot/repaired.patch
+          sha256sum .autopilot/repaired.patch > .autopilot/repaired.patch.sha256
       - name: Re-run deterministic evidence suite
         run: |
           set -euo pipefail
           python -m pytest 2>&1 | tee .autopilot/test-evidence.txt
           (cd frontend && npm ci && npm test -- --run && npm run build) 2>&1 | tee -a .autopilot/test-evidence.txt
-          git diff --check
-          git diff --binary HEAD > .autopilot/repaired.patch
-          sha256sum .autopilot/repaired.patch > .autopilot/repaired.patch.sha256
+          git diff --check HEAD^
+          sha256sum -c .autopilot/repaired.patch.sha256
+          git diff --binary HEAD^ > .autopilot/post-test-repaired.patch
+          if ! cmp --silent .autopilot/repaired.patch .autopilot/post-test-repaired.patch; then
+            echo "Tests changed the repaired worktree; refusing mutable evidence"
+            exit 2
+          fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: repaired-${{ github.run_id }}
@@ -419,7 +433,7 @@ jobs:
           printf '%s' "${PLAN_JSON}" > .autopilot/plan.json
           sha256sum -c .autopilot/repaired.patch.sha256
           git apply --check --whitespace=error .autopilot/repaired.patch
-          git apply --whitespace=error .autopilot/repaired.patch
+          git apply --intent-to-add --whitespace=error .autopilot/repaired.patch
       - name: Codex gives the final independent verdict
         id: codex-final
         uses: openai/codex-action@c385816875cc2fc8e033ed9d1cba96f8c331210e
@@ -470,7 +484,7 @@ jobs:
             sha256sum -c .autopilot/repaired.patch.sha256
           fi
           git apply --check --whitespace=error "${PATCH}"
-          git apply --whitespace=error "${PATCH}"
+          git apply --intent-to-add --whitespace=error "${PATCH}"
           mkdir -p docs/autopilot/completed
           jq -n --arg goal "${GOAL_ID}" --arg run "${GITHUB_RUN_ID}" '{goal_id: $goal, github_run_id: $run, status: "CODEX_APPROVED"}' > "docs/autopilot/completed/${GOAL_ID}.json"
           git config user.name "claude-autopilot[bot]"
