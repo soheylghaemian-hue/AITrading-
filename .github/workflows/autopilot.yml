@@ -211,6 +211,7 @@ jobs:
           python -c 'import json; from pathlib import Path; source = Path(".autopilot/claude.json"); patch = json.loads(source.read_text(encoding="utf-8"))["patch"]; Path(".autopilot/candidate.patch").write_text(patch.rstrip(chr(13) + chr(10)) + chr(10), encoding="utf-8")'
           git apply --check --recount --whitespace=error .autopilot/candidate.patch
           git apply --recount --whitespace=error .autopilot/candidate.patch
+          git ls-files --others --exclude-standard -z | xargs -0 -r git add --intent-to-add --
           python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/claude.json
       - name: Run deterministic evidence suite
         run: |
@@ -372,6 +373,7 @@ jobs:
           python -c 'import json; from pathlib import Path; source = Path(".autopilot/repair.json"); patch = json.loads(source.read_text(encoding="utf-8"))["patch"]; Path(".autopilot/repair.patch").write_text(patch.rstrip(chr(13) + chr(10)) + chr(10), encoding="utf-8")'
           git apply --check --recount --whitespace=error .autopilot/repair.patch
           git apply --recount --whitespace=error .autopilot/repair.patch
+          git ls-files --others --exclude-standard -z | xargs -0 -r git add --intent-to-add --
           python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}"
       - name: Re-run deterministic evidence suite
         run: |
