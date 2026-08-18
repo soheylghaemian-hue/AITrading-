@@ -25,21 +25,77 @@ class ProposalAction(str, Enum):
     REJECT = "REJECT"
 
 
+class Stance(str, Enum):
+    """How one evidence item stands on one exact claim key.  There is no neutral value:
+    an assertion is either explicitly made or absent."""
+
+    SUPPORTS = "SUPPORTS"
+    REFUTES = "REFUTES"
+
+
+def require_aware(field: str, value: object) -> datetime:
+    """Return `value` when it is a timezone-aware datetime, otherwise fail closed.
+
+    A missing or naive timestamp is never repaired and never assumed to be UTC: point-in-time
+    integrity cannot be proven against an ambiguous instant.
+    """
+    if not isinstance(value, datetime):
+        raise ValueError(f"{field} is required and must be a datetime")
+    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+        raise ValueError(f"{field} must be timezone-aware")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class Assertion:
+    """An exact, un-normalised claim key plus the stance this evidence takes on it."""
+
+    claim_key: str
+    stance: Stance
+
+    def __post_init__(self) -> None:
+        if not self.claim_key:
+            raise ValueError("claim_key is required")
+        if not isinstance(self.stance, Stance):
+            raise ValueError("stance must be an explicit Stance")
+
+
 @dataclass(frozen=True, slots=True)
 class Evidence:
+    """One point-in-time observation and what it asserts.
+
+    * ``event_time`` — when the fact itself happened in the world.
+    * ``available_time`` — when the fact first became externally knowable (published or filed).
+    * ``observed_time`` — when this system actually observed the fact.
+
+    All three are required, timezone-aware and ordered
+    ``event_time <= available_time <= observed_time``.  No timestamp is inferred from another.
+    """
+
     evidence_id: str
     source: str
     event_time: datetime
-    published_time: datetime | None
-    received_time: datetime
+    available_time: datetime
+    observed_time: datetime
     quality: EvidenceQuality
     checksum: str
+    assertions: tuple[Assertion, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.received_time < self.event_time:
-            raise ValueError("received_time cannot precede event_time")
-        if self.published_time and self.received_time < self.published_time:
-            raise ValueError("received_time cannot precede published_time")
+        if not self.evidence_id:
+            raise ValueError("evidence_id is required")
+        event = require_aware("event_time", self.event_time)
+        available = require_aware("available_time", self.available_time)
+        observed = require_aware("observed_time", self.observed_time)
+        if available < event:
+            raise ValueError("available_time cannot precede event_time")
+        if observed < available:
+            raise ValueError("observed_time cannot precede available_time")
+        if not isinstance(self.assertions, tuple):
+            raise ValueError("assertions must be a tuple")
+        keys = [assertion.claim_key for assertion in self.assertions]
+        if len(set(keys)) != len(keys):
+            raise ValueError("one evidence item cannot assert the same claim key twice")
 
 
 @dataclass(frozen=True, slots=True)

@@ -69,3 +69,6 @@ are deterministic publisher metadata under `docs/autopilot/completed/`; they are
 `atp.brain` defines the first research-only vocabulary for temporal evidence, beliefs, falsifiable scenarios and
 proposals. It has no order action. Its constitution rejects autonomous execution, real money, leverage and self-relaxed
 limits. Later phases can build SENSE, THINK, PROVE and LEARN behind these contracts while preserving this boundary.
+
+The SENSE layer admits evidence for one explicit point in time without calling any provider. Its timestamp meanings,
+freshness semantics, failure reasons and contradiction behaviour are documented in [Trader Brain — SENSE](TRADER_BRAIN.md).

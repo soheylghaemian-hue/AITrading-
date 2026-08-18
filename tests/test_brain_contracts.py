@@ -8,7 +8,7 @@ from atp.brain.contracts import EvidenceQuality, ProposalAction
 NOW = datetime(2026, 8, 18, tzinfo=UTC)
 
 
-def test_temporal_evidence_rejects_future_leakage():
+def test_evidence_rejects_impossible_timestamp_order():
     with pytest.raises(ValueError):
         Evidence("e1", "source", NOW, NOW, NOW - timedelta(seconds=1),
                  EvidenceQuality.VERIFIED, "sha256:x")

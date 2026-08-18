@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 MODULES = ("atp.autopilot", "atp.autopilot.orchestrator", "atp.autopilot.providers",
-           "atp.autopilot.verifier", "atp.brain", "atp.brain.contracts")
+           "atp.autopilot.verifier", "atp.brain", "atp.brain.contracts", "atp.brain.sense")
 PROHIBITED = ("atp.brokers", "atp.execution", "atp.live", "atp.risk", "atp.runtime", "atp.services")
 
 
