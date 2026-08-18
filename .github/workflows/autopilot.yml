@@ -27,7 +27,8 @@ jobs:
     permissions:
       contents: read
     outputs:
-      base_ref: ${{ steps.select.outputs.base_ref }}
+      control_sha: ${{ steps.select.outputs.control_sha }}
+      base_sha: ${{ steps.select.outputs.base_sha }}
       has_goal: ${{ steps.select.outputs.has_goal }}
       goal_id: ${{ steps.select.outputs.goal_id }}
       goal_file: ${{ steps.select.outputs.goal_file }}
@@ -36,7 +37,12 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Select trusted workbench and goal
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+        with:
+          ref: ${{ github.sha }}
+          path: .autopilot/control
+          persist-credentials: false
+      - name: Select immutable control, workbench and goal
         id: select
         env:
           REQUESTED_GOAL: ${{ inputs.goal_id }}
@@ -46,13 +52,20 @@ jobs:
             echo "Autopilot dispatch is allowed only from main (or the temporary authenticated test branch)"
             exit 2
           fi
+          control_sha="$(git -C .autopilot/control rev-parse HEAD)"
           if git fetch origin "refs/heads/${WORKBENCH_BRANCH}:refs/remotes/origin/${WORKBENCH_BRANCH}"; then
             git switch --detach "refs/remotes/origin/${WORKBENCH_BRANCH}"
-            echo "base_ref=${WORKBENCH_BRANCH}" >> "${GITHUB_OUTPUT}"
           else
-            echo "base_ref=main" >> "${GITHUB_OUTPUT}"
+            git fetch origin "refs/heads/main:refs/remotes/origin/main"
+            git switch --detach "refs/remotes/origin/main"
           fi
-          PYTHONPATH=src python -m atp.autopilot.queue --repo . --requested "${REQUESTED_GOAL}" --github-output "${GITHUB_OUTPUT}"
+          base_sha="$(git rev-parse HEAD)"
+          if [ "${control_sha}" != "${GITHUB_SHA}" ]; then
+            echo "Control checkout does not match the triggering commit"
+            exit 2
+          fi
+          printf 'control_sha=%s\nbase_sha=%s\n' "${control_sha}" "${base_sha}" >> "${GITHUB_OUTPUT}"
+          PYTHONPATH=.autopilot/control/src python -m atp.autopilot.queue --repo . --requested "${REQUESTED_GOAL}" --github-output "${GITHUB_OUTPUT}"
 
   plan:
     needs: prepare
@@ -66,8 +79,21 @@ jobs:
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
-          ref: ${{ needs.prepare.outputs.base_ref }}
+          ref: ${{ needs.prepare.outputs.base_sha }}
           persist-credentials: false
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+        with:
+          ref: ${{ needs.prepare.outputs.control_sha }}
+          path: .autopilot/control
+          persist-credentials: false
+      - name: Verify immutable candidate and control checkouts
+        env:
+          EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          EXPECTED_CONTROL_SHA: ${{ needs.prepare.outputs.control_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_BASE_SHA}"
+          test "$(git -C .autopilot/control rev-parse HEAD)" = "${EXPECTED_CONTROL_SHA}"
       - name: Prepare trusted planner context
         env:
           GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
@@ -79,9 +105,9 @@ jobs:
         uses: openai/codex-action@c385816875cc2fc8e033ed9d1cba96f8c331210e
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          prompt-file: .github/autopilot/prompts/plan.md
+          prompt-file: .autopilot/control/.github/autopilot/prompts/plan.md
           output-file: .autopilot/plan.json
-          output-schema-file: .github/autopilot/schemas/plan.schema.json
+          output-schema-file: .autopilot/control/.github/autopilot/schemas/plan.schema.json
           permission-profile: ":read-only"
           safety-strategy: drop-sudo
           codex-args: '["--ephemeral"]'
@@ -99,8 +125,21 @@ jobs:
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
-          ref: ${{ needs.prepare.outputs.base_ref }}
+          ref: ${{ needs.prepare.outputs.base_sha }}
           persist-credentials: false
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+        with:
+          ref: ${{ needs.prepare.outputs.control_sha }}
+          path: .autopilot/control
+          persist-credentials: false
+      - name: Verify immutable candidate and control checkouts
+        env:
+          EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          EXPECTED_CONTROL_SHA: ${{ needs.prepare.outputs.control_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_BASE_SHA}"
+          test "$(git -C .autopilot/control rev-parse HEAD)" = "${EXPECTED_CONTROL_SHA}"
       - name: Prepare trusted Claude context
         env:
           GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
@@ -130,7 +169,7 @@ jobs:
         id: claude-author
         uses: anthropics/claude-code-base-action@de0c38b60731a9ab4d9637bf4ec3b9679d12c96a
         with:
-          prompt_file: .github/autopilot/prompts/claude-author.md
+          prompt_file: .autopilot/control/.github/autopilot/prompts/claude-author.md
           claude_code_oauth_token: ${{ steps.claude_token.outputs.token }}
           show_full_output: "false"
           claude_args: >-
@@ -188,8 +227,21 @@ jobs:
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
-          ref: ${{ needs.prepare.outputs.base_ref }}
+          ref: ${{ needs.prepare.outputs.base_sha }}
           persist-credentials: false
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+        with:
+          ref: ${{ needs.prepare.outputs.control_sha }}
+          path: .autopilot/control
+          persist-credentials: false
+      - name: Verify immutable candidate and control checkouts
+        env:
+          EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          EXPECTED_CONTROL_SHA: ${{ needs.prepare.outputs.control_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_BASE_SHA}"
+          test "$(git -C .autopilot/control rev-parse HEAD)" = "${EXPECTED_CONTROL_SHA}"
       - uses: actions/setup-python@8549b9f8f590ad24eab7482f36f6e1e24d34597b
         with:
           python-version: "3.12"
@@ -207,11 +259,11 @@ jobs:
           mkdir -p .autopilot
           printf '%s' "${PATCH_JSON}" > .autopilot/claude.json
           python -m pip install -e '.[dev,live]'
-          python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/claude.json --declared-only
+          PYTHONPATH=.autopilot/control/src python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/claude.json --declared-only
           python -c 'import json; from pathlib import Path; source = Path(".autopilot/claude.json"); patch = json.loads(source.read_text(encoding="utf-8"))["patch"]; Path(".autopilot/candidate.patch").write_text(patch.rstrip(chr(13) + chr(10)) + chr(10), encoding="utf-8")'
           git apply --check --recount --whitespace=error .autopilot/candidate.patch
           git apply --intent-to-add --recount --whitespace=error .autopilot/candidate.patch
-          python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/claude.json
+          PYTHONPATH=.autopilot/control/src python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/claude.json
           git diff --check
           git diff --binary HEAD > .autopilot/candidate.patch
           sha256sum .autopilot/candidate.patch > .autopilot/candidate.patch.sha256
@@ -248,8 +300,21 @@ jobs:
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
-          ref: ${{ needs.prepare.outputs.base_ref }}
+          ref: ${{ needs.prepare.outputs.base_sha }}
           persist-credentials: false
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+        with:
+          ref: ${{ needs.prepare.outputs.control_sha }}
+          path: .autopilot/control
+          persist-credentials: false
+      - name: Verify immutable candidate and control checkouts
+        env:
+          EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          EXPECTED_CONTROL_SHA: ${{ needs.prepare.outputs.control_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_BASE_SHA}"
+          test "$(git -C .autopilot/control rev-parse HEAD)" = "${EXPECTED_CONTROL_SHA}"
       - uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
         with:
           name: candidate-${{ github.run_id }}
@@ -269,9 +334,9 @@ jobs:
         uses: openai/codex-action@c385816875cc2fc8e033ed9d1cba96f8c331210e
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          prompt-file: .github/autopilot/prompts/review.md
+          prompt-file: .autopilot/control/.github/autopilot/prompts/review.md
           output-file: .autopilot/review.json
-          output-schema-file: .github/autopilot/schemas/review.schema.json
+          output-schema-file: .autopilot/control/.github/autopilot/schemas/review.schema.json
           permission-profile: ":read-only"
           safety-strategy: drop-sudo
           codex-args: '["--ephemeral"]'
@@ -290,8 +355,21 @@ jobs:
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
-          ref: ${{ needs.prepare.outputs.base_ref }}
+          ref: ${{ needs.prepare.outputs.base_sha }}
           persist-credentials: false
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+        with:
+          ref: ${{ needs.prepare.outputs.control_sha }}
+          path: .autopilot/control
+          persist-credentials: false
+      - name: Verify immutable candidate and control checkouts
+        env:
+          EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          EXPECTED_CONTROL_SHA: ${{ needs.prepare.outputs.control_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_BASE_SHA}"
+          test "$(git -C .autopilot/control rev-parse HEAD)" = "${EXPECTED_CONTROL_SHA}"
       - uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
         with:
           name: candidate-${{ github.run_id }}
@@ -329,7 +407,7 @@ jobs:
         id: claude-repair
         uses: anthropics/claude-code-base-action@de0c38b60731a9ab4d9637bf4ec3b9679d12c96a
         with:
-          prompt_file: .github/autopilot/prompts/claude-repair.md
+          prompt_file: .autopilot/control/.github/autopilot/prompts/claude-repair.md
           claude_code_oauth_token: ${{ steps.claude_token.outputs.token }}
           show_full_output: "false"
           claude_args: >-
@@ -350,8 +428,21 @@ jobs:
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
-          ref: ${{ needs.prepare.outputs.base_ref }}
+          ref: ${{ needs.prepare.outputs.base_sha }}
           persist-credentials: false
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+        with:
+          ref: ${{ needs.prepare.outputs.control_sha }}
+          path: .autopilot/control
+          persist-credentials: false
+      - name: Verify immutable candidate and control checkouts
+        env:
+          EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          EXPECTED_CONTROL_SHA: ${{ needs.prepare.outputs.control_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_BASE_SHA}"
+          test "$(git -C .autopilot/control rev-parse HEAD)" = "${EXPECTED_CONTROL_SHA}"
       - uses: actions/setup-python@8549b9f8f590ad24eab7482f36f6e1e24d34597b
         with:
           python-version: "3.12"
@@ -372,7 +463,7 @@ jobs:
           set -euo pipefail
           printf '%s' "${REPAIR_JSON}" > .autopilot/repair.json
           python -m pip install -e '.[dev,live]'
-          python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/repair.json --declared-only
+          PYTHONPATH=.autopilot/control/src python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/repair.json --declared-only
           sha256sum -c .autopilot/candidate.patch.sha256
           git apply --check --whitespace=error .autopilot/candidate.patch
           git apply --intent-to-add --whitespace=error .autopilot/candidate.patch
@@ -381,7 +472,7 @@ jobs:
           python -c 'import json; from pathlib import Path; source = Path(".autopilot/repair.json"); patch = json.loads(source.read_text(encoding="utf-8"))["patch"]; Path(".autopilot/repair.patch").write_text(patch.rstrip(chr(13) + chr(10)) + chr(10), encoding="utf-8")'
           git apply --check --recount --whitespace=error .autopilot/repair.patch
           git apply --intent-to-add --recount --whitespace=error .autopilot/repair.patch
-          python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/repair.json
+          PYTHONPATH=.autopilot/control/src python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/repair.json
           git diff --check HEAD^
           git diff --binary HEAD^ > .autopilot/repaired.patch
           sha256sum .autopilot/repaired.patch > .autopilot/repaired.patch.sha256
@@ -418,8 +509,21 @@ jobs:
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
-          ref: ${{ needs.prepare.outputs.base_ref }}
+          ref: ${{ needs.prepare.outputs.base_sha }}
           persist-credentials: false
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+        with:
+          ref: ${{ needs.prepare.outputs.control_sha }}
+          path: .autopilot/control
+          persist-credentials: false
+      - name: Verify immutable candidate and control checkouts
+        env:
+          EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          EXPECTED_CONTROL_SHA: ${{ needs.prepare.outputs.control_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_BASE_SHA}"
+          test "$(git -C .autopilot/control rev-parse HEAD)" = "${EXPECTED_CONTROL_SHA}"
       - uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
         with:
           name: repaired-${{ github.run_id }}
@@ -439,9 +543,9 @@ jobs:
         uses: openai/codex-action@c385816875cc2fc8e033ed9d1cba96f8c331210e
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          prompt-file: .github/autopilot/prompts/review.md
+          prompt-file: .autopilot/control/.github/autopilot/prompts/review.md
           output-file: .autopilot/final-review.json
-          output-schema-file: .github/autopilot/schemas/review.schema.json
+          output-schema-file: .autopilot/control/.github/autopilot/schemas/review.schema.json
           permission-profile: ":read-only"
           safety-strategy: drop-sudo
           codex-args: '["--ephemeral"]'
@@ -463,7 +567,7 @@ jobs:
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
-          ref: ${{ needs.prepare.outputs.base_ref }}
+          ref: ${{ needs.prepare.outputs.base_sha }}
           fetch-depth: 0
       - uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
         with:
@@ -474,8 +578,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GOAL_ID: ${{ needs.prepare.outputs.goal_id }}
           APPROVED_FIRST: ${{ needs.review.outputs.approved }}
+          EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
         run: |
           set -euo pipefail
+          if [ "$(git rev-parse HEAD)" != "${EXPECTED_BASE_SHA}" ]; then
+            echo "Publisher checkout does not match the reviewed base"
+            exit 2
+          fi
+          git fetch origin "refs/heads/${WORKBENCH_BRANCH}:refs/remotes/origin/${WORKBENCH_BRANCH}"
+          if [ "$(git rev-parse "refs/remotes/origin/${WORKBENCH_BRANCH}")" != "${EXPECTED_BASE_SHA}" ]; then
+            echo "Workbench advanced after review; refusing stale publication"
+            exit 2
+          fi
           if [ "${APPROVED_FIRST}" = "true" ]; then
             PATCH=.autopilot/candidate.patch
             sha256sum -c .autopilot/candidate.patch.sha256
