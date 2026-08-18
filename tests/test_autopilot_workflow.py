@@ -49,3 +49,28 @@ def test_model_and_support_actions_are_pinned_to_full_shas():
         if stripped.startswith("uses:"):
             ref = stripped.rsplit("@", 1)[-1]
             assert len(ref) == 40 and all(char in "0123456789abcdef" for char in ref)
+
+
+def test_control_plane_is_separate_from_the_immutable_candidate():
+    assert "base_ref" not in WORKFLOW
+    assert "path: .autopilot/control" not in WORKFLOW
+    assert WORKFLOW.count("\n          path: candidate\n") == 9
+    assert WORKFLOW.count("Verify immutable control and candidate checkouts") == 7
+    assert "PYTHONPATH=src python -m atp.autopilot.queue --repo candidate" in WORKFLOW
+
+
+def test_models_work_only_in_candidate_but_use_control_prompts_and_guard():
+    assert WORKFLOW.count("CLAUDE_WORKING_DIR: ${{ github.workspace }}/candidate") == 2
+    assert WORKFLOW.count("working-directory: ${{ github.workspace }}/candidate") == 3
+    assert WORKFLOW.count(
+        'PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.guard'
+    ) == 4
+    assert "prompt_file: ${{ github.workspace }}/.github/autopilot/prompts/claude-author.md" in WORKFLOW
+    assert "prompt_file: ${{ github.workspace }}/.github/autopilot/prompts/claude-repair.md" in WORKFLOW
+    assert "--unidiff-zero" not in WORKFLOW
+
+
+def test_publisher_refuses_a_stale_workbench():
+    publish = _job("publish", None)
+    assert "EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}" in publish
+    assert "Workbench advanced after review; refusing stale publication" in publish
