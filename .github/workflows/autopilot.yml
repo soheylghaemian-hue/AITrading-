@@ -1,7 +1,6 @@
 name: Claude Writer - Codex Orchestrator
 
 on:
-  pull_request: {}
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
@@ -15,7 +14,7 @@ permissions: {}
 
 concurrency:
   group: gigbay-claude-codex-autopilot
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   WORKBENCH_BRANCH: claude/autopilot-workbench
@@ -37,17 +36,17 @@ jobs:
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Resolve immutable control and workbench
         id: select
         env:
-          CONTROL_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+          CONTROL_REF: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ "${GITHUB_REF}" != "refs/heads/main" ] && [ "${GITHUB_REF}" != "refs/heads/codex/fix-claude-auth" ]; then
-            echo "Autopilot dispatch is allowed only from main (or the temporary authenticated test branch)"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "Autopilot dispatch is allowed only from main"
             exit 2
           fi
           control_sha="$(git rev-parse HEAD)"
@@ -236,44 +235,6 @@ jobs:
             --allowedTools "Read,Glob,Grep"
             --disallowedTools "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Task,mcp__*"
             --json-schema '{"type":"object","additionalProperties":false,"required":["author","patch","changed_files"],"properties":{"author":{"type":"string","enum":["claude"]},"patch":{"type":"string"},"changed_files":{"type":"array","minItems":1,"items":{"type":"string"}}}}'
-
-      - name: Report redacted Claude startup error
-        if: ${{ failure() && steps.claude-author.outputs.execution_file != '' }}
-        env:
-          EXECUTION_FILE: ${{ steps.claude-author.outputs.execution_file }}
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          import re
-
-          with open(os.environ["EXECUTION_FILE"], encoding="utf-8") as handle:
-              messages = json.load(handle)
-          result = next(
-              (item for item in reversed(messages) if item.get("type") == "result"),
-              {},
-          )
-          payload = {
-              "subtype": result.get("subtype"),
-              "is_error": result.get("is_error"),
-              "errors": result.get("errors"),
-              "result": result.get("result"),
-          }
-          safe = json.dumps(payload, ensure_ascii=True)
-          safe = re.sub(r"sk-[A-Za-z0-9_-]{8,}", "[REDACTED_KEY]", safe)
-          safe = re.sub(
-              r"(?i)((?:api[_ -]?key|oauth[_ -]?token|authorization)\s*[:=]\s*)\S+",
-              r"\1[REDACTED]",
-              safe,
-          )
-          safe = re.sub(
-              r"(?<![A-Za-z0-9])[A-Za-z0-9_-]{40,}(?![A-Za-z0-9])",
-              "[REDACTED_LONG_TOKEN]",
-              safe,
-          )
-          print("Sanitized Claude startup result:")
-          print(safe[:4000])
-          PY
 
   gate:
     needs: [prepare, author]
