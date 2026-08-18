@@ -118,15 +118,21 @@ def test_static_feedback_captures_all_unique_prior_p1_findings() -> None:
     assert {finding["severity"] for finding in normalized["findings"]} == {"P1"}
 
 
-def test_duplicate_run20_initial_report_is_only_a_second_source() -> None:
+def test_repeated_calibration_reports_remain_one_finding_with_distinct_sources() -> None:
     findings = {finding["id"]: finding for finding in load_feedback(FEEDBACK_PATH, _goal())["findings"]}
     mutable = findings["mutable-calibration-weights"]
     assert [(source["run_id"], source["job_id"]) for source in mutable["sources"]] == [
         (32111724638, 95641192568),
         (32120821519, 95667903995),
+        (32128048410, 95821078096),
     ]
     assert sum(
         source["job_id"] == 95667903995
+        for finding in findings.values()
+        for source in finding["sources"]
+    ) == 1
+    assert sum(
+        source["job_id"] == 95821078096
         for finding in findings.values()
         for source in finding["sources"]
     ) == 1
