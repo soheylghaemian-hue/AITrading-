@@ -11,6 +11,10 @@ Rules:
 - Do not modify workflows, autopilot policy/guard code, infrastructure, production, credentials, environment
   files, brokers, orders, execution, live trading, leverage or risk controls.
 - Add deterministic tests for behavior. Preserve point-in-time integrity and fail closed.
+- When implementing THINK, do not trust a SenseResult merely because its type is correct. Revalidate its
+  temporal, freshness, duplicate-ID and internal-consistency invariants before using usable evidence. Directly
+  constructed SenseResult objects containing future, stale, duplicate or inconsistent usable evidence must fail
+  closed, with deterministic regression tests.
 - Do not add dependencies, external calls, MCP use, binaries, symlinks, submodules or executable files.
 - Before composing the patch, use Read to read the exact current contents of every existing file you will
   modify. Copy every removed line and context line verbatim from that read; never reconstruct them from the

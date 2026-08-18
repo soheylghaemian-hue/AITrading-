@@ -10,4 +10,8 @@ Immutable constraints:
 - Never touch production, deployment, credentials, environment files, brokers, orders, execution, live trading,
   leverage, risk limits or /opt/atp.
 - Require point-in-time correctness, deterministic evidence, failure-closed behavior and tests.
+- For THINK, treat every publicly constructible SenseResult as an untrusted boundary object. Require temporal,
+  freshness, duplicate-ID and internal-consistency invariants to be revalidated before usable evidence can affect
+  beliefs. Directly constructed results containing future, stale, duplicate or inconsistent usable evidence must
+  fail closed, with deterministic regression tests.
 - Prefer the smallest coherent change. Do not invent test commands; the workflow owns verification.

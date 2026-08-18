@@ -578,13 +578,67 @@ jobs:
           effort: high
           allow-bots: true
 
-  publish:
-    needs: [prepare, plan, author, gate, review, repair, gate_repair, final_review]
+  verdict:
+    needs: [prepare, gate, review, repair, gate_repair, final_review]
     if: >-
       always() &&
-      needs.gate.result == 'success' &&
-      (needs.review.outputs.approved == 'true' ||
-       (needs.gate_repair.result == 'success' && needs.final_review.outputs.approved == 'true'))
+      !cancelled() &&
+      needs.prepare.outputs.has_goal == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      approved_first: ${{ steps.select.outputs.approved_first }}
+      artifact_name: ${{ steps.select.outputs.artifact_name }}
+    steps:
+      - name: Select the only publishable reviewed artifact
+        id: select
+        env:
+          GATE_RESULT: ${{ needs.gate.result }}
+          REVIEW_RESULT: ${{ needs.review.result }}
+          INITIAL_APPROVED: ${{ needs.review.outputs.approved }}
+          REPAIR_RESULT: ${{ needs.repair.result }}
+          REPAIR_GATE_RESULT: ${{ needs.gate_repair.result }}
+          FINAL_REVIEW_RESULT: ${{ needs.final_review.result }}
+          FINAL_APPROVED: ${{ needs.final_review.outputs.approved }}
+        run: |
+          set -euo pipefail
+          fail() {
+            echo "No fully gated and approved artifact is publishable"
+            exit 2
+          }
+          if [ "${GATE_RESULT}" != "success" ] || [ "${REVIEW_RESULT}" != "success" ]; then
+            fail
+          fi
+          case "${INITIAL_APPROVED}" in
+            true)
+              if [ "${REPAIR_RESULT}" != "skipped" ] ||
+                 [ "${REPAIR_GATE_RESULT}" != "skipped" ] ||
+                 [ "${FINAL_REVIEW_RESULT}" != "skipped" ]; then
+                fail
+              fi
+              artifact_name="candidate-${GITHUB_RUN_ID}"
+              approved_first=true
+              ;;
+            false)
+              if [ "${REPAIR_RESULT}" != "success" ] ||
+                 [ "${REPAIR_GATE_RESULT}" != "success" ] ||
+                 [ "${FINAL_REVIEW_RESULT}" != "success" ] ||
+                 [ "${FINAL_APPROVED}" != "true" ]; then
+                fail
+              fi
+              artifact_name="repaired-${GITHUB_RUN_ID}"
+              approved_first=false
+              ;;
+            *)
+              fail
+              ;;
+          esac
+          printf 'approved_first=%s\nartifact_name=%s\n' \
+            "${approved_first}" "${artifact_name}" >> "${GITHUB_OUTPUT}"
+
+  publish:
+    needs: [prepare, verdict]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -598,13 +652,13 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
         with:
-          name: ${{ needs.review.outputs.approved == 'true' && format('candidate-{0}', github.run_id) || format('repaired-{0}', github.run_id) }}
+          name: ${{ needs.verdict.outputs.artifact_name }}
           path: candidate/.autopilot
       - name: Publish only the reviewed patch to the workbench draft PR
         env:
           GH_TOKEN: ${{ github.token }}
           GOAL_ID: ${{ needs.prepare.outputs.goal_id }}
-          APPROVED_FIRST: ${{ needs.review.outputs.approved }}
+          APPROVED_FIRST: ${{ needs.verdict.outputs.approved_first }}
           EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
         working-directory: candidate
         run: |
