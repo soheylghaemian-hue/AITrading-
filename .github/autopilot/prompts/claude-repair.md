@@ -8,9 +8,20 @@ that fixes every P0/P1 finding. Do not edit the checkout and do not run commands
 All original path, production, secret, broker, execution, leverage and risk constraints still apply. Set
 author to exactly claude. Never bypass tests or policy.
 
-Read the current content of every existing file before composing its incremental diff. Use /dev/null only for
-a file that is genuinely new or deleted in the candidate checkout. For every hunk that changes an existing
-file, emit a standard unified diff with at least three unchanged context lines before and after the change
-when those lines exist. At a file boundary, include the available context on the other side. Never emit a
-context-free hunk and never rely on --unidiff-zero. Keep hunk line counts accurate. The repair patch must pass
-git apply --check --recount --whitespace=error against the candidate checkout.
+Before composing the incremental repair patch, use Read to re-read the exact current contents of every
+existing file you will modify in this candidate-applied checkout. Copy every removed line and context line
+verbatim from that read; never reconstruct them from the original base, candidate patch, goal, plan, review,
+prior output or memory. Use /dev/null only for a file genuinely new or deleted in this checkout.
+
+For every hunk modifying an existing file:
+
+- If the hunk does not touch line 1, its first three body lines must be unchanged context lines beginning with
+  one space.
+- If the hunk does not touch the physical end of the file, its last three body lines must be unchanged context
+  lines beginning with one space.
+- When nearby edits would make those ranges overlap, combine them into one hunk.
+- A hunk may begin or end with + or - only at that physical file boundary. A whole-file replacement without
+  unchanged context is forbidden.
+
+Never emit a context-free hunk and never rely on --unidiff-zero. Keep hunk line counts accurate. The repair
+patch must pass git apply --check --recount --whitespace=error against this exact candidate checkout.
