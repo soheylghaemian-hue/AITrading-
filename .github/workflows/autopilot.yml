@@ -235,7 +235,7 @@ jobs:
             --max-budget-usd 25
             --allowedTools "Read,Glob,Grep"
             --disallowedTools "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Task,mcp__*"
-            --json-schema '{"type":"object","additionalProperties":false,"required":["author","summary","patch","changed_files"],"properties":{"author":{"type":"string","enum":["claude"]},"summary":{"type":"string","maxLength":2000},"patch":{"type":"string"},"changed_files":{"type":"array","minItems":1,"maxItems":80,"uniqueItems":true,"items":{"type":"string"}}}}'
+            --json-schema '{"type":"object","additionalProperties":false,"required":["author","patch","changed_files"],"properties":{"author":{"type":"string","enum":["claude"]},"patch":{"type":"string"},"changed_files":{"type":"array","minItems":1,"items":{"type":"string"}}}}'
 
       - name: Report redacted Claude startup error
         if: ${{ failure() && steps.claude-author.outputs.execution_file != '' }}
@@ -508,7 +508,7 @@ jobs:
             --max-budget-usd 20
             --allowedTools "Read,Glob,Grep"
             --disallowedTools "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Task,mcp__*"
-            --json-schema '{"type":"object","additionalProperties":false,"required":["author","summary","patch","changed_files"],"properties":{"author":{"type":"string","enum":["claude"]},"summary":{"type":"string","maxLength":2000},"patch":{"type":"string"},"changed_files":{"type":"array","minItems":1,"maxItems":80,"uniqueItems":true,"items":{"type":"string"}}}}'
+            --json-schema '{"type":"object","additionalProperties":false,"required":["author","patch","changed_files"],"properties":{"author":{"type":"string","enum":["claude"]},"patch":{"type":"string"},"changed_files":{"type":"array","minItems":1,"items":{"type":"string"}}}}'
 
   gate_repair:
     needs: [prepare, gate, review, repair]
