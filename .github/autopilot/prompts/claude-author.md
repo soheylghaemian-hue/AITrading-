@@ -12,4 +12,10 @@ Rules:
   files, brokers, orders, execution, live trading, leverage or risk controls.
 - Add deterministic tests for behavior. Preserve point-in-time integrity and fail closed.
 - Do not add dependencies, external calls, MCP use, binaries, symlinks, submodules or executable files.
-- The patch must apply to the current HEAD with git apply --whitespace=error.
+- Read the current content of every existing file before composing its diff. Use /dev/null only for a file
+  that is genuinely new or deleted at the current HEAD.
+- For every hunk that changes an existing file, emit a standard unified diff with at least three unchanged
+  context lines before and after the change when those lines exist. At a file boundary, include the available
+  context on the other side. Never emit a context-free hunk and never rely on --unidiff-zero.
+- Keep hunk line counts accurate. The patch must pass
+  git apply --check --recount --whitespace=error against the current HEAD.
