@@ -75,6 +75,23 @@ def test_models_work_only_in_candidate_but_use_control_prompts_and_guard():
     assert "--unidiff-zero" not in WORKFLOW
 
 
+def test_claude_output_schema_is_focused_and_guard_keeps_strict_validation():
+    focused_schema = (
+        '--json-schema \'{"type":"object","additionalProperties":false,'
+        '"required":["author","patch","changed_files"],"properties":'
+        '{"author":{"type":"string","enum":["claude"]},"patch":{"type":"string"},'
+        '"changed_files":{"type":"array","minItems":1,"items":{"type":"string"}}}}\''
+    )
+    assert WORKFLOW.count(focused_schema) == 2
+    for name, following in (("author", "gate"), ("repair", "gate_repair")):
+        job = _job(name, following)
+        assert '"summary"' not in job
+        assert '"uniqueItems"' not in job
+        assert '"maxItems"' not in job
+    assert WORKFLOW.count("--declared-only") == 2
+    assert WORKFLOW.count("--declared-json") == 4
+
+
 def test_claude_token_normalization_removes_only_cr_lf_and_rejects_other_whitespace(
     tmp_path: Path,
 ):
