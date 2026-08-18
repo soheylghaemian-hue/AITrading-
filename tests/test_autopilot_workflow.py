@@ -82,7 +82,8 @@ def test_think_boundary_requirements_are_in_both_authoring_prompts():
         (root / ".github/autopilot/prompts/claude-author.md").read_text(),
     ]
     for prompt in prompts:
-        assert "SenseResult" in prompt\n        assert "constructed" in prompt
+        assert "SenseResult" in prompt
+        assert "constructed" in prompt
         assert "future, stale, duplicate or inconsistent usable evidence" in prompt
         assert "deterministic regression tests" in prompt
 
