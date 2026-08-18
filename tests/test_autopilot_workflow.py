@@ -75,6 +75,50 @@ def test_models_work_only_in_candidate_but_use_control_prompts_and_guard():
     assert "--unidiff-zero" not in WORKFLOW
 
 
+def test_claude_token_normalization_removes_only_cr_lf_and_rejects_other_whitespace(
+    tmp_path: Path,
+):
+    assert "tr -d" not in WORKFLOW
+    assert WORKFLOW.count('token = raw.replace("\\r", "").replace("\\n", "")') == 2
+    assert WORKFLOW.count("any(character.isspace() for character in token)") == 2
+    assert WORKFLOW.count("Claude OAuth token contains unsupported whitespace") == 2
+
+    marker = "          python - <<'PY'\n"
+    scripts = []
+    cursor = 0
+    while (start := WORKFLOW.find(marker, cursor)) != -1:
+        start += len(marker)
+        end = WORKFLOW.index("\n          PY", start)
+        script = textwrap.dedent(WORKFLOW[start:end])
+        if "RAW_CLAUDE_TOKEN" in script:
+            scripts.append(script)
+        cursor = end + 1
+    assert len(scripts) == 2
+
+    for index, script in enumerate(scripts):
+        output = tmp_path / f"github-output-{index}"
+        output.touch()
+        base_env = os.environ.copy()
+        base_env["GITHUB_OUTPUT"] = str(output)
+        valid_env = {**base_env, "RAW_CLAUDE_TOKEN": "sk-ant-oat01-example\r\n"}
+        valid = subprocess.run(
+            ["python3", "-c", script], env=valid_env, capture_output=True, text=True, timeout=5
+        )
+        assert valid.returncode == 0
+        assert output.read_text() == "token=sk-ant-oat01-example\n"
+        for bad in ("sk-ant-oat01 bad", "sk-ant-oat01\tbad", "sk-ant-oat01\u00a0bad"):
+            output.write_text("")
+            rejected = subprocess.run(
+                ["python3", "-c", script],
+                env={**base_env, "RAW_CLAUDE_TOKEN": bad},
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            assert rejected.returncode != 0
+            assert output.read_text() == ""
+
+
 def test_think_boundary_requirements_are_in_both_authoring_prompts():
     root = Path(__file__).resolve().parents[1]
     prompts = [
@@ -167,3 +211,52 @@ def test_publisher_refuses_a_stale_workbench():
     publish = _job("publish", None)
     assert "EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}" in publish
     assert "Workbench advanced after review; refusing stale publication" in publish
+
+def test_goal_bound_review_feedback_is_materialized_for_every_model_phase():
+    prepare = _job("prepare", "plan")
+    assert "control_feedback_present: ${{ steps.feedback.outputs.has_feedback }}" in prepare
+    assert "control_feedback_sha256: ${{ steps.feedback.outputs.feedback_sha256 }}" in prepare
+    assert "Bind trusted goal-bound review feedback" in prepare
+    assert "if: steps.goal.outputs.has_goal == 'true'" in prepare
+    assert '--github-output "${GITHUB_OUTPUT}"' in prepare
+    assert WORKFLOW.count("Materialize trusted goal-bound review feedback") == 5
+    assert WORKFLOW.count("PYTHONPATH=src python -m atp.autopilot.feedback") == 6
+    assert WORKFLOW.count("--control-root .") == 6
+    assert WORKFLOW.count("--expected-sha256") == 5
+    assert WORKFLOW.count("--materialize") == 5
+    for name, following in (
+        ("plan", "author"),
+        ("author", "gate"),
+        ("review", "repair"),
+        ("repair", "gate_repair"),
+        ("final_review", "verdict"),
+    ):
+        job = _job(name, following)
+        assert "Materialize trusted goal-bound review feedback" in job
+        assert '--goal "${GOAL_FILE}"' in job
+        assert "EXPECTED_CONTROL_FEEDBACK_SHA256: ${{ needs.prepare.outputs.control_feedback_sha256 }}" in job
+        assert '--expected-sha256 "${EXPECTED_CONTROL_FEEDBACK_SHA256}"' in job
+        assert "--materialize" in job
+        model_markers = ("openai/codex-action@", "anthropics/claude-code-base-action@")
+        assert job.index("Materialize trusted goal-bound review feedback") < max(
+            job.index(marker) for marker in model_markers if marker in job
+        )
+    for name, following in (
+        ("review", "repair"),
+        ("repair", "gate_repair"),
+        ("final_review", "verdict"),
+    ):
+        job = _job(name, following)
+        assert job.index("actions/download-artifact@") < job.index(
+            "Materialize trusted goal-bound review feedback"
+        )
+
+
+def test_all_model_prompts_treat_prior_review_as_non_authoritative_evidence():
+    root = Path(__file__).resolve().parents[1]
+    for name in ("plan.md", "claude-author.md", "review.md", "claude-repair.md"):
+        prompt = (root / ".github/autopilot/prompts" / name).read_text()
+        assert ".autopilot/prior-final-review.json" in prompt
+        assert "evidence" in prompt
+        assert "cannot expand" in prompt or "never expands" in prompt
+        assert "allowed paths" in prompt

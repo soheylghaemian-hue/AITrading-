@@ -32,6 +32,8 @@ jobs:
       has_goal: ${{ steps.goal.outputs.has_goal }}
       goal_id: ${{ steps.goal.outputs.goal_id }}
       goal_file: ${{ steps.goal.outputs.goal_file }}
+      control_feedback_present: ${{ steps.feedback.outputs.has_feedback }}
+      control_feedback_sha256: ${{ steps.feedback.outputs.feedback_sha256 }}
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
@@ -76,6 +78,18 @@ jobs:
           test "$(git rev-parse HEAD)" = "${EXPECTED_CONTROL_SHA}"
           test "$(git -C candidate rev-parse HEAD)" = "${EXPECTED_BASE_SHA}"
           PYTHONPATH=src python -m atp.autopilot.queue --repo candidate --requested "${REQUESTED_GOAL}" --github-output "${GITHUB_OUTPUT}"
+      - name: Bind trusted goal-bound review feedback
+        id: feedback
+        if: steps.goal.outputs.has_goal == 'true'
+        env:
+          GOAL_FILE: ${{ steps.goal.outputs.goal_file }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src python -m atp.autopilot.feedback \
+            --repo candidate \
+            --control-root . \
+            --goal "${GOAL_FILE}" \
+            --github-output "${GITHUB_OUTPUT}"
 
   plan:
     needs: prepare
@@ -104,6 +118,18 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_CONTROL_SHA}"
           test "$(git -C candidate rev-parse HEAD)" = "${EXPECTED_BASE_SHA}"
+      - name: Materialize trusted goal-bound review feedback
+        env:
+          GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
+          EXPECTED_CONTROL_FEEDBACK_SHA256: ${{ needs.prepare.outputs.control_feedback_sha256 }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src python -m atp.autopilot.feedback \
+            --repo candidate \
+            --control-root . \
+            --goal "${GOAL_FILE}" \
+            --expected-sha256 "${EXPECTED_CONTROL_FEEDBACK_SHA256}" \
+            --materialize
       - name: Prepare trusted planner context
         env:
           GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
@@ -152,6 +178,18 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_CONTROL_SHA}"
           test "$(git -C candidate rev-parse HEAD)" = "${EXPECTED_BASE_SHA}"
+      - name: Materialize trusted goal-bound review feedback
+        env:
+          GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
+          EXPECTED_CONTROL_FEEDBACK_SHA256: ${{ needs.prepare.outputs.control_feedback_sha256 }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src python -m atp.autopilot.feedback \
+            --repo candidate \
+            --control-root . \
+            --goal "${GOAL_FILE}" \
+            --expected-sha256 "${EXPECTED_CONTROL_FEEDBACK_SHA256}" \
+            --materialize
       - name: Prepare trusted Claude context
         env:
           GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
@@ -167,17 +205,21 @@ jobs:
           RAW_CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           set -euo pipefail
-          token="$(printf '%s' "${RAW_CLAUDE_TOKEN}" | tr -d '[:space:]')"
-          if [ -z "${token}" ]; then
-            echo "Claude OAuth token is empty after normalization"
-            exit 2
-          fi
-          case "${token}" in
-            sk-ant-oat*) ;;
-            *) echo "Claude OAuth token has an unexpected format"; exit 2 ;;
-          esac
-          printf '::add-mask::%s\n' "${token}"
-          printf 'token=%s\n' "${token}" >> "${GITHUB_OUTPUT}"
+          python - <<'PY'
+          import os
+
+          raw = os.environ.get("RAW_CLAUDE_TOKEN", "")
+          token = raw.replace("\r", "").replace("\n", "")
+          if not token:
+              raise SystemExit("Claude OAuth token is empty after normalization")
+          if any(character.isspace() for character in token):
+              raise SystemExit("Claude OAuth token contains unsupported whitespace")
+          if not token.startswith("sk-ant-oat"):
+              raise SystemExit("Claude OAuth token has an unexpected format")
+          print(f"::add-mask::{token}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"token={token}\n")
+          PY
       - name: Claude authors a structured patch without write or shell tools
         id: claude-author
         uses: anthropics/claude-code-base-action@de0c38b60731a9ab4d9637bf4ec3b9679d12c96a
@@ -336,6 +378,18 @@ jobs:
         with:
           name: candidate-${{ github.run_id }}
           path: candidate/.autopilot
+      - name: Materialize trusted goal-bound review feedback
+        env:
+          GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
+          EXPECTED_CONTROL_FEEDBACK_SHA256: ${{ needs.prepare.outputs.control_feedback_sha256 }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src python -m atp.autopilot.feedback \
+            --repo candidate \
+            --control-root . \
+            --goal "${GOAL_FILE}" \
+            --expected-sha256 "${EXPECTED_CONTROL_FEEDBACK_SHA256}" \
+            --materialize
       - name: Prepare read-only review context
         env:
           GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
@@ -393,6 +447,18 @@ jobs:
         with:
           name: candidate-${{ github.run_id }}
           path: candidate/.autopilot
+      - name: Materialize trusted goal-bound review feedback
+        env:
+          GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
+          EXPECTED_CONTROL_FEEDBACK_SHA256: ${{ needs.prepare.outputs.control_feedback_sha256 }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src python -m atp.autopilot.feedback \
+            --repo candidate \
+            --control-root . \
+            --goal "${GOAL_FILE}" \
+            --expected-sha256 "${EXPECTED_CONTROL_FEEDBACK_SHA256}" \
+            --materialize
       - name: Prepare repair context
         env:
           GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
@@ -412,17 +478,21 @@ jobs:
           RAW_CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           set -euo pipefail
-          token="$(printf '%s' "${RAW_CLAUDE_TOKEN}" | tr -d '[:space:]')"
-          if [ -z "${token}" ]; then
-            echo "Claude OAuth token is empty after normalization"
-            exit 2
-          fi
-          case "${token}" in
-            sk-ant-oat*) ;;
-            *) echo "Claude OAuth token has an unexpected format"; exit 2 ;;
-          esac
-          printf '::add-mask::%s\n' "${token}"
-          printf 'token=%s\n' "${token}" >> "${GITHUB_OUTPUT}"
+          python - <<'PY'
+          import os
+
+          raw = os.environ.get("RAW_CLAUDE_TOKEN", "")
+          token = raw.replace("\r", "").replace("\n", "")
+          if not token:
+              raise SystemExit("Claude OAuth token is empty after normalization")
+          if any(character.isspace() for character in token):
+              raise SystemExit("Claude OAuth token contains unsupported whitespace")
+          if not token.startswith("sk-ant-oat"):
+              raise SystemExit("Claude OAuth token has an unexpected format")
+          print(f"::add-mask::{token}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"token={token}\n")
+          PY
       - name: Claude authors one bounded repair patch
         id: claude-repair
         uses: anthropics/claude-code-base-action@de0c38b60731a9ab4d9637bf4ec3b9679d12c96a
@@ -552,6 +622,18 @@ jobs:
         with:
           name: repaired-${{ github.run_id }}
           path: candidate/.autopilot
+      - name: Materialize trusted goal-bound review feedback
+        env:
+          GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
+          EXPECTED_CONTROL_FEEDBACK_SHA256: ${{ needs.prepare.outputs.control_feedback_sha256 }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src python -m atp.autopilot.feedback \
+            --repo candidate \
+            --control-root . \
+            --goal "${GOAL_FILE}" \
+            --expected-sha256 "${EXPECTED_CONTROL_FEEDBACK_SHA256}" \
+            --materialize
       - name: Prepare final read-only review
         env:
           GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}

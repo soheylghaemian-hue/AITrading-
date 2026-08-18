@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "kind": "unresolved_review_findings",
+  "goal_id": "trader-brain-think-v1",
+  "findings": [
+    {
+      "id": "future-stale-sense-admission",
+      "severity": "P1",
+      "title": "Future or stale evidence can bypass SENSE admission",
+      "detail": "evaluate_think trusts SenseResult.usable without validating its temporal bounds, while SenseResult has no constructor invariants. A caller can directly construct a SenseResult containing future or stale usable evidence and no rejected entries; THINK then returns admitted beliefs influenced by that evidence. This violates the fail-closed point-in-time requirement.",
+      "location": {
+        "path": "src/atp/brain/think.py",
+        "line": 157
+      },
+      "sources": [
+        {
+          "run_id": 32111724638,
+          "job_id": 95644912987,
+          "stage": "final_review",
+          "base_sha": "0c44df3e00e452cab1d72e2796f90895f3b89734"
+        }
+      ]
+    },
+    {
+      "id": "malformed-invalidation-identifiers",
+      "severity": "P1",
+      "title": "Malformed invalidation identifiers are admitted",
+      "detail": "InvalidationCondition checks only truthiness, so non-string condition IDs and claim keys are accepted and evaluate_think can return an admitted result containing them. This violates the typed-contract and fail-closed malformed-input requirements.",
+      "location": {
+        "path": "src/atp/brain/contracts.py"
+      },
+      "sources": [
+        {
+          "run_id": 32111724638,
+          "job_id": 95641192568,
+          "stage": "initial_review",
+          "base_sha": "0c44df3e00e452cab1d72e2796f90895f3b89734"
+        }
+      ]
+    },
+    {
+      "id": "mutable-calibration-weights",
+      "severity": "P1",
+      "title": "Calibration rule is mutable external state",
+      "detail": "A publicly reachable mutable mapping used directly by THINK confidence evaluation allows callers to change scores and checksums for identical explicit inputs while retaining the same calibration label. Fixed calibration weights must be immutable or private.",
+      "location": {
+        "path": "src/atp/brain/think.py"
+      },
+      "sources": [
+        {
+          "run_id": 32111724638,
+          "job_id": 95641192568,
+          "stage": "initial_review",
+          "base_sha": "0c44df3e00e452cab1d72e2796f90895f3b89734"
+        },
+        {
+          "run_id": 32120821519,
+          "job_id": 95667903995,
+          "stage": "initial_review",
+          "base_sha": "0c44df3e00e452cab1d72e2796f90895f3b89734"
+        }
+      ]
+    },
+    {
+      "id": "timezone-fold-future-leakage",
+      "severity": "P1",
+      "title": "Timestamp validation can admit absolute-future evidence",
+      "detail": "Aware datetimes are compared without first normalizing them to UTC. During a DST fold, wall-time comparison can admit evidence that is later in absolute time and can produce different admission results for equivalent UTC representations, violating point-in-time safety and timezone equivalence.",
+      "location": {
+        "path": "src/atp/brain/think.py"
+      },
+      "sources": [
+        {
+          "run_id": 32120821519,
+          "job_id": 95670527593,
+          "stage": "final_review",
+          "base_sha": "0c44df3e00e452cab1d72e2796f90895f3b89734"
+        }
+      ]
+    }
+  ]
+}
