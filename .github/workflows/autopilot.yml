@@ -206,7 +206,7 @@ jobs:
           set -euo pipefail
           mkdir -p .autopilot
           printf '%s' "${PATCH_JSON}" > .autopilot/claude.json
-          python -m pip install -e '.[dev]'
+          python -m pip install -e '.[dev,live]'
           python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/claude.json --declared-only
           jq -r '.patch' .autopilot/claude.json > .autopilot/candidate.patch
           git apply --check --whitespace=error .autopilot/candidate.patch
@@ -364,7 +364,7 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s' "${REPAIR_JSON}" > .autopilot/repair.json
-          python -m pip install -e '.[dev]'
+          python -m pip install -e '.[dev,live]'
           python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/repair.json --declared-only
           sha256sum -c .autopilot/candidate.patch.sha256
           git apply --check --whitespace=error .autopilot/candidate.patch
