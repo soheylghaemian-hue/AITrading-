@@ -277,3 +277,15 @@ def test_all_model_prompts_treat_prior_review_as_non_authoritative_evidence():
         assert "evidence" in prompt
         assert "cannot expand" in prompt or "never expands" in prompt
         assert "allowed paths" in prompt
+
+def test_temporary_validation_controls_are_absent_from_permanent_workflow():
+    assert "\n  pull_request:" not in WORKFLOW
+    assert "github.event.pull_request" not in WORKFLOW
+    assert "refs/heads/codex/fix-claude-auth" not in WORKFLOW
+    assert "temporary authenticated test branch" not in WORKFLOW
+    assert "Autopilot dispatch is allowed only from main" in WORKFLOW
+    assert "cancel-in-progress: false" in WORKFLOW
+    assert "cancel-in-progress: true" not in WORKFLOW
+    assert "Report redacted Claude startup error" not in WORKFLOW
+    assert "Sanitized Claude startup result" not in WORKFLOW
+    assert "EXECUTION_FILE" not in WORKFLOW
