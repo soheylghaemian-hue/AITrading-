@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 
-from .contracts import Assertion, Evidence, Stance, require_aware
+from .contracts import Assertion, Evidence, Stance, to_utc
 
 
 class SenseFailure(str, Enum):
@@ -87,8 +87,11 @@ def _evidence_payload(evidence: Evidence) -> dict:
 
 
 def _order_key(evidence: Evidence) -> tuple:
-    """Content-derived total order: distinct items can never tie on caller input order."""
-    return (evidence.event_time, evidence.available_time, evidence.observed_time,
+    """Content-derived total order over UTC instants: distinct items can never tie on caller
+    input order, and two timezone spellings of one instant sort identically."""
+    return (to_utc("event_time", evidence.event_time),
+            to_utc("available_time", evidence.available_time),
+            to_utc("observed_time", evidence.observed_time),
             evidence.evidence_id, _canonical(_evidence_payload(evidence)))
 
 
@@ -122,16 +125,21 @@ class SenseResult:
 
 def _rejection(evidence: Evidence, as_of: datetime, limit: timedelta,
                duplicated: bool) -> SenseFailure | None:
-    """Fixed precedence, so the reported reason stays deterministic when several apply."""
+    """Fixed precedence, so the reported reason stays deterministic when several apply.
+
+    ``as_of`` is already a UTC instant and every timestamp is normalised before comparison, so a
+    DST fold cannot make an absolutely later observation look knowable.
+    """
     if duplicated:
         return SenseFailure.DUPLICATE_EVIDENCE_ID
-    if evidence.event_time > as_of:
+    observed = to_utc("observed_time", evidence.observed_time)
+    if to_utc("event_time", evidence.event_time) > as_of:
         return SenseFailure.EVENT_TIME_AFTER_AS_OF
-    if evidence.available_time > as_of:
+    if to_utc("available_time", evidence.available_time) > as_of:
         return SenseFailure.AVAILABLE_TIME_AFTER_AS_OF
-    if evidence.observed_time > as_of:
+    if observed > as_of:
         return SenseFailure.OBSERVED_TIME_AFTER_AS_OF
-    if as_of - evidence.observed_time > limit:
+    if as_of - observed > limit:
         return SenseFailure.STALE_BEYOND_FRESHNESS_LIMIT
     return None
 
@@ -159,7 +167,7 @@ def evaluate_sense(evidence: Iterable[Evidence], *, as_of: datetime,
     Pure: no clock, no I/O, no provider.  `as_of` must be timezone-aware and `freshness_limit`
     a non-negative `timedelta`; anything else fails closed instead of degrading the result.
     """
-    as_of = require_aware("as_of", as_of)
+    as_of = to_utc("as_of", as_of)
     if not isinstance(freshness_limit, timedelta):
         raise ValueError("freshness_limit must be a timedelta")
     if freshness_limit < timedelta(0):
