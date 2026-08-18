@@ -208,7 +208,7 @@ jobs:
           printf '%s' "${PATCH_JSON}" > .autopilot/claude.json
           python -m pip install -e '.[dev,live]'
           python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/claude.json --declared-only
-          jq -r '.patch' .autopilot/claude.json > .autopilot/candidate.patch
+          python -c 'import json; from pathlib import Path; source = Path(".autopilot/claude.json"); patch = json.loads(source.read_text(encoding="utf-8"))["patch"]; Path(".autopilot/candidate.patch").write_text(patch.rstrip(chr(13) + chr(10)) + chr(10), encoding="utf-8")'
           git apply --check --recount --whitespace=error .autopilot/candidate.patch
           git apply --recount --whitespace=error .autopilot/candidate.patch
           python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/claude.json
@@ -369,7 +369,7 @@ jobs:
           sha256sum -c .autopilot/candidate.patch.sha256
           git apply --check --whitespace=error .autopilot/candidate.patch
           git apply --whitespace=error .autopilot/candidate.patch
-          jq -r '.patch' .autopilot/repair.json > .autopilot/repair.patch
+          python -c 'import json; from pathlib import Path; source = Path(".autopilot/repair.json"); patch = json.loads(source.read_text(encoding="utf-8"))["patch"]; Path(".autopilot/repair.patch").write_text(patch.rstrip(chr(13) + chr(10)) + chr(10), encoding="utf-8")'
           git apply --check --recount --whitespace=error .autopilot/repair.patch
           git apply --recount --whitespace=error .autopilot/repair.patch
           python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}"
