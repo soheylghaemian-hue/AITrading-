@@ -42,7 +42,7 @@
       "id": "mutable-calibration-weights",
       "severity": "P1",
       "title": "Calibration rule is mutable external state",
-      "detail": "A publicly reachable mutable mapping used directly by THINK confidence evaluation allows callers to change scores and checksums for identical explicit inputs while retaining the same calibration label. Fixed calibration weights must be immutable or private.",
+      "detail": "evaluate_think derives confidence weights and its calibration label from module-level bindings reachable through atp.brain.think. MappingProxyType blocks item mutation, but callers can replace _QUALITY_WEIGHT or CALIBRATION_VERSION, changing scores, calibration labels, and checksums for identical explicit inputs. This violates the immutable-calibration and mutable-module-state invariants.",
       "location": {
         "path": "src/atp/brain/think.py"
       },
@@ -57,6 +57,12 @@
           "run_id": 32120821519,
           "job_id": 95667903995,
           "stage": "initial_review",
+          "base_sha": "0c44df3e00e452cab1d72e2796f90895f3b89734"
+        },
+        {
+          "run_id": 32128048410,
+          "job_id": 95821078096,
+          "stage": "final_review",
           "base_sha": "0c44df3e00e452cab1d72e2796f90895f3b89734"
         }
       ]
