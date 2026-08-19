@@ -148,6 +148,7 @@ def test_prove_feedback_records_the_exact_failed_gates_without_scope_expansion()
     assert normalized["goal_id"] == "trader-brain-prove-v1"
     assert {finding["id"] for finding in normalized["findings"]} == {
         "abutting-window-fixture-reference",
+        "governance-enum-identity-contamination",
         "malformed-none-helper-substitution",
         "malformed-window-constructor-fixture",
         "randomness-lexical-false-positive",
@@ -172,6 +173,12 @@ def test_prove_feedback_records_the_exact_failed_gates_without_scope_expansion()
         (
             32274484539,
             96144478054,
+            "gate",
+            "c4aba55569b505d118709ecb85be9cd1286b2b0d",
+        ),
+        (
+            32304385086,
+            96238666327,
             "gate",
             "c4aba55569b505d118709ecb85be9cd1286b2b0d",
         ),

@@ -58,6 +58,24 @@
       ]
     },
     {
+      "id": "governance-enum-identity-contamination",
+      "severity": "P1",
+      "title": "PROVE candidate contaminates shared governance module identity",
+      "detail": "After the PROVE candidate tests are collected, existing governance tests observe two distinct ModelStatus enum classes with the same RESEARCH value: identity comparison fails and ModelRegistry.by_status returns no matching model. This proves that candidate-level module loading or cleanup changes shared atp module identity inside the pytest process, so the full deterministic suite is not isolated even though the PROVE-focused tests pass.",
+      "location": {
+        "path": "tests/test_brain_prove.py",
+        "line": 1
+      },
+      "sources": [
+        {
+          "run_id": 32304385086,
+          "job_id": 96238666327,
+          "stage": "gate",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        }
+      ]
+    },
+    {
       "id": "randomness-lexical-false-positive",
       "severity": "P1",
       "title": "Research-only source check confuses prose with a random dependency",
