@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .full_file import FullFileViolation, validate_edit_output
 from .models import Goal
 from .policy import AutopilotPolicy
 
@@ -47,25 +48,43 @@ def load_goal(path: Path) -> Goal:
 
 def validate_declared(payload: dict[str, Any], goal: Goal,
                       policy: AutopilotPolicy | None = None) -> list[str]:
-    if payload.get("author") != "claude":
-        raise GuardViolation("only Claude may author a candidate patch")
-    patch = payload.get("patch")
-    paths = payload.get("changed_files")
-    if not isinstance(patch, str) or not patch.startswith("diff --git "):
-        raise GuardViolation("Claude must return a non-empty unified git patch")
-    if len(patch.encode()) > MAX_PATCH_BYTES:
-        raise GuardViolation("candidate patch exceeds the byte limit")
-    if any(token in patch for token in ("GIT binary patch", "mode 100755", "mode 160000")):
-        raise GuardViolation("binary, executable and submodule patches are forbidden")
-    if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and p for p in paths):
-        raise GuardViolation("changed_files must be a non-empty string list")
-    if len(paths) > MAX_CHANGED_FILES or len(set(paths)) != len(paths):
-        raise GuardViolation("changed_files is oversized or contains duplicates")
+    try:
+        phase = payload.get("phase") if isinstance(payload, dict) else None
+        normalized = validate_edit_output(payload, phase)
+    except FullFileViolation as exc:
+        raise GuardViolation(str(exc)) from exc
+    paths = [edit["path"] for edit in normalized["edits"]]
     decisions = (policy or AutopilotPolicy()).authorize_files(paths, goal_paths=goal.allowed_paths)
     denied = [f"{path}: {decision.reason}" for path, decision in zip(paths, decisions) if not decision.allowed]
     if denied:
         raise GuardViolation("; ".join(denied))
     return sorted(paths)
+
+
+def validate_canonical_patch(path: Path) -> None:
+    """Reject unsafe Git output before its bytes are hashed or published."""
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise GuardViolation("canonical candidate patch is missing or unreadable") from exc
+    if not raw.startswith(b"diff --git "):
+        raise GuardViolation("canonical candidate patch must be a non-empty Git patch")
+    if len(raw) > MAX_PATCH_BYTES:
+        raise GuardViolation("canonical candidate patch exceeds the byte limit")
+    try:
+        lines = raw.decode("utf-8", errors="strict").splitlines()
+    except UnicodeDecodeError as exc:
+        raise GuardViolation("canonical candidate patch must be UTF-8 text") from exc
+    if any(line in {"GIT binary patch"} or line.startswith("Binary files ") for line in lines):
+        raise GuardViolation("binary candidate patches are forbidden")
+    if any(line.startswith("deleted file mode ") for line in lines):
+        raise GuardViolation("file deletions are forbidden")
+    if any(line.startswith(("rename from ", "rename to ", "similarity index ")) for line in lines):
+        raise GuardViolation("rename candidate patches are forbidden")
+    mode_headers = ("new file mode ", "old mode ", "new mode ")
+    for line in lines:
+        if line.startswith(mode_headers) and not line.endswith("100644"):
+            raise GuardViolation("executable, symlink and submodule modes are forbidden")
 
 
 def validate_worktree(repo: Path, goal: Goal,
@@ -92,6 +111,7 @@ def _args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--goal", required=True)
     parser.add_argument("--declared-json")
     parser.add_argument("--declared-only", action="store_true")
+    parser.add_argument("--canonical-patch")
     return parser.parse_args(argv)
 
 
@@ -107,12 +127,16 @@ def main(argv: list[str] | None = None) -> int:
         if args.declared_only:
             if declared is None:
                 raise GuardViolation("--declared-only requires --declared-json")
+            if args.canonical_patch:
+                raise GuardViolation("--declared-only cannot validate a canonical patch")
             print(json.dumps({"allowed": True, "author": "claude",
                               "changed_files": declared}, sort_keys=True))
             return 0
         actual = validate_worktree(repo, goal)
         if declared is not None and declared != actual:
             raise GuardViolation(f"declared files differ from actual files: {declared!r} != {actual!r}")
+        if args.canonical_patch:
+            validate_canonical_patch(Path(args.canonical_patch))
         print(json.dumps({"allowed": True, "author": "claude", "changed_files": actual}, sort_keys=True))
         return 0
     except (GuardViolation, KeyError, TypeError, json.JSONDecodeError) as exc:

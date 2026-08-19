@@ -4,11 +4,13 @@ import ast
 import hashlib
 import json
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from atp.autopilot import model_output
+from atp.autopilot.full_file import prepare_state
 from atp.autopilot.model_output import (
     CLAUDE_PHASES,
     PHASE_PATHS,
@@ -28,17 +30,21 @@ PLAN = {
     "acceptance_tests": ["The focused tests pass."],
     "risks": ["Reject malformed evidence."],
 }
-PATCH = {
+EDIT = {
+    "contract_version": "full-file-edit/v1",
     "author": "claude",
-    "patch": (
-        "diff --git a/src/atp/example.py b/src/atp/example.py\n"
-        "--- a/src/atp/example.py\n"
-        "+++ b/src/atp/example.py\n"
-        "@@ -1 +1 @@\n"
-        "-old\n"
-        "+new\n"
-    ),
-    "changed_files": ["src/atp/example.py"],
+    "phase": "author",
+    "base_sha": "b" * 40,
+    "input_state_sha256": "c" * 64,
+    "parent_patch_sha256": None,
+    "edits": [
+        {
+            "op": "modify",
+            "path": "src/atp/research/example.py",
+            "before_sha256": "d" * 64,
+            "content": "new\n",
+        }
+    ],
 }
 REVIEW = {
     "approved": False,
@@ -58,7 +64,75 @@ def _repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir(mode=0o755, parents=True)
     (repo / ".autopilot").mkdir(mode=0o700)
+    (repo / ".github/autopilot/goals").mkdir(mode=0o755, parents=True)
+    (repo / ".github/autopilot/goals/test.json").write_text(
+        json.dumps(
+            {
+                "goal_id": "test-goal",
+                "objective": "Safe test edit",
+                "success_criteria": ["tests pass"],
+                "allowed_paths": ["src/atp/research/"],
+                "max_iterations": 2,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (repo / "src/atp/research").mkdir(mode=0o755, parents=True)
+    (repo / "src/atp/research/example.py").write_text("old\n", encoding="utf-8")
+    subprocess.run(("git", "init", "-q", str(repo)), check=True)
+    subprocess.run(("git", "-C", str(repo), "config", "user.email", "test@example.invalid"), check=True)
+    subprocess.run(("git", "-C", str(repo), "config", "user.name", "Test"), check=True)
+    subprocess.run(("git", "-C", str(repo), "add", "."), check=True)
+    subprocess.run(("git", "-C", str(repo), "commit", "-qm", "base"), check=True)
     return repo
+
+
+GOAL_FILE = ".github/autopilot/goals/test.json"
+CONTROL_SHA = "a" * 40
+
+
+def _git(repo: Path, *args: str) -> bytes:
+    return subprocess.run(
+        ("git", "-C", str(repo), *args), check=True, capture_output=True
+    ).stdout
+
+
+def _prepare_claude_payload(repo: Path, phase: str, *, content: str = "new\n") -> dict:
+    base_sha = _git(repo, "rev-parse", "HEAD").decode().strip()
+    if phase == "repair":
+        (repo / "src/atp/research/example.py").write_text("candidate\n", encoding="utf-8")
+        (repo / ".autopilot/candidate.patch").write_bytes(
+            _git(
+                repo,
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-renames",
+                "--full-index",
+                "--binary",
+                "HEAD",
+            )
+        )
+    prepare_state(repo, GOAL_FILE, phase, base_sha, CONTROL_SHA)
+    state = json.loads((repo / f".autopilot/{phase}-edit-state.json").read_text())
+    files = {entry["path"]: entry for entry in state["input_state"]["files"]}
+    return {
+        "contract_version": "full-file-edit/v1",
+        "author": "claude",
+        "phase": phase,
+        "base_sha": base_sha,
+        "input_state_sha256": state["input_state_sha256"],
+        "parent_patch_sha256": state["input_state"]["parent_patch_sha256"],
+        "edits": [
+            {
+                "op": "modify",
+                "path": "src/atp/research/example.py",
+                "before_sha256": files["src/atp/research/example.py"]["sha256"],
+                "content": content,
+            }
+        ],
+    }
 
 
 def _write_fixed(
@@ -84,7 +158,7 @@ def _runner_temp(tmp_path: Path) -> Path:
 
 def _write_execution(
     runner: Path,
-    structured_output: object = PATCH,
+    structured_output: object = EDIT,
     *,
     events: list[object] | None = None,
     mode: int = 0o600,
@@ -168,19 +242,21 @@ def test_claude_payload_comes_only_from_one_final_success_event(
 ) -> None:
     repo = _repo(tmp_path)
     runner = _runner_temp(tmp_path)
-    execution = _write_execution(runner)
+    payload = _prepare_claude_payload(repo, phase)
+    execution = _write_execution(runner, payload)
 
     bound = bind_model_output(
         repo,
         phase,
+        goal_file=GOAL_FILE,
         execution_file=execution,
         runner_temp=runner,
     )
 
     output = repo / PHASE_PATHS[phase]
-    assert output.read_bytes() == canonical_phase_bytes(phase, PATCH)
+    assert output.read_bytes() == canonical_phase_bytes(phase, payload)
     assert stat.S_IMODE(output.stat().st_mode) == 0o600
-    assert verify_model_output(repo, phase, bound.sha256) == bound
+    assert verify_model_output(repo, phase, bound.sha256, goal_file=GOAL_FILE) == bound
     assert bound.approved is None
 
 
@@ -194,7 +270,7 @@ def test_claude_payload_comes_only_from_one_final_success_event(
                 "type": "result",
                 "subtype": "success",
                 "is_error": False,
-                "structured_output": PATCH,
+                "structured_output": EDIT,
             },
             {"type": "assistant"},
         ],
@@ -203,13 +279,13 @@ def test_claude_payload_comes_only_from_one_final_success_event(
                 "type": "result",
                 "subtype": "success",
                 "is_error": False,
-                "structured_output": PATCH,
+                "structured_output": EDIT,
             },
             {
                 "type": "result",
                 "subtype": "success",
                 "is_error": False,
-                "structured_output": PATCH,
+                "structured_output": EDIT,
             },
         ],
         [
@@ -217,7 +293,7 @@ def test_claude_payload_comes_only_from_one_final_success_event(
                 "type": "result",
                 "subtype": "error_max_turns",
                 "is_error": False,
-                "structured_output": PATCH,
+                "structured_output": EDIT,
             }
         ],
         [
@@ -225,7 +301,7 @@ def test_claude_payload_comes_only_from_one_final_success_event(
                 "type": "result",
                 "subtype": "success",
                 "is_error": True,
-                "structured_output": PATCH,
+                "structured_output": EDIT,
             }
         ],
         [
@@ -259,7 +335,7 @@ def test_action_output_or_other_file_cannot_substitute_for_execution_file(
     tmp_path: Path,
 ) -> None:
     repo = _repo(tmp_path)
-    _write_fixed(repo, "author", PATCH)
+    _write_fixed(repo, "author", EDIT)
     with pytest.raises(ModelOutputViolation, match="execution_file"):
         bind_model_output(repo, "author")
 
@@ -403,10 +479,16 @@ def test_claude_execution_json_is_also_strict(tmp_path: Path) -> None:
     [
         ("plan", {**PLAN, "extra": "forbidden"}),
         ("plan", {**PLAN, "instructions_for_claude": []}),
-        ("author", {**PATCH, "author": "codex"}),
-        ("author", {**PATCH, "patch": "not a patch"}),
-        ("author", {**PATCH, "changed_files": ["z.py", "a.py"]}),
-        ("author", {**PATCH, "changed_files": ["../outside.py"]}),
+        ("author", {**EDIT, "author": "codex"}),
+        ("author", {**EDIT, "contract_version": "unknown"}),
+        ("author", {**EDIT, "extra": "forbidden"}),
+        (
+            "author",
+            {
+                **EDIT,
+                "edits": [{**EDIT["edits"][0], "path": "../outside.py"}],
+            },
+        ),
         ("review", {**REVIEW, "approved": "false"}),
         ("review", {**REVIEW, "approved": True}),
         (
@@ -430,13 +512,15 @@ def test_existing_or_unsafe_fixed_output_is_never_overwritten_for_claude(
     tmp_path: Path,
 ) -> None:
     repo = _repo(tmp_path)
-    stale = _write_fixed(repo, "author", PATCH, raw=b"stale", mode=0o600)
+    payload = _prepare_claude_payload(repo, "author")
+    stale = _write_fixed(repo, "author", EDIT, raw=b"stale", mode=0o600)
     runner = _runner_temp(tmp_path)
-    execution = _write_execution(runner)
+    execution = _write_execution(runner, payload)
     with pytest.raises(ModelOutputViolation, match="stale"):
         bind_model_output(
             repo,
             "author",
+            goal_file=GOAL_FILE,
             execution_file=execution,
             runner_temp=runner,
         )
@@ -447,10 +531,11 @@ def test_existing_or_unsafe_fixed_output_is_never_overwritten_for_claude(
     outside = tmp_path / "outside-parent"
     outside.mkdir()
     (second_repo / ".autopilot").symlink_to(outside, target_is_directory=True)
-    with pytest.raises(ModelOutputViolation, match="unsafe"):
+    with pytest.raises(ModelOutputViolation, match="symlink|unsafe"):
         bind_model_output(
             second_repo,
             "author",
+            goal_file=GOAL_FILE,
             execution_file=execution,
             runner_temp=runner,
         )
@@ -516,11 +601,10 @@ def test_cli_emits_only_digest_and_review_decision_never_payload(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     marker = "PRIVATE-MODEL-PAYLOAD-MARKER"
-    patch = dict(PATCH)
-    patch["patch"] = PATCH["patch"] + f"# {marker}\n"
     repo = _repo(tmp_path)
+    edit = _prepare_claude_payload(repo, "author", content=f"{marker}\n")
     runner = _runner_temp(tmp_path)
-    execution = _write_execution(runner, patch)
+    execution = _write_execution(runner, edit)
     github_output = _github_output(tmp_path)
 
     assert main(
@@ -530,6 +614,8 @@ def test_cli_emits_only_digest_and_review_decision_never_payload(
             "--phase",
             "author",
             "--bind",
+            "--goal",
+            GOAL_FILE,
             "--execution-file",
             str(execution),
             "--runner-temp",

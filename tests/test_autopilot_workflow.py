@@ -259,21 +259,55 @@ def test_models_work_only_in_candidate_but_use_control_prompts_and_guard():
     assert "--unidiff-zero" not in WORKFLOW
 
 
-def test_claude_output_schema_is_focused_and_guard_keeps_strict_validation():
-    focused_schema = (
-        '--json-schema \'{"type":"object","additionalProperties":false,'
-        '"required":["author","patch","changed_files"],"properties":'
-        '{"author":{"type":"string","enum":["claude"]},"patch":{"type":"string"},'
-        '"changed_files":{"type":"array","minItems":1,"items":{"type":"string"}}}}\''
+def test_claude_output_schema_is_strict_full_file_only_and_guard_remains_final():
+    required = (
+        '"required":["contract_version","author","phase","base_sha",'
+        '"input_state_sha256","parent_patch_sha256","edits"]'
     )
-    assert WORKFLOW.count(focused_schema) == 2
-    for name, following in (("author", "gate"), ("repair", "gate_repair")):
+    edit_required = '"required":["op","path","before_sha256","content"]'
+    assert WORKFLOW.count(required) == 2
+    assert WORKFLOW.count(edit_required) == 2
+    assert WORKFLOW.count('"enum":["full-file-edit/v1"]') == 2
+    assert WORKFLOW.count('"enum":["create","modify"]') == 2
+    assert '"delete"' not in WORKFLOW
+    for name, following, phase in (
+        ("author", "gate", "author"),
+        ("repair", "gate_repair", "repair"),
+    ):
         job = _job(name, following)
+        assert f'"phase":{{"type":"string","enum":["{phase}"]}}' in job
         assert '"summary"' not in job
+        assert '"patch"' not in job
+        assert '"changed_files"' not in job
         assert '"uniqueItems"' not in job
         assert '"maxItems"' not in job
     assert WORKFLOW.count("--declared-only") == 2
     assert WORKFLOW.count("--declared-json") == 4
+
+
+def test_full_file_state_is_bound_for_author_and_repair_before_materialization():
+    assert WORKFLOW.count("python -m atp.autopilot.full_file") == 6
+    assert WORKFLOW.count("            --prepare-state ") == 4
+    assert WORKFLOW.count("            --expected-model-sha256 ") == 2
+    assert WORKFLOW.count("            --control-sha ") == 4
+    assert WORKFLOW.count("            --base-sha ") == 4
+    assert "--recount" not in WORKFLOW
+    assert ".autopilot/repair.patch" not in WORKFLOW
+    assert "json.loads(source.read_text" not in WORKFLOW
+    trusted_diff = "git diff --no-ext-diff --no-textconv --no-renames --full-index --binary"
+    assert WORKFLOW.count(trusted_diff) == 4
+
+    gate = _job("gate", "review")
+    assert gate.index("--prepare-state") < gate.index("python -m atp.autopilot.model_output")
+    assert gate.index("--declared-only") < gate.index("--materialize")
+    assert gate.index("--materialize") < gate.index(f"{trusted_diff} HEAD")
+    assert gate.index(f"{trusted_diff} HEAD") < gate.index("--canonical-patch")
+
+    gate_repair = _job("gate_repair", "final_review")
+    assert gate_repair.index("Temporary candidate baseline") < gate_repair.index("--prepare-state")
+    assert gate_repair.index("--declared-only") < gate_repair.index("--materialize")
+    assert gate_repair.index("--materialize") < gate_repair.index(f"{trusted_diff} HEAD^")
+    assert gate_repair.index(f"{trusted_diff} HEAD^") < gate_repair.index("--canonical-patch")
 
 
 def test_claude_token_normalization_removes_only_cr_lf_and_rejects_other_whitespace(
@@ -550,7 +584,7 @@ def test_goal_bound_review_feedback_is_materialized_for_every_model_phase():
     assert WORKFLOW.count("PYTHONPATH=src python -m atp.autopilot.feedback") == 6
     assert WORKFLOW.count("--control-root .") == 6
     assert WORKFLOW.count('--expected-sha256 "${EXPECTED_CONTROL_FEEDBACK_SHA256}"') == 5
-    assert WORKFLOW.count("--materialize") == 5
+    assert WORKFLOW.count("--materialize") == 7
     for name, following in (
         ("plan", "author"),
         ("author", "gate"),
