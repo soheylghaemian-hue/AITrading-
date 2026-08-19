@@ -250,6 +250,8 @@ jobs:
         env:
           GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
           EXPECTED_MODEL_SHA256: ${{ needs.plan.outputs.model_sha256 }}
+          EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          EXPECTED_CONTROL_SHA: ${{ needs.prepare.outputs.control_sha }}
         working-directory: candidate
         run: |
           set -euo pipefail
@@ -260,6 +262,13 @@ jobs:
             --verify \
             --expected-sha256 "${EXPECTED_MODEL_SHA256}"
           printf '%s\n' "${GOAL_FILE}" > .autopilot/goal-path.txt
+          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.full_file \
+            --repo . \
+            --goal "${GOAL_FILE}" \
+            --phase author \
+            --prepare-state \
+            --base-sha "${EXPECTED_BASE_SHA}" \
+            --control-sha "${EXPECTED_CONTROL_SHA}"
       - name: Normalize Claude OAuth token without exposing it
         id: claude_token
         env:
@@ -281,7 +290,7 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"token={token}\n")
           PY
-      - name: Claude authors a structured patch without write or shell tools
+      - name: Claude authors state-bound full-file edits without write or shell tools
         id: claude-author
         uses: anthropics/claude-code-base-action@de0c38b60731a9ab4d9637bf4ec3b9679d12c96a
         env:
@@ -296,17 +305,19 @@ jobs:
             --max-budget-usd 25
             --allowedTools "Read,Glob,Grep"
             --disallowedTools "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Task,mcp__*"
-            --json-schema '{"type":"object","additionalProperties":false,"required":["author","patch","changed_files"],"properties":{"author":{"type":"string","enum":["claude"]},"patch":{"type":"string"},"changed_files":{"type":"array","minItems":1,"items":{"type":"string"}}}}'
+            --json-schema '{"type":"object","additionalProperties":false,"required":["contract_version","author","phase","base_sha","input_state_sha256","parent_patch_sha256","edits"],"properties":{"contract_version":{"type":"string","enum":["full-file-edit/v1"]},"author":{"type":"string","enum":["claude"]},"phase":{"type":"string","enum":["author"]},"base_sha":{"type":"string"},"input_state_sha256":{"type":"string"},"parent_patch_sha256":{"type":"null"},"edits":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["op","path","before_sha256","content"],"properties":{"op":{"type":"string","enum":["create","modify"]},"path":{"type":"string"},"before_sha256":{"type":["string","null"]},"content":{"type":"string"}}}}}}'
       - name: Bind trusted author output
         id: bind-author
         env:
           EXECUTION_FILE: ${{ steps.claude-author.outputs.execution_file }}
+          GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
         run: |
           set -euo pipefail
           PYTHONPATH=src python -m atp.autopilot.model_output \
             --repo candidate \
             --phase author \
             --bind \
+            --goal "${GOAL_FILE}" \
             --execution-file "${EXECUTION_FILE}" \
             --runner-temp "${RUNNER_TEMP}" \
             --github-output "${GITHUB_OUTPUT}"
@@ -357,27 +368,41 @@ jobs:
         with:
           name: ${{ needs.author.outputs.artifact_name }}
           path: candidate/.autopilot
-      - name: Validate and apply Claude patch
+      - name: Validate and materialize Claude full-file edits
         env:
           GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
           EXPECTED_MODEL_SHA256: ${{ needs.author.outputs.model_sha256 }}
+          EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          EXPECTED_CONTROL_SHA: ${{ needs.prepare.outputs.control_sha }}
         working-directory: candidate
         run: |
           set -euo pipefail
           mkdir -p .autopilot
+          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.full_file \
+            --repo . \
+            --goal "${GOAL_FILE}" \
+            --phase author \
+            --prepare-state \
+            --base-sha "${EXPECTED_BASE_SHA}" \
+            --control-sha "${EXPECTED_CONTROL_SHA}"
           PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.model_output \
             --repo . \
             --phase author \
             --verify \
+            --goal "${GOAL_FILE}" \
             --expected-sha256 "${EXPECTED_MODEL_SHA256}"
           python -m pip install -e '.[dev,live]'
           PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/claude.json --declared-only
-          python -c 'import json; from pathlib import Path; source = Path(".autopilot/claude.json"); patch = json.loads(source.read_text(encoding="utf-8"))["patch"]; Path(".autopilot/candidate.patch").write_text(patch.rstrip(chr(13) + chr(10)) + chr(10), encoding="utf-8")'
-          git apply --check --recount --whitespace=error .autopilot/candidate.patch
-          git apply --intent-to-add --recount --whitespace=error .autopilot/candidate.patch
-          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/claude.json
+          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.full_file \
+            --repo . \
+            --goal "${GOAL_FILE}" \
+            --phase author \
+            --materialize \
+            --expected-model-sha256 "${EXPECTED_MODEL_SHA256}"
+          git add --intent-to-add --all
           git diff --check
-          git diff --binary HEAD > .autopilot/candidate.patch
+          git diff --no-ext-diff --no-textconv --no-renames --full-index --binary HEAD > .autopilot/candidate.patch
+          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/claude.json --canonical-patch .autopilot/candidate.patch
           sha256sum .autopilot/candidate.patch > .autopilot/candidate.patch.sha256
       - name: Run deterministic evidence suite
         working-directory: candidate
@@ -387,7 +412,7 @@ jobs:
           (cd frontend && npm ci && npm test -- --run && npm run build) 2>&1 | tee -a .autopilot/test-evidence.txt
           git diff --check
           sha256sum -c .autopilot/candidate.patch.sha256
-          git diff --binary HEAD > .autopilot/post-test.patch
+          git diff --no-ext-diff --no-textconv --no-renames --full-index --binary HEAD > .autopilot/post-test.patch
           if ! cmp --silent .autopilot/candidate.patch .autopilot/post-test.patch; then
             echo "Tests changed the candidate worktree; refusing mutable evidence"
             exit 2
@@ -593,6 +618,8 @@ jobs:
           GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
           EXPECTED_PLAN_SHA256: ${{ needs.plan.outputs.model_sha256 }}
           EXPECTED_REVIEW_SHA256: ${{ needs.review.outputs.model_sha256 }}
+          EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          EXPECTED_CONTROL_SHA: ${{ needs.prepare.outputs.control_sha }}
         working-directory: candidate
         run: |
           set -euo pipefail
@@ -610,6 +637,13 @@ jobs:
           git apply --check --whitespace=error .autopilot/candidate.patch
           git apply --intent-to-add --whitespace=error .autopilot/candidate.patch
           printf '%s\n' "${GOAL_FILE}" > .autopilot/goal-path.txt
+          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.full_file \
+            --repo . \
+            --goal "${GOAL_FILE}" \
+            --phase repair \
+            --prepare-state \
+            --base-sha "${EXPECTED_BASE_SHA}" \
+            --control-sha "${EXPECTED_CONTROL_SHA}"
       - name: Normalize Claude OAuth token without exposing it
         id: claude_token
         env:
@@ -631,7 +665,7 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"token={token}\n")
           PY
-      - name: Claude authors one bounded repair patch
+      - name: Claude authors one bounded state-bound repair
         id: claude-repair
         uses: anthropics/claude-code-base-action@de0c38b60731a9ab4d9637bf4ec3b9679d12c96a
         env:
@@ -646,17 +680,19 @@ jobs:
             --max-budget-usd 20
             --allowedTools "Read,Glob,Grep"
             --disallowedTools "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Task,mcp__*"
-            --json-schema '{"type":"object","additionalProperties":false,"required":["author","patch","changed_files"],"properties":{"author":{"type":"string","enum":["claude"]},"patch":{"type":"string"},"changed_files":{"type":"array","minItems":1,"items":{"type":"string"}}}}'
+            --json-schema '{"type":"object","additionalProperties":false,"required":["contract_version","author","phase","base_sha","input_state_sha256","parent_patch_sha256","edits"],"properties":{"contract_version":{"type":"string","enum":["full-file-edit/v1"]},"author":{"type":"string","enum":["claude"]},"phase":{"type":"string","enum":["repair"]},"base_sha":{"type":"string"},"input_state_sha256":{"type":"string"},"parent_patch_sha256":{"type":"string"},"edits":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["op","path","before_sha256","content"],"properties":{"op":{"type":"string","enum":["create","modify"]},"path":{"type":"string"},"before_sha256":{"type":["string","null"]},"content":{"type":"string"}}}}}}'
       - name: Bind trusted repair output
         id: bind-repair
         env:
           EXECUTION_FILE: ${{ steps.claude-repair.outputs.execution_file }}
+          GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
         run: |
           set -euo pipefail
           PYTHONPATH=src python -m atp.autopilot.model_output \
             --repo candidate \
             --phase repair \
             --bind \
+            --goal "${GOAL_FILE}" \
             --execution-file "${EXECUTION_FILE}" \
             --runner-temp "${RUNNER_TEMP}" \
             --github-output "${GITHUB_OUTPUT}"
@@ -716,27 +752,41 @@ jobs:
         env:
           GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
           EXPECTED_MODEL_SHA256: ${{ needs.repair.outputs.model_sha256 }}
+          EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          EXPECTED_CONTROL_SHA: ${{ needs.prepare.outputs.control_sha }}
         working-directory: candidate
         run: |
           set -euo pipefail
-          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.model_output \
-            --repo . \
-            --phase repair \
-            --verify \
-            --expected-sha256 "${EXPECTED_MODEL_SHA256}"
           python -m pip install -e '.[dev,live]'
-          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/repair.json --declared-only
           sha256sum -c .autopilot/candidate.patch.sha256
           git apply --check --whitespace=error .autopilot/candidate.patch
           git apply --intent-to-add --whitespace=error .autopilot/candidate.patch
           git add -A
           git -c user.name=autopilot-gate -c user.email=autopilot-gate@users.noreply.github.com -c commit.gpgsign=false commit -m "Temporary candidate baseline"
-          python -c 'import json; from pathlib import Path; source = Path(".autopilot/repair.json"); patch = json.loads(source.read_text(encoding="utf-8"))["patch"]; Path(".autopilot/repair.patch").write_text(patch.rstrip(chr(13) + chr(10)) + chr(10), encoding="utf-8")'
-          git apply --check --recount --whitespace=error .autopilot/repair.patch
-          git apply --intent-to-add --recount --whitespace=error .autopilot/repair.patch
-          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/repair.json
+          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.full_file \
+            --repo . \
+            --goal "${GOAL_FILE}" \
+            --phase repair \
+            --prepare-state \
+            --base-sha "${EXPECTED_BASE_SHA}" \
+            --control-sha "${EXPECTED_CONTROL_SHA}"
+          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.model_output \
+            --repo . \
+            --phase repair \
+            --verify \
+            --goal "${GOAL_FILE}" \
+            --expected-sha256 "${EXPECTED_MODEL_SHA256}"
+          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/repair.json --declared-only
+          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.full_file \
+            --repo . \
+            --goal "${GOAL_FILE}" \
+            --phase repair \
+            --materialize \
+            --expected-model-sha256 "${EXPECTED_MODEL_SHA256}"
+          git add --intent-to-add --all
           git diff --check HEAD^
-          git diff --binary HEAD^ > .autopilot/repaired.patch
+          git diff --no-ext-diff --no-textconv --no-renames --full-index --binary HEAD^ > .autopilot/repaired.patch
+          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/repair.json --canonical-patch .autopilot/repaired.patch
           sha256sum .autopilot/repaired.patch > .autopilot/repaired.patch.sha256
       - name: Re-run deterministic evidence suite
         working-directory: candidate
@@ -746,7 +796,7 @@ jobs:
           (cd frontend && npm ci && npm test -- --run && npm run build) 2>&1 | tee -a .autopilot/test-evidence.txt
           git diff --check HEAD^
           sha256sum -c .autopilot/repaired.patch.sha256
-          git diff --binary HEAD^ > .autopilot/post-test-repaired.patch
+          git diff --no-ext-diff --no-textconv --no-renames --full-index --binary HEAD^ > .autopilot/post-test-repaired.patch
           if ! cmp --silent .autopilot/repaired.patch .autopilot/post-test-repaired.patch; then
             echo "Tests changed the repaired worktree; refusing mutable evidence"
             exit 2

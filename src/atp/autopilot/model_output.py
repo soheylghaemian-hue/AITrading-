@@ -22,21 +22,22 @@ import os
 import re
 import stat
 import sys
-import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
-# A valid 400 kB unified diff expands when JSON escapes newlines, quotes and
-# backslashes. Keep the canonical envelope bounded while leaving room for that
-# deterministic encoding overhead.
+from .full_file import (
+    FullFileViolation,
+    validate_edit_output,
+    validate_output_against_state,
+)
+
+# Full-file content expands when JSON escapes newlines, quotes and backslashes.
+# Keep the canonical envelope bounded around the separately enforced edit budget.
 MAX_MODEL_OUTPUT_BYTES = 1_000_000
 MAX_EXECUTION_FILE_BYTES = 64 * 1024 * 1024
 MAX_GITHUB_OUTPUT_BYTES = 1_000_000
-MAX_PATCH_BYTES = 400_000
-MAX_CHANGED_FILES = 80
-MAX_PATH_BYTES = 240
 
 PHASE_PATHS: Mapping[str, Path] = {
     "plan": Path(".autopilot/plan.json"),
@@ -159,33 +160,6 @@ def _string_list(
     return value
 
 
-def _canonical_repo_path(value: Any, field: str) -> str:
-    try:
-        encoded_length = len(value.encode("utf-8")) if isinstance(value, str) else 0
-    except UnicodeEncodeError as exc:
-        raise ModelOutputViolation(
-            f"{field} must be a bounded repository-relative POSIX path"
-        ) from exc
-    if (
-        not isinstance(value, str)
-        or not value
-        or encoded_length > MAX_PATH_BYTES
-        or "\\" in value
-        or value != unicodedata.normalize("NFC", value)
-        or any(unicodedata.category(character).startswith("C") for character in value)
-    ):
-        raise ModelOutputViolation(f"{field} must be a bounded repository-relative POSIX path")
-    pure = PurePosixPath(value)
-    if (
-        pure.is_absolute()
-        or pure.as_posix() != value
-        or value.endswith("/")
-        or any(part in {"", ".", ".."} for part in pure.parts)
-    ):
-        raise ModelOutputViolation(f"{field} must be a canonical repository-relative POSIX path")
-    return value
-
-
 def _validate_plan(payload: Any) -> dict[str, Any]:
     value = _exact_object(
         payload,
@@ -210,37 +184,11 @@ def _validate_plan(payload: Any) -> dict[str, Any]:
     }
 
 
-def _validate_patch(payload: Any, phase: str) -> dict[str, Any]:
-    value = _exact_object(
-        payload,
-        frozenset({"author", "patch", "changed_files"}),
-        phase,
-    )
-    if value["author"] != "claude":
-        raise ModelOutputViolation(f"{phase}.author must be exactly claude")
-    patch = _string(value["patch"], f"{phase}.patch", nonempty=True)
-    if not patch.startswith("diff --git "):
-        raise ModelOutputViolation(f"{phase}.patch must be a unified git patch")
+def _validate_edit(payload: Any, phase: str) -> dict[str, Any]:
     try:
-        patch_bytes = patch.encode("utf-8")
-    except UnicodeEncodeError as exc:
-        raise ModelOutputViolation(f"{phase}.patch must be valid UTF-8 text") from exc
-    if len(patch_bytes) > MAX_PATCH_BYTES:
-        raise ModelOutputViolation(f"{phase}.patch exceeds the size limit")
-    paths = _string_list(
-        value["changed_files"],
-        f"{phase}.changed_files",
-        minimum=1,
-        maximum=MAX_CHANGED_FILES,
-    )
-    normalized_paths = [
-        _canonical_repo_path(path, f"{phase}.changed_files") for path in paths
-    ]
-    if normalized_paths != sorted(set(normalized_paths)):
-        raise ModelOutputViolation(
-            f"{phase}.changed_files must be unique and lexicographically sorted"
-        )
-    return {"author": "claude", "patch": patch, "changed_files": normalized_paths}
+        return validate_edit_output(payload, phase)
+    except FullFileViolation as exc:
+        raise ModelOutputViolation(str(exc)) from exc
 
 
 def _validate_review(payload: Any, phase: str) -> dict[str, Any]:
@@ -288,9 +236,9 @@ def validate_phase_output(phase: str, payload: Any) -> dict[str, Any]:
     selected = _phase_name(phase)
     validators: Mapping[str, Callable[[Any], dict[str, Any]]] = {
         "plan": _validate_plan,
-        "author": lambda value: _validate_patch(value, "author"),
+        "author": lambda value: _validate_edit(value, "author"),
         "review": lambda value: _validate_review(value, "review"),
-        "repair": lambda value: _validate_patch(value, "repair"),
+        "repair": lambda value: _validate_edit(value, "repair"),
         "final_review": lambda value: _validate_review(value, "final_review"),
     }
     return validators[selected](payload)
@@ -579,6 +527,7 @@ def bind_model_output(
     repo: Path,
     phase: str,
     *,
+    goal_file: str | None = None,
     execution_file: Path | None = None,
     runner_temp: Path | None = None,
 ) -> ModelOutputResult:
@@ -592,12 +541,20 @@ def bind_model_output(
             )
         raw_execution = _read_execution_file(execution_file, runner_temp)
         payload = _extract_claude_output(raw_execution)
+        if goal_file is None:
+            raise ModelOutputViolation("Claude phases require the trusted goal path")
+        try:
+            payload = validate_output_against_state(
+                candidate_root, goal_file, selected, payload
+            )
+        except FullFileViolation as exc:
+            raise ModelOutputViolation(str(exc)) from exc
         content = canonical_phase_bytes(selected, payload)
         _atomic_create(candidate_root, selected, content)
     else:
-        if execution_file is not None or runner_temp is not None:
+        if execution_file is not None or runner_temp is not None or goal_file is not None:
             raise ModelOutputViolation(
-                "non-Claude phases must not accept Claude execution arguments"
+                "non-Claude phases must not accept Claude context arguments"
             )
         relative = PHASE_PATHS[selected]
         raw, original = _read_regular_file(
@@ -618,6 +575,8 @@ def verify_model_output(
     repo: Path,
     phase: str,
     expected_sha256: str,
+    *,
+    goal_file: str | None = None,
 ) -> ModelOutputResult:
     """Verify the fixed file's schema, canonical bytes, safe mode and digest."""
     selected = _phase_name(phase)
@@ -631,6 +590,17 @@ def verify_model_output(
         source=f"{selected} model output",
     )
     payload = _parse_json(raw, source=f"{selected} model output")
+    if selected in CLAUDE_PHASES:
+        if goal_file is None:
+            raise ModelOutputViolation("Claude phases require the trusted goal path")
+        try:
+            payload = validate_output_against_state(
+                candidate_root, goal_file, selected, payload
+            )
+        except FullFileViolation as exc:
+            raise ModelOutputViolation(str(exc)) from exc
+    elif goal_file is not None:
+        raise ModelOutputViolation("non-Claude phases must not accept a trusted goal path")
     canonical = canonical_phase_bytes(selected, payload)
     if raw != canonical:
         raise ModelOutputViolation("model output is not in canonical byte form")
@@ -687,6 +657,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--expected-sha256")
     parser.add_argument("--execution-file")
     parser.add_argument("--runner-temp")
+    parser.add_argument("--goal")
     return parser.parse_args(argv)
 
 
@@ -701,6 +672,7 @@ def main(argv: list[str] | None = None) -> int:
             result = bind_model_output(
                 Path(args.repo),
                 args.phase,
+                goal_file=args.goal,
                 execution_file=Path(args.execution_file) if args.execution_file else None,
                 runner_temp=Path(args.runner_temp) if args.runner_temp else None,
             )
@@ -713,7 +685,12 @@ def main(argv: list[str] | None = None) -> int:
                 raise ModelOutputViolation("--verify requires --expected-sha256")
             if args.execution_file is not None or args.runner_temp is not None:
                 raise ModelOutputViolation("--verify must not receive execution arguments")
-            result = verify_model_output(Path(args.repo), args.phase, args.expected_sha256)
+            result = verify_model_output(
+                Path(args.repo),
+                args.phase,
+                args.expected_sha256,
+                goal_file=args.goal,
+            )
             mode = "verify"
         print(json.dumps(result.summary(mode), sort_keys=True, separators=(",", ":")))
         return 0
