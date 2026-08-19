@@ -40,6 +40,24 @@
       ]
     },
     {
+      "id": "malformed-window-constructor-fixture",
+      "severity": "P1",
+      "title": "Malformed-window test omits constructor bounds",
+      "detail": "The malformed-window fixture includes the two-item tuple (\"w\", \"TRAINING\") but expands it directly into EvaluationWindow. Because start and end are omitted, Python raises TypeError before window validation can produce the expected ValueError, so the gate fails without testing invalid-role fail-closed behavior.",
+      "location": {
+        "path": "tests/test_brain_prove.py",
+        "line": 189
+      },
+      "sources": [
+        {
+          "run_id": 32274484539,
+          "job_id": 96144478054,
+          "stage": "gate",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        }
+      ]
+    },
+    {
       "id": "randomness-lexical-false-positive",
       "severity": "P1",
       "title": "Research-only source check confuses prose with a random dependency",

@@ -142,13 +142,14 @@ def test_repeated_calibration_reports_remain_one_finding_with_distinct_sources()
     ) == 1
 
 
-def test_prove_feedback_records_the_exact_failed_gate_without_scope_expansion() -> None:
+def test_prove_feedback_records_the_exact_failed_gates_without_scope_expansion() -> None:
     goal = load_goal(PROVE_GOAL_PATH)
     normalized = load_feedback(PROVE_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-prove-v1"
     assert {finding["id"] for finding in normalized["findings"]} == {
         "abutting-window-fixture-reference",
         "malformed-none-helper-substitution",
+        "malformed-window-constructor-fixture",
         "randomness-lexical-false-positive",
     }
     assert {finding["severity"] for finding in normalized["findings"]} == {"P1"}
@@ -167,7 +168,13 @@ def test_prove_feedback_records_the_exact_failed_gate_without_scope_expansion() 
             96002679156,
             "gate",
             "c4aba55569b505d118709ecb85be9cd1286b2b0d",
-        )
+        ),
+        (
+            32274484539,
+            96144478054,
+            "gate",
+            "c4aba55569b505d118709ecb85be9cd1286b2b0d",
+        ),
     }
     assert {
         finding["location"]["path"] for finding in normalized["findings"]
