@@ -59,6 +59,7 @@
         },
         "stage": {
           "enum": [
+            "gate",
             "initial_review",
             "final_review"
           ]

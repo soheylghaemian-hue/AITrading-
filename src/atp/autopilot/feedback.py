@@ -8,28 +8,28 @@ grants, allowed-path changes, patches, or arbitrary output locations are accepte
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import hashlib
 import json
 import os
-from pathlib import Path, PurePosixPath
 import re
 import stat
 import sys
-from typing import Any, Mapping
 import unicodedata
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from typing import Any
 
 from .models import Goal
 from .policy import AutopilotPolicy
 from .queue import GoalViolation, load_goal
-
 
 MAX_FEEDBACK_BYTES = 16_384
 MAX_FINDINGS = 16
 MAX_SOURCES_PER_FINDING = 8
 MAX_PATH_BYTES = 240
 ALLOWED_SEVERITIES = frozenset({"P0", "P1"})
-ALLOWED_STAGES = frozenset({"initial_review", "final_review"})
+ALLOWED_STAGES = frozenset({"gate", "initial_review", "final_review"})
 TOP_LEVEL_KEYS = frozenset({"schema_version", "kind", "goal_id", "findings"})
 FINDING_KEYS = frozenset({"id", "severity", "title", "detail", "location", "sources"})
 LOCATION_REQUIRED_KEYS = frozenset({"path"})
@@ -113,7 +113,7 @@ def _validate_source(value: Any) -> dict[str, Any]:
         raise FeedbackViolation("each source must use the exact trusted schema")
     stage = value["stage"]
     if not isinstance(stage, str) or stage not in ALLOWED_STAGES:
-        raise FeedbackViolation("source.stage is not an allowed review stage")
+        raise FeedbackViolation("source.stage is not an allowed evidence stage")
     base_sha = value["base_sha"]
     if not isinstance(base_sha, str) or not COMMIT_SHA.fullmatch(base_sha):
         raise FeedbackViolation("source.base_sha must be a lowercase full commit SHA")

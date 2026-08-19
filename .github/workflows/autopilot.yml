@@ -18,6 +18,7 @@ concurrency:
 
 env:
   WORKBENCH_BRANCH: claude/autopilot-workbench
+  WORKBENCH_PR_NUMBER: "3"
 
 jobs:
   prepare:
@@ -98,7 +99,8 @@ jobs:
     permissions:
       contents: read
     outputs:
-      plan_json: ${{ steps.codex-plan.outputs.final-message }}
+      artifact_name: ${{ steps.bind-plan.outputs.artifact_name }}
+      model_sha256: ${{ steps.bind-plan.outputs.model_sha256 }}
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
@@ -136,20 +138,70 @@ jobs:
         run: |
           mkdir -p .autopilot
           printf '%s\n' "${GOAL_FILE}" > .autopilot/goal-path.txt
-      - name: Codex creates the plan read-only
-        id: codex-plan
+      - name: Prepare the private Codex runtime without a prompt
         uses: openai/codex-action@c385816875cc2fc8e033ed9d1cba96f8c331210e
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          prompt-file: ${{ github.workspace }}/.github/autopilot/prompts/plan.md
-          output-file: ${{ github.workspace }}/candidate/.autopilot/plan.json
-          output-schema-file: ${{ github.workspace }}/.github/autopilot/schemas/plan.schema.json
-          working-directory: ${{ github.workspace }}/candidate
+          codex-home: ${{ runner.temp }}/codex-home
           permission-profile: ":read-only"
           safety-strategy: drop-sudo
-          codex-args: '["--ephemeral"]'
-          effort: high
           allow-bots: true
+      - name: Codex creates the plan read-only without log disclosure
+        working-directory: ${{ github.workspace }}/candidate
+        env:
+          CODEX_HOME: ${{ runner.temp }}/codex-home
+          CODEX_PROMPT_FILE: ${{ github.workspace }}/.github/autopilot/prompts/plan.md
+          CODEX_OUTPUT_FILE: ${{ github.workspace }}/candidate/.autopilot/plan.json
+          CODEX_OUTPUT_SCHEMA_FILE: ${{ github.workspace }}/.github/autopilot/schemas/plan.schema.json
+          CODEX_INTERNAL_ORIGINATOR_OVERRIDE: codex_github_action
+          FORCE_COLOR: "1"
+        run: |
+          set -euo pipefail
+          umask 077
+          private_log="$(mktemp "${RUNNER_TEMP}/codex-${GITHUB_JOB}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXX")"
+          cleanup_private_codex_log() {
+            rm -f -- "${private_log}"
+          }
+          trap cleanup_private_codex_log EXIT
+          trap 'exit 129' HUP
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          chmod 600 "${private_log}"
+          test "$(stat -c '%a' "${private_log}")" = "600"
+          test -f "${CODEX_PROMPT_FILE}"
+          test ! -L "${CODEX_PROMPT_FILE}"
+          test -f "${CODEX_OUTPUT_SCHEMA_FILE}"
+          test ! -L "${CODEX_OUTPUT_SCHEMA_FILE}"
+          test ! -e "${CODEX_OUTPUT_FILE}"
+          test ! -L "${CODEX_OUTPUT_FILE}"
+          codex exec \
+            --skip-git-repo-check \
+            --cd "${GITHUB_WORKSPACE}/candidate" \
+            --output-last-message "${CODEX_OUTPUT_FILE}" \
+            --output-schema "${CODEX_OUTPUT_SCHEMA_FILE}" \
+            --config 'model_reasoning_effort="high"' \
+            --ephemeral \
+            --config 'default_permissions=":read-only"' \
+            < "${CODEX_PROMPT_FILE}" \
+            > "${private_log}" 2>&1
+          test -s "${CODEX_OUTPUT_FILE}"
+      - name: Bind trusted planner output
+        id: bind-plan
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src python -m atp.autopilot.model_output \
+            --repo candidate \
+            --phase plan \
+            --bind \
+            --github-output "${GITHUB_OUTPUT}"
+          printf 'artifact_name=model-plan-%s-%s\n' \
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_OUTPUT}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.bind-plan.outputs.artifact_name }}
+          path: candidate/.autopilot/plan.json
+          if-no-files-found: error
+          retention-days: 1
 
   author:
     needs: [prepare, plan]
@@ -158,7 +210,8 @@ jobs:
     permissions:
       contents: read
     outputs:
-      patch_json: ${{ steps.claude-author.outputs.structured_output }}
+      artifact_name: ${{ steps.bind-author.outputs.artifact_name }}
+      model_sha256: ${{ steps.bind-author.outputs.model_sha256 }}
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
@@ -177,6 +230,10 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_CONTROL_SHA}"
           test "$(git -C candidate rev-parse HEAD)" = "${EXPECTED_BASE_SHA}"
+      - uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
+        with:
+          name: ${{ needs.plan.outputs.artifact_name }}
+          path: candidate/.autopilot
       - name: Materialize trusted goal-bound review feedback
         env:
           GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
@@ -192,12 +249,17 @@ jobs:
       - name: Prepare trusted Claude context
         env:
           GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
-          PLAN_JSON: ${{ needs.plan.outputs.plan_json }}
+          EXPECTED_MODEL_SHA256: ${{ needs.plan.outputs.model_sha256 }}
         working-directory: candidate
         run: |
+          set -euo pipefail
           mkdir -p .autopilot
+          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.model_output \
+            --repo . \
+            --phase plan \
+            --verify \
+            --expected-sha256 "${EXPECTED_MODEL_SHA256}"
           printf '%s\n' "${GOAL_FILE}" > .autopilot/goal-path.txt
-          printf '%s' "${PLAN_JSON}" > .autopilot/plan.json
       - name: Normalize Claude OAuth token without exposing it
         id: claude_token
         env:
@@ -235,6 +297,27 @@ jobs:
             --allowedTools "Read,Glob,Grep"
             --disallowedTools "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Task,mcp__*"
             --json-schema '{"type":"object","additionalProperties":false,"required":["author","patch","changed_files"],"properties":{"author":{"type":"string","enum":["claude"]},"patch":{"type":"string"},"changed_files":{"type":"array","minItems":1,"items":{"type":"string"}}}}'
+      - name: Bind trusted author output
+        id: bind-author
+        env:
+          EXECUTION_FILE: ${{ steps.claude-author.outputs.execution_file }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src python -m atp.autopilot.model_output \
+            --repo candidate \
+            --phase author \
+            --bind \
+            --execution-file "${EXECUTION_FILE}" \
+            --runner-temp "${RUNNER_TEMP}" \
+            --github-output "${GITHUB_OUTPUT}"
+          printf 'artifact_name=model-author-%s-%s\n' \
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_OUTPUT}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.bind-author.outputs.artifact_name }}
+          path: candidate/.autopilot/claude.json
+          if-no-files-found: error
+          retention-days: 1
 
   gate:
     needs: [prepare, author]
@@ -242,6 +325,8 @@ jobs:
     timeout-minutes: 40
     permissions:
       contents: read
+    outputs:
+      artifact_name: ${{ steps.candidate-artifact.outputs.artifact_name }}
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
@@ -268,15 +353,23 @@ jobs:
           node-version: "20"
           cache: npm
           cache-dependency-path: candidate/frontend/package-lock.json
+      - uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
+        with:
+          name: ${{ needs.author.outputs.artifact_name }}
+          path: candidate/.autopilot
       - name: Validate and apply Claude patch
         env:
-          PATCH_JSON: ${{ needs.author.outputs.patch_json }}
           GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
+          EXPECTED_MODEL_SHA256: ${{ needs.author.outputs.model_sha256 }}
         working-directory: candidate
         run: |
           set -euo pipefail
           mkdir -p .autopilot
-          printf '%s' "${PATCH_JSON}" > .autopilot/claude.json
+          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.model_output \
+            --repo . \
+            --phase author \
+            --verify \
+            --expected-sha256 "${EXPECTED_MODEL_SHA256}"
           python -m pip install -e '.[dev,live]'
           PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/claude.json --declared-only
           python -c 'import json; from pathlib import Path; source = Path(".autopilot/claude.json"); patch = json.loads(source.read_text(encoding="utf-8"))["patch"]; Path(".autopilot/candidate.patch").write_text(patch.rstrip(chr(13) + chr(10)) + chr(10), encoding="utf-8")'
@@ -299,14 +392,20 @@ jobs:
             echo "Tests changed the candidate worktree; refusing mutable evidence"
             exit 2
           fi
+      - name: Name immutable candidate artifact
+        id: candidate-artifact
+        run: |
+          printf 'artifact_name=candidate-%s-%s\n' \
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_OUTPUT}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: candidate-${{ github.run_id }}
+          name: ${{ steps.candidate-artifact.outputs.artifact_name }}
           path: |
             candidate/.autopilot/candidate.patch
             candidate/.autopilot/candidate.patch.sha256
             candidate/.autopilot/test-evidence.txt
-          retention-days: 7
+          if-no-files-found: error
+          retention-days: 1
 
   review:
     needs: [prepare, plan, gate]
@@ -315,8 +414,9 @@ jobs:
     permissions:
       contents: read
     outputs:
-      approved: ${{ fromJSON(steps.codex-review.outputs.final-message).approved }}
-      review_json: ${{ steps.codex-review.outputs.final-message }}
+      approved: ${{ steps.bind-review.outputs.approved }}
+      artifact_name: ${{ steps.bind-review.outputs.artifact_name }}
+      model_sha256: ${{ steps.bind-review.outputs.model_sha256 }}
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
@@ -337,7 +437,11 @@ jobs:
           test "$(git -C candidate rev-parse HEAD)" = "${EXPECTED_BASE_SHA}"
       - uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
         with:
-          name: candidate-${{ github.run_id }}
+          name: ${{ needs.gate.outputs.artifact_name }}
+          path: candidate/.autopilot
+      - uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
+        with:
+          name: ${{ needs.plan.outputs.artifact_name }}
           path: candidate/.autopilot
       - name: Materialize trusted goal-bound review feedback
         env:
@@ -354,28 +458,83 @@ jobs:
       - name: Prepare read-only review context
         env:
           GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
-          PLAN_JSON: ${{ needs.plan.outputs.plan_json }}
+          EXPECTED_MODEL_SHA256: ${{ needs.plan.outputs.model_sha256 }}
         working-directory: candidate
         run: |
+          set -euo pipefail
+          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.model_output \
+            --repo . \
+            --phase plan \
+            --verify \
+            --expected-sha256 "${EXPECTED_MODEL_SHA256}"
           printf '%s\n' "${GOAL_FILE}" > .autopilot/goal-path.txt
-          printf '%s' "${PLAN_JSON}" > .autopilot/plan.json
           sha256sum -c .autopilot/candidate.patch.sha256
           git apply --check --whitespace=error .autopilot/candidate.patch
           git apply --intent-to-add --whitespace=error .autopilot/candidate.patch
-      - name: Codex independently reviews read-only
-        id: codex-review
+      - name: Prepare the private Codex runtime without a prompt
         uses: openai/codex-action@c385816875cc2fc8e033ed9d1cba96f8c331210e
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          prompt-file: ${{ github.workspace }}/.github/autopilot/prompts/review.md
-          output-file: ${{ github.workspace }}/candidate/.autopilot/review.json
-          output-schema-file: ${{ github.workspace }}/.github/autopilot/schemas/review.schema.json
-          working-directory: ${{ github.workspace }}/candidate
+          codex-home: ${{ runner.temp }}/codex-home
           permission-profile: ":read-only"
           safety-strategy: drop-sudo
-          codex-args: '["--ephemeral"]'
-          effort: high
           allow-bots: true
+      - name: Codex independently reviews read-only without log disclosure
+        working-directory: ${{ github.workspace }}/candidate
+        env:
+          CODEX_HOME: ${{ runner.temp }}/codex-home
+          CODEX_PROMPT_FILE: ${{ github.workspace }}/.github/autopilot/prompts/review.md
+          CODEX_OUTPUT_FILE: ${{ github.workspace }}/candidate/.autopilot/review.json
+          CODEX_OUTPUT_SCHEMA_FILE: ${{ github.workspace }}/.github/autopilot/schemas/review.schema.json
+          CODEX_INTERNAL_ORIGINATOR_OVERRIDE: codex_github_action
+          FORCE_COLOR: "1"
+        run: |
+          set -euo pipefail
+          umask 077
+          private_log="$(mktemp "${RUNNER_TEMP}/codex-${GITHUB_JOB}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXX")"
+          cleanup_private_codex_log() {
+            rm -f -- "${private_log}"
+          }
+          trap cleanup_private_codex_log EXIT
+          trap 'exit 129' HUP
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          chmod 600 "${private_log}"
+          test "$(stat -c '%a' "${private_log}")" = "600"
+          test -f "${CODEX_PROMPT_FILE}"
+          test ! -L "${CODEX_PROMPT_FILE}"
+          test -f "${CODEX_OUTPUT_SCHEMA_FILE}"
+          test ! -L "${CODEX_OUTPUT_SCHEMA_FILE}"
+          test ! -e "${CODEX_OUTPUT_FILE}"
+          test ! -L "${CODEX_OUTPUT_FILE}"
+          codex exec \
+            --skip-git-repo-check \
+            --cd "${GITHUB_WORKSPACE}/candidate" \
+            --output-last-message "${CODEX_OUTPUT_FILE}" \
+            --output-schema "${CODEX_OUTPUT_SCHEMA_FILE}" \
+            --config 'model_reasoning_effort="high"' \
+            --ephemeral \
+            --config 'default_permissions=":read-only"' \
+            < "${CODEX_PROMPT_FILE}" \
+            > "${private_log}" 2>&1
+          test -s "${CODEX_OUTPUT_FILE}"
+      - name: Bind trusted initial review
+        id: bind-review
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src python -m atp.autopilot.model_output \
+            --repo candidate \
+            --phase review \
+            --bind \
+            --github-output "${GITHUB_OUTPUT}"
+          printf 'artifact_name=model-review-%s-%s\n' \
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_OUTPUT}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.bind-review.outputs.artifact_name }}
+          path: candidate/.autopilot/review.json
+          if-no-files-found: error
+          retention-days: 1
 
   repair:
     needs: [prepare, plan, gate, review]
@@ -385,7 +544,8 @@ jobs:
     permissions:
       contents: read
     outputs:
-      patch_json: ${{ steps.claude-repair.outputs.structured_output }}
+      artifact_name: ${{ steps.bind-repair.outputs.artifact_name }}
+      model_sha256: ${{ steps.bind-repair.outputs.model_sha256 }}
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
@@ -406,7 +566,15 @@ jobs:
           test "$(git -C candidate rev-parse HEAD)" = "${EXPECTED_BASE_SHA}"
       - uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
         with:
-          name: candidate-${{ github.run_id }}
+          name: ${{ needs.gate.outputs.artifact_name }}
+          path: candidate/.autopilot
+      - uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
+        with:
+          name: ${{ needs.plan.outputs.artifact_name }}
+          path: candidate/.autopilot
+      - uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
+        with:
+          name: ${{ needs.review.outputs.artifact_name }}
           path: candidate/.autopilot
       - name: Materialize trusted goal-bound review feedback
         env:
@@ -423,16 +591,25 @@ jobs:
       - name: Prepare repair context
         env:
           GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
-          PLAN_JSON: ${{ needs.plan.outputs.plan_json }}
-          REVIEW_JSON: ${{ needs.review.outputs.review_json }}
+          EXPECTED_PLAN_SHA256: ${{ needs.plan.outputs.model_sha256 }}
+          EXPECTED_REVIEW_SHA256: ${{ needs.review.outputs.model_sha256 }}
         working-directory: candidate
         run: |
+          set -euo pipefail
+          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.model_output \
+            --repo . \
+            --phase plan \
+            --verify \
+            --expected-sha256 "${EXPECTED_PLAN_SHA256}"
+          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.model_output \
+            --repo . \
+            --phase review \
+            --verify \
+            --expected-sha256 "${EXPECTED_REVIEW_SHA256}"
           sha256sum -c .autopilot/candidate.patch.sha256
           git apply --check --whitespace=error .autopilot/candidate.patch
           git apply --intent-to-add --whitespace=error .autopilot/candidate.patch
           printf '%s\n' "${GOAL_FILE}" > .autopilot/goal-path.txt
-          printf '%s' "${PLAN_JSON}" > .autopilot/plan.json
-          printf '%s' "${REVIEW_JSON}" > .autopilot/review.json
       - name: Normalize Claude OAuth token without exposing it
         id: claude_token
         env:
@@ -470,6 +647,27 @@ jobs:
             --allowedTools "Read,Glob,Grep"
             --disallowedTools "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Task,mcp__*"
             --json-schema '{"type":"object","additionalProperties":false,"required":["author","patch","changed_files"],"properties":{"author":{"type":"string","enum":["claude"]},"patch":{"type":"string"},"changed_files":{"type":"array","minItems":1,"items":{"type":"string"}}}}'
+      - name: Bind trusted repair output
+        id: bind-repair
+        env:
+          EXECUTION_FILE: ${{ steps.claude-repair.outputs.execution_file }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src python -m atp.autopilot.model_output \
+            --repo candidate \
+            --phase repair \
+            --bind \
+            --execution-file "${EXECUTION_FILE}" \
+            --runner-temp "${RUNNER_TEMP}" \
+            --github-output "${GITHUB_OUTPUT}"
+          printf 'artifact_name=model-repair-%s-%s\n' \
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_OUTPUT}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.bind-repair.outputs.artifact_name }}
+          path: candidate/.autopilot/repair.json
+          if-no-files-found: error
+          retention-days: 1
 
   gate_repair:
     needs: [prepare, gate, review, repair]
@@ -478,6 +676,8 @@ jobs:
     timeout-minutes: 40
     permissions:
       contents: read
+    outputs:
+      artifact_name: ${{ steps.repaired-artifact.outputs.artifact_name }}
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
@@ -506,16 +706,24 @@ jobs:
           cache-dependency-path: candidate/frontend/package-lock.json
       - uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
         with:
-          name: candidate-${{ github.run_id }}
+          name: ${{ needs.gate.outputs.artifact_name }}
+          path: candidate/.autopilot
+      - uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
+        with:
+          name: ${{ needs.repair.outputs.artifact_name }}
           path: candidate/.autopilot
       - name: Validate and apply bounded repair
         env:
-          REPAIR_JSON: ${{ needs.repair.outputs.patch_json }}
           GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
+          EXPECTED_MODEL_SHA256: ${{ needs.repair.outputs.model_sha256 }}
         working-directory: candidate
         run: |
           set -euo pipefail
-          printf '%s' "${REPAIR_JSON}" > .autopilot/repair.json
+          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.model_output \
+            --repo . \
+            --phase repair \
+            --verify \
+            --expected-sha256 "${EXPECTED_MODEL_SHA256}"
           python -m pip install -e '.[dev,live]'
           PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.guard --repo . --goal "${GOAL_FILE}" --declared-json .autopilot/repair.json --declared-only
           sha256sum -c .autopilot/candidate.patch.sha256
@@ -543,14 +751,20 @@ jobs:
             echo "Tests changed the repaired worktree; refusing mutable evidence"
             exit 2
           fi
+      - name: Name immutable repaired artifact
+        id: repaired-artifact
+        run: |
+          printf 'artifact_name=repaired-%s-%s\n' \
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_OUTPUT}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: repaired-${{ github.run_id }}
+          name: ${{ steps.repaired-artifact.outputs.artifact_name }}
           path: |
             candidate/.autopilot/repaired.patch
             candidate/.autopilot/repaired.patch.sha256
             candidate/.autopilot/test-evidence.txt
-          retention-days: 7
+          if-no-files-found: error
+          retention-days: 1
 
   final_review:
     needs: [prepare, plan, review, gate_repair]
@@ -560,7 +774,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      approved: ${{ fromJSON(steps.codex-final.outputs.final-message).approved }}
+      approved: ${{ steps.bind-final-review.outputs.approved }}
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
@@ -581,7 +795,11 @@ jobs:
           test "$(git -C candidate rev-parse HEAD)" = "${EXPECTED_BASE_SHA}"
       - uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
         with:
-          name: repaired-${{ github.run_id }}
+          name: ${{ needs.gate_repair.outputs.artifact_name }}
+          path: candidate/.autopilot
+      - uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
+        with:
+          name: ${{ needs.plan.outputs.artifact_name }}
           path: candidate/.autopilot
       - name: Materialize trusted goal-bound review feedback
         env:
@@ -598,28 +816,75 @@ jobs:
       - name: Prepare final read-only review
         env:
           GOAL_FILE: ${{ needs.prepare.outputs.goal_file }}
-          PLAN_JSON: ${{ needs.plan.outputs.plan_json }}
+          EXPECTED_MODEL_SHA256: ${{ needs.plan.outputs.model_sha256 }}
         working-directory: candidate
         run: |
+          set -euo pipefail
+          PYTHONPATH="${GITHUB_WORKSPACE}/src" python -m atp.autopilot.model_output \
+            --repo . \
+            --phase plan \
+            --verify \
+            --expected-sha256 "${EXPECTED_MODEL_SHA256}"
           printf '%s\n' "${GOAL_FILE}" > .autopilot/goal-path.txt
-          printf '%s' "${PLAN_JSON}" > .autopilot/plan.json
           sha256sum -c .autopilot/repaired.patch.sha256
           git apply --check --whitespace=error .autopilot/repaired.patch
           git apply --intent-to-add --whitespace=error .autopilot/repaired.patch
-      - name: Codex gives the final independent verdict
-        id: codex-final
+      - name: Prepare the private Codex runtime without a prompt
         uses: openai/codex-action@c385816875cc2fc8e033ed9d1cba96f8c331210e
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          prompt-file: ${{ github.workspace }}/.github/autopilot/prompts/review.md
-          output-file: ${{ github.workspace }}/candidate/.autopilot/final-review.json
-          output-schema-file: ${{ github.workspace }}/.github/autopilot/schemas/review.schema.json
-          working-directory: ${{ github.workspace }}/candidate
+          codex-home: ${{ runner.temp }}/codex-home
           permission-profile: ":read-only"
           safety-strategy: drop-sudo
-          codex-args: '["--ephemeral"]'
-          effort: high
           allow-bots: true
+      - name: Codex gives the final verdict without log disclosure
+        working-directory: ${{ github.workspace }}/candidate
+        env:
+          CODEX_HOME: ${{ runner.temp }}/codex-home
+          CODEX_PROMPT_FILE: ${{ github.workspace }}/.github/autopilot/prompts/review.md
+          CODEX_OUTPUT_FILE: ${{ github.workspace }}/candidate/.autopilot/final-review.json
+          CODEX_OUTPUT_SCHEMA_FILE: ${{ github.workspace }}/.github/autopilot/schemas/review.schema.json
+          CODEX_INTERNAL_ORIGINATOR_OVERRIDE: codex_github_action
+          FORCE_COLOR: "1"
+        run: |
+          set -euo pipefail
+          umask 077
+          private_log="$(mktemp "${RUNNER_TEMP}/codex-${GITHUB_JOB}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXX")"
+          cleanup_private_codex_log() {
+            rm -f -- "${private_log}"
+          }
+          trap cleanup_private_codex_log EXIT
+          trap 'exit 129' HUP
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          chmod 600 "${private_log}"
+          test "$(stat -c '%a' "${private_log}")" = "600"
+          test -f "${CODEX_PROMPT_FILE}"
+          test ! -L "${CODEX_PROMPT_FILE}"
+          test -f "${CODEX_OUTPUT_SCHEMA_FILE}"
+          test ! -L "${CODEX_OUTPUT_SCHEMA_FILE}"
+          test ! -e "${CODEX_OUTPUT_FILE}"
+          test ! -L "${CODEX_OUTPUT_FILE}"
+          codex exec \
+            --skip-git-repo-check \
+            --cd "${GITHUB_WORKSPACE}/candidate" \
+            --output-last-message "${CODEX_OUTPUT_FILE}" \
+            --output-schema "${CODEX_OUTPUT_SCHEMA_FILE}" \
+            --config 'model_reasoning_effort="high"' \
+            --ephemeral \
+            --config 'default_permissions=":read-only"' \
+            < "${CODEX_PROMPT_FILE}" \
+            > "${private_log}" 2>&1
+          test -s "${CODEX_OUTPUT_FILE}"
+      - name: Bind trusted final review
+        id: bind-final-review
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src python -m atp.autopilot.model_output \
+            --repo candidate \
+            --phase final_review \
+            --bind \
+            --github-output "${GITHUB_OUTPUT}"
 
   verdict:
     needs: [prepare, gate, review, repair, gate_repair, final_review]
@@ -644,6 +909,8 @@ jobs:
           REPAIR_GATE_RESULT: ${{ needs.gate_repair.result }}
           FINAL_REVIEW_RESULT: ${{ needs.final_review.result }}
           FINAL_APPROVED: ${{ needs.final_review.outputs.approved }}
+          CANDIDATE_ARTIFACT_NAME: ${{ needs.gate.outputs.artifact_name }}
+          REPAIRED_ARTIFACT_NAME: ${{ needs.gate_repair.outputs.artifact_name }}
         run: |
           set -euo pipefail
           fail() {
@@ -660,7 +927,10 @@ jobs:
                  [ "${FINAL_REVIEW_RESULT}" != "skipped" ]; then
                 fail
               fi
-              artifact_name="candidate-${GITHUB_RUN_ID}"
+              if [[ ! "${CANDIDATE_ARTIFACT_NAME}" =~ ^candidate-${GITHUB_RUN_ID}-[1-9][0-9]*$ ]]; then
+                fail
+              fi
+              artifact_name="${CANDIDATE_ARTIFACT_NAME}"
               approved_first=true
               ;;
             false)
@@ -670,7 +940,10 @@ jobs:
                  [ "${FINAL_APPROVED}" != "true" ]; then
                 fail
               fi
-              artifact_name="repaired-${GITHUB_RUN_ID}"
+              if [[ ! "${REPAIRED_ARTIFACT_NAME}" =~ ^repaired-${GITHUB_RUN_ID}-[1-9][0-9]*$ ]]; then
+                fail
+              fi
+              artifact_name="${REPAIRED_ARTIFACT_NAME}"
               approved_first=false
               ;;
             *)
@@ -730,10 +1003,21 @@ jobs:
           git config user.email "claude-autopilot[bot]@users.noreply.github.com"
           git add -A
           git commit -m "Claude: complete ${GOAL_ID}"
-          git push origin "HEAD:refs/heads/${WORKBENCH_BRANCH}"
-          PR_NUMBER="$(gh pr list --head "${WORKBENCH_BRANCH}" --state open --json number --jq '.[0].number // empty')"
-          if [ -z "${PR_NUMBER}" ]; then
-            gh pr create --draft --base main --head "${WORKBENCH_BRANCH}" --title "GIGBAY Trader Brain - Claude workbench" --body "Claude authors every code patch. Codex plans and independently reviews. Deterministic gates run before this branch is updated. No production, broker, execution, leverage, secrets or real money."
-          else
-            gh pr comment "${PR_NUMBER}" --body "Completed trusted goal \`${GOAL_ID}\` in run \`${GITHUB_RUN_ID}\`. Claude authored; Codex approved; deterministic gates passed."
+          PR_JSON="$(gh pr view "${WORKBENCH_PR_NUMBER}" --json number,state,isDraft,headRefName,baseRefName,headRefOid)"
+          if ! jq -e \
+            --argjson expected_number "${WORKBENCH_PR_NUMBER}" \
+            --arg expected_head "${WORKBENCH_BRANCH}" \
+            --arg expected_base "main" \
+            --arg expected_sha "${EXPECTED_BASE_SHA}" \
+            '.number == $expected_number and
+             .state == "OPEN" and
+             .isDraft == true and
+             .headRefName == $expected_head and
+             .baseRefName == $expected_base and
+             .headRefOid == $expected_sha' \
+            <<< "${PR_JSON}" >/dev/null; then
+            echo "Existing workbench Draft PR #${WORKBENCH_PR_NUMBER} is missing or does not match the reviewed base"
+            exit 2
           fi
+          git push origin "HEAD:refs/heads/${WORKBENCH_BRANCH}"
+          gh pr comment "${WORKBENCH_PR_NUMBER}" --body "Completed trusted goal \`${GOAL_ID}\` in run \`${GITHUB_RUN_ID}\`. Claude authored; Codex approved; deterministic gates passed."
