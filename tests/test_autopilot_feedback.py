@@ -358,3 +358,223 @@ def test_bom_nul_and_invalid_utf8_are_rejected(tmp_path: Path) -> None:
         path.write_bytes(raw)
         with pytest.raises(FeedbackViolation):
             load_feedback(path, _goal())
+
+
+def test_canonical_bytes_and_hash_ignore_input_order() -> None:
+    first_payload = _payload()
+    second_payload = deepcopy(first_payload)
+    second_payload["findings"].reverse()
+    for finding in second_payload["findings"]:
+        finding["sources"].reverse()
+    first = canonical_feedback_bytes(validate_feedback(first_payload, _goal()))
+    second = canonical_feedback_bytes(validate_feedback(second_payload, _goal()))
+    assert first == second
+    assert first.endswith(b"\n") and not first.endswith(b"\n\n")
+    assert hashlib.sha256(first).hexdigest() == hashlib.sha256(second).hexdigest()
+
+
+def test_materializer_writes_only_fixed_complete_mode_0600_output(tmp_path: Path) -> None:
+    control = _copy_control(tmp_path)
+    repo = _copy_candidate(tmp_path)
+    result = materialize_feedback(repo, control, GOAL_RELATIVE)
+    output = repo / OUTPUT_RELATIVE
+    assert result.found is True
+    assert result.finding_count == 4
+    assert result.output == OUTPUT_RELATIVE.as_posix()
+    assert output.read_bytes() == canonical_feedback_bytes(load_feedback(FEEDBACK_PATH, _goal()))
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    assert result.sha256 == hashlib.sha256(output.read_bytes()).hexdigest()
+    assert not list(output.parent.glob("*.tmp"))
+    with pytest.raises(FeedbackViolation, match="already exists|stale"):
+        materialize_feedback(repo, control, GOAL_RELATIVE)
+
+
+def test_missing_feedback_produces_no_context_and_rejects_stale_context(tmp_path: Path) -> None:
+    control = _copy_control(tmp_path, include_feedback=False)
+    repo = _copy_candidate(tmp_path)
+    result = materialize_feedback(repo, control, GOAL_RELATIVE)
+    assert result.found is False
+    assert result.sha256 == hashlib.sha256(b"").hexdigest()
+    assert not (repo / OUTPUT_RELATIVE).exists()
+    (repo / OUTPUT_RELATIVE.parent).mkdir()
+    (repo / OUTPUT_RELATIVE).write_text("{}", encoding="utf-8")
+    with pytest.raises(FeedbackViolation, match="stale"):
+        materialize_feedback(repo, control, GOAL_RELATIVE)
+
+
+def test_feedback_leaf_and_control_components_must_not_be_symlinks(tmp_path: Path) -> None:
+    target = tmp_path / "target.json"
+    shutil.copy2(FEEDBACK_PATH, target)
+    link = tmp_path / "feedback.json"
+    link.symlink_to(target)
+    with pytest.raises(FeedbackViolation, match="non-symlink"):
+        load_feedback(link, _goal())
+
+    control = _copy_control(tmp_path / "nested", include_feedback=False)
+    external = tmp_path / "external"
+    (external / "autopilot/feedback").mkdir(parents=True)
+    shutil.copy2(FEEDBACK_PATH, external / "autopilot/feedback" / FEEDBACK_PATH.name)
+    (control / ".github").symlink_to(external, target_is_directory=True)
+    repo = _copy_candidate(tmp_path)
+    with pytest.raises(FeedbackViolation, match="symlink"):
+        materialize_feedback(repo, control, GOAL_RELATIVE)
+
+
+def test_output_parent_must_not_be_a_symlink(tmp_path: Path) -> None:
+    control = _copy_control(tmp_path)
+    repo = _copy_candidate(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (repo / OUTPUT_RELATIVE.parent).symlink_to(outside, target_is_directory=True)
+    with pytest.raises(FeedbackViolation, match="unsafe"):
+        materialize_feedback(repo, control, GOAL_RELATIVE)
+    assert not (outside / OUTPUT_RELATIVE.name).exists()
+
+
+def test_repo_root_path_must_not_traverse_a_symlinked_component(tmp_path: Path) -> None:
+    control = _copy_control(tmp_path)
+    real_parent = tmp_path / "real"
+    real_parent.mkdir()
+    _copy_candidate(real_parent)
+    linked_parent = tmp_path / "linked"
+    linked_parent.symlink_to(real_parent, target_is_directory=True)
+    with pytest.raises(FeedbackViolation, match="symlinked components"):
+        materialize_feedback(linked_parent / "candidate", control, GOAL_RELATIVE)
+
+
+def test_non_regular_feedback_is_rejected_without_opening_it(tmp_path: Path) -> None:
+    directory = tmp_path / "feedback.json"
+    directory.mkdir()
+    with pytest.raises(FeedbackViolation, match="regular file"):
+        load_feedback(directory, _goal())
+    if hasattr(os, "mkfifo"):
+        fifo = tmp_path / "feedback.fifo"
+        os.mkfifo(fifo)
+        with pytest.raises(FeedbackViolation, match="regular file"):
+            load_feedback(fifo, _goal())
+
+
+def test_cli_emits_only_bounded_summary_and_safe_github_outputs(tmp_path: Path, capsys) -> None:
+    control = _copy_control(tmp_path)
+    repo = _copy_candidate(tmp_path)
+    github_output = tmp_path / "github-output"
+    github_output.touch(mode=0o600)
+    assert main(
+        [
+            "--repo",
+            str(repo),
+            "--control-root",
+            str(control),
+            "--goal",
+            GOAL_RELATIVE,
+            "--github-output",
+            str(github_output),
+        ]
+    ) == 0
+    captured = capsys.readouterr()
+    summary = json.loads(captured.out)
+    expected_sha256 = hashlib.sha256(
+        canonical_feedback_bytes(load_feedback(FEEDBACK_PATH, _goal()))
+    ).hexdigest()
+    assert summary == {
+        "found": True,
+        "goal_id": GOAL_ID,
+        "finding_count": 4,
+        "sha256": expected_sha256,
+        "output": None,
+    }
+    assert not (repo / OUTPUT_RELATIVE).exists()
+    assert "Future" not in captured.out
+    assert "detail" not in captured.out
+    values = dict(line.split("=", 1) for line in github_output.read_text().splitlines())
+    assert values["has_feedback"] == "true"
+    assert values["feedback_count"] == "4"
+    assert values["feedback_path"] == ""
+    assert values["feedback_sha256"] == summary["sha256"]
+
+    assert main(
+        [
+            "--repo",
+            str(repo),
+            "--control-root",
+            str(control),
+            "--goal",
+            GOAL_RELATIVE,
+            "--expected-sha256",
+            expected_sha256,
+            "--materialize",
+        ]
+    ) == 0
+    materialized = json.loads(capsys.readouterr().out)
+    assert materialized["output"] == OUTPUT_RELATIVE.as_posix()
+    assert hashlib.sha256((repo / OUTPUT_RELATIVE).read_bytes()).hexdigest() == expected_sha256
+
+
+def test_prepare_digest_is_required_and_must_match_before_materialization(tmp_path: Path) -> None:
+    control = _copy_control(tmp_path)
+    repo = _copy_candidate(tmp_path)
+    with pytest.raises(FeedbackViolation, match="changed after prepare"):
+        materialize_feedback(repo, control, GOAL_RELATIVE, "0" * 64)
+    assert not (repo / OUTPUT_RELATIVE).exists()
+
+
+def test_feedback_is_bound_to_the_candidate_goal_not_a_control_copy(tmp_path: Path) -> None:
+    control = _copy_control(tmp_path)
+    repo = _copy_candidate(tmp_path)
+    control_goal = control / GOAL_RELATIVE
+    divergent = json.loads(control_goal.read_text(encoding="utf-8"))
+    divergent["allowed_paths"] = ["docs/"]
+    control_goal.write_text(json.dumps(divergent), encoding="utf-8")
+
+    result = materialize_feedback(repo, control, GOAL_RELATIVE, write_output=False)
+    assert result.found is True
+    (repo / GOAL_RELATIVE).write_text("{}", encoding="utf-8")
+    with pytest.raises(FeedbackViolation, match="selected candidate goal is invalid"):
+        materialize_feedback(repo, control, GOAL_RELATIVE, write_output=False)
+
+
+def test_cli_requires_the_hash_and_materialize_flags_as_a_pair(tmp_path: Path, capsys) -> None:
+    control = _copy_control(tmp_path)
+    repo = _copy_candidate(tmp_path)
+    common = [
+        "--repo",
+        str(repo),
+        "--control-root",
+        str(control),
+        "--goal",
+        GOAL_RELATIVE,
+    ]
+    assert main(common + ["--materialize"]) == 2
+    assert main(common + ["--expected-sha256", "0" * 64]) == 2
+    assert not (repo / OUTPUT_RELATIVE).exists()
+    assert capsys.readouterr().err.count("must be supplied together") == 2
+
+
+def test_validator_has_no_network_subprocess_or_dynamic_execution_imports() -> None:
+    source = (PROJECT / "src/atp/autopilot/feedback.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    forbidden = {"socket", "subprocess", "requests", "urllib", "httpx", "shlex"}
+    imported: set[str] = set()
+    called: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module.split(".")[0])
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            called.add(node.func.id)
+    assert imported.isdisjoint(forbidden)
+    assert called.isdisjoint({"eval", "exec", "compile", "__import__"})
+
+
+def test_canonical_feedback_contains_no_scope_or_action_fields() -> None:
+    normalized = load_feedback(FEEDBACK_PATH, _goal())
+    serialized = canonical_feedback_bytes(normalized).decode("utf-8")
+    for forbidden in ("allowed_paths", '"tools"', '"instructions"', '"patch"', '"content"'):
+        assert forbidden not in serialized
+    allowed = _goal().allowed_paths
+    policy = AutopilotPolicy()
+    assert all(
+        policy.classify_path(finding["location"]["path"], goal_paths=allowed).allowed
+        for finding in normalized["findings"]
+    )
