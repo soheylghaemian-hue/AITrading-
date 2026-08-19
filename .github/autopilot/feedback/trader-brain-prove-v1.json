@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "kind": "unresolved_review_findings",
+  "goal_id": "trader-brain-prove-v1",
+  "findings": [
+    {
+      "id": "abutting-window-fixture-reference",
+      "severity": "P1",
+      "title": "Abutting-window acceptance fixture references an undeclared window",
+      "detail": "The acceptance case declares windows a and c, but its first observation inherits helper default window_id w1. The implementation therefore returns UNKNOWN_WINDOW_REFERENCE before the intended non-overlap boundary is exercised, so the failing assertion is not evidence that abutting declared windows are rejected.",
+      "location": {
+        "path": "tests/test_brain_prove.py",
+        "line": 153
+      },
+      "sources": [
+        {
+          "run_id": 32229557214,
+          "job_id": 96002679156,
+          "stage": "gate",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        }
+      ]
+    },
+    {
+      "id": "malformed-none-helper-substitution",
+      "severity": "P1",
+      "title": "Malformed None proposal is replaced by the test helper default",
+      "detail": "The malformed-proposal test passes None expecting INVALID_PROPOSAL, while its _prove helper also uses None to mean construct a valid default proposal. The helper silently replaces the malformed value, so the assertion does not exercise evaluate_prove with None even though the implementation rejects non-BrainProposal values.",
+      "location": {
+        "path": "tests/test_brain_prove.py",
+        "line": 177
+      },
+      "sources": [
+        {
+          "run_id": 32229557214,
+          "job_id": 96002679156,
+          "stage": "gate",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        }
+      ]
+    },
+    {
+      "id": "randomness-lexical-false-positive",
+      "severity": "P1",
+      "title": "Research-only source check confuses prose with a random dependency",
+      "detail": "The structural safety test bans the raw substring random across the complete source text, so the harmless docstring word randomness fails the gate although the module imports only the expected standard-library and local research modules. The assertion does not distinguish executable imports or calls from documentation prose.",
+      "location": {
+        "path": "tests/test_brain_prove.py",
+        "line": 373
+      },
+      "sources": [
+        {
+          "run_id": 32229557214,
+          "job_id": 96002679156,
+          "stage": "gate",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        }
+      ]
+    }
+  ]
+}

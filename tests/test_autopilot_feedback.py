@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import ast
-from copy import deepcopy
 import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import stat
+from copy import deepcopy
+from pathlib import Path
 
 import pytest
 
@@ -27,12 +27,16 @@ from atp.autopilot.feedback import (
 from atp.autopilot.policy import AutopilotPolicy
 from atp.autopilot.queue import load_goal
 
-
 PROJECT = Path(__file__).parents[1]
 GOAL_PATH = PROJECT / "autopilot/goals/trader-brain-think-v1.json"
 FEEDBACK_PATH = (
     PROJECT
     / ".github/autopilot/feedback/trader-brain-think-v1.json"
+)
+PROVE_GOAL_PATH = PROJECT / "autopilot/goals/trader-brain-prove-v1.json"
+PROVE_FEEDBACK_PATH = (
+    PROJECT
+    / ".github/autopilot/feedback/trader-brain-prove-v1.json"
 )
 SCHEMA_PATH = PROJECT / ".github/autopilot/schemas/review-feedback.schema.json"
 GOAL_RELATIVE = "autopilot/goals/trader-brain-think-v1.json"
@@ -138,6 +142,38 @@ def test_repeated_calibration_reports_remain_one_finding_with_distinct_sources()
     ) == 1
 
 
+def test_prove_feedback_records_the_exact_failed_gate_without_scope_expansion() -> None:
+    goal = load_goal(PROVE_GOAL_PATH)
+    normalized = load_feedback(PROVE_FEEDBACK_PATH, goal)
+    assert normalized["goal_id"] == "trader-brain-prove-v1"
+    assert {finding["id"] for finding in normalized["findings"]} == {
+        "abutting-window-fixture-reference",
+        "malformed-none-helper-substitution",
+        "randomness-lexical-false-positive",
+    }
+    assert {finding["severity"] for finding in normalized["findings"]} == {"P1"}
+    assert {
+        (
+            source["run_id"],
+            source["job_id"],
+            source["stage"],
+            source["base_sha"],
+        )
+        for finding in normalized["findings"]
+        for source in finding["sources"]
+    } == {
+        (
+            32229557214,
+            96002679156,
+            "gate",
+            "c4aba55569b505d118709ecb85be9cd1286b2b0d",
+        )
+    }
+    assert {
+        finding["location"]["path"] for finding in normalized["findings"]
+    } == {"tests/test_brain_prove.py"}
+
+
 def test_schema_is_strict_and_matches_validator_bounds() -> None:
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     assert schema["additionalProperties"] is False
@@ -146,6 +182,11 @@ def test_schema_is_strict_and_matches_validator_bounds() -> None:
     assert schema["properties"]["findings"]["maxItems"] == MAX_FINDINGS
     assert schema["$defs"]["finding"]["additionalProperties"] is False
     assert schema["$defs"]["source"]["additionalProperties"] is False
+    assert schema["$defs"]["source"]["properties"]["stage"]["enum"] == [
+        "gate",
+        "initial_review",
+        "final_review",
+    ]
     assert schema["$defs"]["finding"]["properties"]["sources"]["maxItems"] == MAX_SOURCES_PER_FINDING
 
 
@@ -223,6 +264,16 @@ def test_source_contract_is_exact(mutator) -> None:
     mutator(source)
     with pytest.raises(FeedbackViolation):
         validate_feedback(_minimal_payload(findings=[_finding(sources=[source])]), _goal())
+
+
+def test_gate_is_an_explicit_allowed_evidence_stage() -> None:
+    source = deepcopy(_finding()["sources"][0])
+    source["stage"] = "gate"
+    normalized = validate_feedback(
+        _minimal_payload(findings=[_finding(sources=[source])]),
+        _goal(),
+    )
+    assert normalized["findings"][0]["sources"][0]["stage"] == "gate"
 
 
 def test_duplicate_finding_ids_and_sources_are_rejected() -> None:
