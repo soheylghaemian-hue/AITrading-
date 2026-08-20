@@ -76,6 +76,150 @@
       ]
     },
     {
+      "id": "exact-start-proposal-lookahead",
+      "severity": "P1",
+      "title": "Proposal created at the evaluation start is graded as prior evidence",
+      "detail": "Independent reproduction on the immutable repaired candidate reviewed in Run 31 shows that a proposal with created_at exactly equal to an evaluation window start is accepted, and an observation at that same instant can produce a proven result. The boundary only rejects created_at values strictly greater than the start, so the result does not prove that the proposal existed before the closed evaluation evidence began.",
+      "location": {
+        "path": "src/atp/brain/prove.py",
+        "line": 690
+      },
+      "sources": [
+        {
+          "run_id": 32338959044,
+          "job_id": 96340857621,
+          "stage": "artifact_audit",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        }
+      ]
+    },
+    {
+      "id": "forged-result-aggregate-inconsistency",
+      "severity": "P1",
+      "title": "Public PROVE result objects admit internally inconsistent proven totals",
+      "detail": "Independent reproduction on the immutable repaired candidate reviewed in Run 31 constructs public ProveMetrics, ProveEvaluation and ProveResult values whose proven aggregate reports net_return 999 while the declared window metrics sum to 0.03. Their constructors do not enforce the cross-object accounting invariant, so formally typed audit evidence can be forged outside evaluate_prove.",
+      "location": {
+        "path": "src/atp/brain/prove.py",
+        "line": 290
+      },
+      "sources": [
+        {
+          "run_id": 32338959044,
+          "job_id": 96340857621,
+          "stage": "artifact_audit",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        }
+      ]
+    },
+    {
+      "id": "incomplete-outcome-manifest-proven",
+      "severity": "P1",
+      "title": "Empty or cherry-picked outcome sets can still be marked proven",
+      "detail": "Independent reproduction on the immutable repaired candidate reviewed in Run 31 shows that empty observations and a subset omitting a losing observation can both produce proven results. The input contains no immutable expected-opportunity manifest, and observation delay is not bound to the evaluation availability interval, so the harness cannot prove that the graded rows are complete or were available only after the declared window began.",
+      "location": {
+        "path": "src/atp/brain/prove.py",
+        "line": 710
+      },
+      "sources": [
+        {
+          "run_id": 32338959044,
+          "job_id": 96340857621,
+          "stage": "artifact_audit",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        }
+      ]
+    },
+    {
+      "id": "input-binding-exceptions-escape-fail-closed",
+      "severity": "P1",
+      "title": "Hostile explicit inputs can escape the refusal boundary",
+      "detail": "Independent reproduction on the immutable repaired candidate reviewed in Run 31 shows that a tampered gross_return of 10**5000 raises ValueError during input checksum binding before the refusal handler, while a hostile tzinfo.utcoffset raises RuntimeError during validation inside a handler that catches only _ProveError. Both explicit boundary values escape instead of producing a deterministic failed ProveResult.",
+      "location": {
+        "path": "src/atp/brain/prove.py",
+        "line": 857
+      },
+      "sources": [
+        {
+          "run_id": 32338959044,
+          "job_id": 96340857621,
+          "stage": "artifact_audit",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        }
+      ]
+    },
+    {
+      "id": "input-checksum-semantic-collisions",
+      "severity": "P1",
+      "title": "Distinct explicit inputs share the same audit checksum",
+      "detail": "Independent reproduction on the immutable repaired candidate reviewed in Run 31 shows identical input and refusal checksums for 0.1 versus its next representable float, for large delays differing by one microsecond, and for distinct opaque values of the same type. Pre-rounding floats, total_seconds conversion and type-only opaque canonicalization erase semantically distinct supplied input.",
+      "location": {
+        "path": "src/atp/brain/prove.py",
+        "line": 431
+      },
+      "sources": [
+        {
+          "run_id": 32338959044,
+          "job_id": 96340857621,
+          "stage": "artifact_audit",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        }
+      ]
+    },
+    {
+      "id": "iterator-input-repeatability-drift",
+      "severity": "P1",
+      "title": "Reusing the same accepted iterator changes a proven result",
+      "detail": "Independent reproduction on the immutable repaired candidate reviewed in Run 31 passes the same iterator object twice and obtains proven results with graded_count two and then zero because the accepted Iterable was consumed. The public boundary therefore admits an explicit input whose result depends on prior evaluation history rather than only on the supplied arguments.",
+      "location": {
+        "path": "src/atp/brain/prove.py",
+        "line": 694
+      },
+      "sources": [
+        {
+          "run_id": 32338959044,
+          "job_id": 96340857621,
+          "stage": "artifact_audit",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        }
+      ]
+    },
+    {
+      "id": "proposal-subclass-checksum-instability",
+      "severity": "P1",
+      "title": "A BrainProposal subclass can override trusted audit identity",
+      "detail": "Independent reproduction on the immutable repaired candidate reviewed in Run 31 uses one BrainProposal subclass instance whose checksum override changes between calls. Both calls are proven with the same evaluator input checksum but different proposal and result checksums because isinstance accepts the subclass and the boundary invokes its overridable method.",
+      "location": {
+        "path": "src/atp/brain/prove.py",
+        "line": 595
+      },
+      "sources": [
+        {
+          "run_id": 32338959044,
+          "job_id": 96340857621,
+          "stage": "artifact_audit",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        }
+      ]
+    },
+    {
+      "id": "rolling-fold-schedule-rejected",
+      "severity": "P1",
+      "title": "A normal rolling walk-forward schedule is rejected",
+      "detail": "Independent reproduction on the immutable repaired candidate reviewed in Run 31 supplies the ordered folds training-1, evaluation-1, training-2, evaluation-2. The all-to-all comparison rejects evaluation-1 because later training-2 ends after it starts, even though each evaluation follows its corresponding earlier training fold, so the harness cannot represent the rolling walk-forward objective.",
+      "location": {
+        "path": "src/atp/brain/prove.py",
+        "line": 670
+      },
+      "sources": [
+        {
+          "run_id": 32338959044,
+          "job_id": 96340857621,
+          "stage": "artifact_audit",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        }
+      ]
+    },
+    {
       "id": "randomness-lexical-false-positive",
       "severity": "P1",
       "title": "Research-only source check confuses prose with a random dependency",

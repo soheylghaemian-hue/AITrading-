@@ -215,7 +215,7 @@ def test_private_codex_logs_are_0600_runner_temp_only_and_never_disclosed():
     upload_blocks = WORKFLOW.split(
         "      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
     )[1:]
-    assert len(upload_blocks) == 6
+    assert len(upload_blocks) == 7
     for block in upload_blocks:
         block = block.split("      - ", 1)[0]
         assert "private_log" not in block
@@ -508,13 +508,14 @@ def test_model_outputs_use_hash_bound_attempt_scoped_artifacts_only():
     assert WORKFLOW.count("            --verify ") == 7
     assert WORKFLOW.count('            --expected-sha256 "${EXPECTED_') == 12
 
-    assert WORKFLOW.count("retention-days: 1") == 6
+    assert WORKFLOW.count("retention-days: 1") == 7
     assert "retention-days: 7" not in WORKFLOW
     for prefix in (
         "model-plan",
         "model-author",
         "model-review",
         "model-repair",
+        "model-final-review",
         "candidate",
         "repaired",
     ):
@@ -529,6 +530,7 @@ def test_model_outputs_use_hash_bound_attempt_scoped_artifacts_only():
         "candidate/.autopilot/claude.json",
         "candidate/.autopilot/review.json",
         "candidate/.autopilot/repair.json",
+        "candidate/.autopilot/final-review.json",
     )
     for path in expected_files:
         assert f"path: {path}" in WORKFLOW
@@ -536,6 +538,41 @@ def test_model_outputs_use_hash_bound_attempt_scoped_artifacts_only():
     assert WORKFLOW.count("EXECUTION_FILE: ${{ steps.claude-") == 2
     assert WORKFLOW.count('--execution-file "${EXECUTION_FILE}"') == 2
     assert WORKFLOW.count('--runner-temp "${RUNNER_TEMP}"') == 2
+
+
+def test_rejected_final_review_is_hash_bound_and_persisted_privately():
+    final_review = _job("final_review", "verdict")
+    verdict = _job("verdict", "publish")
+    publish = _job("publish", None)
+
+    assert "approved: ${{ steps.bind-final-review.outputs.approved }}" in final_review
+    assert "artifact_name: ${{ steps.bind-final-review.outputs.artifact_name }}" in final_review
+    assert "model_sha256: ${{ steps.bind-final-review.outputs.model_sha256 }}" in final_review
+    assert "--phase final_review" in final_review
+    assert "--bind" in final_review
+    assert '--github-output "${GITHUB_OUTPUT}"' in final_review
+    assert "artifact_name=model-final-review-%s-%s" in final_review
+
+    upload = final_review.split(
+        "      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        1,
+    )[1]
+    assert final_review.index("Bind trusted final review") < final_review.index(
+        "actions/upload-artifact@"
+    )
+    assert "name: ${{ steps.bind-final-review.outputs.artifact_name }}" in upload
+    assert "path: candidate/.autopilot/final-review.json" in upload
+    assert "if-no-files-found: error" in upload
+    assert "retention-days: 1" in upload
+    assert "if: steps.bind-final-review.outputs.approved" not in upload
+    assert "private_log" not in upload
+
+    for consumer in (verdict, publish):
+        assert "candidate/.autopilot/final-review.json" not in consumer
+        assert "needs.final_review.outputs.artifact_name" not in consumer
+        assert "needs.final_review.outputs.model_sha256" not in consumer
+        assert "FINAL_REVIEW_JSON" not in consumer
+        assert "final_review_json" not in consumer
 
 
 def test_artifact_consumers_download_then_verify_before_model_or_guard_use():

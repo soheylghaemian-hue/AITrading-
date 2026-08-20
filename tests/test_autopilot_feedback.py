@@ -142,16 +142,24 @@ def test_repeated_calibration_reports_remain_one_finding_with_distinct_sources()
     ) == 1
 
 
-def test_prove_feedback_records_the_exact_failed_gates_without_scope_expansion() -> None:
+def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansion() -> None:
     goal = load_goal(PROVE_GOAL_PATH)
     normalized = load_feedback(PROVE_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-prove-v1"
     assert {finding["id"] for finding in normalized["findings"]} == {
         "abutting-window-fixture-reference",
+        "exact-start-proposal-lookahead",
+        "forged-result-aggregate-inconsistency",
         "governance-enum-identity-contamination",
+        "incomplete-outcome-manifest-proven",
+        "input-binding-exceptions-escape-fail-closed",
+        "input-checksum-semantic-collisions",
+        "iterator-input-repeatability-drift",
         "malformed-none-helper-substitution",
         "malformed-window-constructor-fixture",
+        "proposal-subclass-checksum-instability",
         "randomness-lexical-false-positive",
+        "rolling-fold-schedule-rejected",
     }
     assert {finding["severity"] for finding in normalized["findings"]} == {"P1"}
     assert {
@@ -182,10 +190,16 @@ def test_prove_feedback_records_the_exact_failed_gates_without_scope_expansion()
             "gate",
             "c4aba55569b505d118709ecb85be9cd1286b2b0d",
         ),
+        (
+            32338959044,
+            96340857621,
+            "artifact_audit",
+            "c4aba55569b505d118709ecb85be9cd1286b2b0d",
+        ),
     }
     assert {
         finding["location"]["path"] for finding in normalized["findings"]
-    } == {"tests/test_brain_prove.py"}
+    } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
 def test_schema_is_strict_and_matches_validator_bounds() -> None:
@@ -197,10 +211,12 @@ def test_schema_is_strict_and_matches_validator_bounds() -> None:
     assert schema["$defs"]["finding"]["additionalProperties"] is False
     assert schema["$defs"]["source"]["additionalProperties"] is False
     assert schema["$defs"]["source"]["properties"]["stage"]["enum"] == [
+        "artifact_audit",
         "gate",
         "initial_review",
         "final_review",
     ]
+    assert "does not assert" in schema["$defs"]["source"]["properties"]["stage"]["description"]
     assert schema["$defs"]["finding"]["properties"]["sources"]["maxItems"] == MAX_SOURCES_PER_FINDING
 
 
@@ -288,6 +304,16 @@ def test_gate_is_an_explicit_allowed_evidence_stage() -> None:
         _goal(),
     )
     assert normalized["findings"][0]["sources"][0]["stage"] == "gate"
+
+
+def test_artifact_audit_is_independent_evidence_not_review_attribution() -> None:
+    source = deepcopy(_finding()["sources"][0])
+    source["stage"] = "artifact_audit"
+    normalized = validate_feedback(
+        _minimal_payload(findings=[_finding(sources=[source])]),
+        _goal(),
+    )
+    assert normalized["findings"][0]["sources"][0]["stage"] == "artifact_audit"
 
 
 def test_duplicate_finding_ids_and_sources_are_rejected() -> None:
