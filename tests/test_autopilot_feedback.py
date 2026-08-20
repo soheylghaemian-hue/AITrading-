@@ -150,13 +150,16 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
         "abutting-window-fixture-reference",
         "exact-start-proposal-lookahead",
         "forged-result-aggregate-inconsistency",
+        "future-import-allowlist-fixture",
         "governance-enum-identity-contamination",
+        "governance-enum-value-case-fixture",
         "incomplete-outcome-manifest-proven",
         "input-binding-exceptions-escape-fail-closed",
         "input-checksum-semantic-collisions",
         "iterator-input-repeatability-drift",
         "malformed-none-helper-substitution",
         "malformed-window-constructor-fixture",
+        "observation-order-proof-checksum-drift",
         "proposal-subclass-checksum-instability",
         "randomness-lexical-false-positive",
         "rolling-fold-schedule-rejected",
@@ -196,7 +199,39 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
             "artifact_audit",
             "c4aba55569b505d118709ecb85be9cd1286b2b0d",
         ),
+        (
+            32384013016,
+            96482675509,
+            "gate",
+            "c4aba55569b505d118709ecb85be9cd1286b2b0d",
+        ),
     }
+    assert len(normalized["findings"]) == MAX_FINDINGS
+    run_32 = {
+        finding["id"]: finding
+        for finding in normalized["findings"]
+        if any(source["run_id"] == 32384013016 for source in finding["sources"])
+    }
+    assert {
+        finding_id: (finding["location"]["path"], finding["location"]["line"])
+        for finding_id, finding in run_32.items()
+    } == {
+        "future-import-allowlist-fixture": ("tests/test_brain_prove.py", 567),
+        "governance-enum-value-case-fixture": ("tests/test_brain_prove.py", 581),
+        "observation-order-proof-checksum-drift": ("src/atp/brain/prove.py", 235),
+    }
+    assert all(
+        finding["sources"]
+        == [
+            {
+                "run_id": 32384013016,
+                "job_id": 96482675509,
+                "stage": "gate",
+                "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d",
+            }
+        ]
+        for finding in run_32.values()
+    )
     assert {
         finding["location"]["path"] for finding in normalized["findings"]
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
