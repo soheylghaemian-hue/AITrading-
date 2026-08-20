@@ -220,6 +220,60 @@
       ]
     },
     {
+      "id": "future-import-allowlist-fixture",
+      "severity": "P1",
+      "title": "Import safety fixture rejects the annotations future directive",
+      "detail": "Run 32 Gate proves that the AST-based research-only import test observes only the expected safe roots plus __future__, introduced by the harmless from __future__ import annotations directive. The exact allowlist omits __future__, so the gate fails even though no trading, randomness, clock, provider or execution import is present.",
+      "location": {
+        "path": "tests/test_brain_prove.py",
+        "line": 567
+      },
+      "sources": [
+        {
+          "run_id": 32384013016,
+          "job_id": 96482675509,
+          "stage": "gate",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        }
+      ]
+    },
+    {
+      "id": "governance-enum-value-case-fixture",
+      "severity": "P1",
+      "title": "Governance identity fixture constructs the enum with the wrong value case",
+      "detail": "Run 32 Gate proves that the preceding module and ModelStatus identity assertion passes, but the next assertion calls ModelStatus(\"RESEARCH\") even though the clean pinned governance enum value is \"research\". The resulting ValueError is a malformed test fixture and does not reproduce governance module identity contamination.",
+      "location": {
+        "path": "tests/test_brain_prove.py",
+        "line": 581
+      },
+      "sources": [
+        {
+          "run_id": 32384013016,
+          "job_id": 96482675509,
+          "stage": "gate",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        }
+      ]
+    },
+    {
+      "id": "observation-order-proof-checksum-drift",
+      "severity": "P1",
+      "title": "Observation permutation changes the proof checksum",
+      "detail": "Run 32 Gate proves that forward and reversed observations produce different proof checksums although evaluation canonicalizes them into the same semantic outcome order. Input checksum binding encodes the original tuple order before the canonical evaluation, so equivalent observation sets have different proof identities.",
+      "location": {
+        "path": "src/atp/brain/prove.py",
+        "line": 235
+      },
+      "sources": [
+        {
+          "run_id": 32384013016,
+          "job_id": 96482675509,
+          "stage": "gate",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        }
+      ]
+    },
+    {
       "id": "randomness-lexical-false-positive",
       "severity": "P1",
       "title": "Research-only source check confuses prose with a random dependency",
