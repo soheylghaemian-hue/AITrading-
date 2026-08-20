@@ -29,7 +29,12 @@ MAX_FINDINGS = 16
 MAX_SOURCES_PER_FINDING = 8
 MAX_PATH_BYTES = 240
 ALLOWED_SEVERITIES = frozenset({"P0", "P1"})
-ALLOWED_STAGES = frozenset({"gate", "initial_review", "final_review"})
+# ``artifact_audit`` means trusted independent reproduction against the immutable
+# artifact associated with the referenced run/job.  It never claims that the
+# model review emitted the finding text.
+ALLOWED_STAGES = frozenset(
+    {"artifact_audit", "gate", "initial_review", "final_review"}
+)
 TOP_LEVEL_KEYS = frozenset({"schema_version", "kind", "goal_id", "findings"})
 FINDING_KEYS = frozenset({"id", "severity", "title", "detail", "location", "sources"})
 LOCATION_REQUIRED_KEYS = frozenset({"path"})

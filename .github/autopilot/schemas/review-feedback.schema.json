@@ -58,7 +58,9 @@
           "minimum": 1
         },
         "stage": {
+          "description": "artifact_audit records trusted independent reproduction against the immutable artifact associated with the referenced run and job; it does not assert that the model review emitted the finding text.",
           "enum": [
+            "artifact_audit",
             "gate",
             "initial_review",
             "final_review"

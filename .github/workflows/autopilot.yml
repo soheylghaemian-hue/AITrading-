@@ -825,6 +825,8 @@ jobs:
       contents: read
     outputs:
       approved: ${{ steps.bind-final-review.outputs.approved }}
+      artifact_name: ${{ steps.bind-final-review.outputs.artifact_name }}
+      model_sha256: ${{ steps.bind-final-review.outputs.model_sha256 }}
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
@@ -935,6 +937,14 @@ jobs:
             --phase final_review \
             --bind \
             --github-output "${GITHUB_OUTPUT}"
+          printf 'artifact_name=model-final-review-%s-%s\n' \
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_OUTPUT}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.bind-final-review.outputs.artifact_name }}
+          path: candidate/.autopilot/final-review.json
+          if-no-files-found: error
+          retention-days: 1
 
   verdict:
     needs: [prepare, gate, review, repair, gate_repair, final_review]
