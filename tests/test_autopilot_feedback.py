@@ -205,6 +205,12 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
             "gate",
             "c4aba55569b505d118709ecb85be9cd1286b2b0d",
         ),
+        (
+            32391041286,
+            96508989387,
+            "final_review",
+            "c4aba55569b505d118709ecb85be9cd1286b2b0d",
+        ),
     }
     assert len(normalized["findings"]) == MAX_FINDINGS
     run_32 = {
@@ -232,6 +238,50 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
         ]
         for finding in run_32.values()
     )
+    run_33 = {
+        finding["id"]: finding
+        for finding in normalized["findings"]
+        if any(source["run_id"] == 32391041286 for source in finding["sources"])
+    }
+    assert {
+        finding_id: (finding["location"]["path"], finding["location"]["line"])
+        for finding_id, finding in run_33.items()
+    } == {
+        "forged-result-aggregate-inconsistency": ("src/atp/brain/prove.py", 290),
+        "incomplete-outcome-manifest-proven": ("src/atp/brain/prove.py", 710),
+        "input-checksum-semantic-collisions": ("src/atp/brain/prove.py", 431),
+        "proposal-subclass-checksum-instability": ("src/atp/brain/prove.py", 595),
+    }
+    assert all(
+        finding["sources"]
+        == [
+            {
+                "run_id": 32338959044,
+                "job_id": 96340857621,
+                "stage": "artifact_audit",
+                "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d",
+            },
+            {
+                "run_id": 32391041286,
+                "job_id": 96508989387,
+                "stage": "final_review",
+                "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d",
+            },
+        ]
+        for finding in run_33.values()
+    )
+    assert "arbitrary WindowMetrics counts" in run_33[
+        "forged-result-aggregate-inconsistency"
+    ]["detail"]
+    assert "neither timestamped nor bound to the pre-evaluation proposal" in run_33[
+        "incomplete-outcome-manifest-proven"
+    ]["detail"]
+    assert "beyond depth 16 to the same deep token" in run_33[
+        "input-checksum-semantic-collisions"
+    ]["detail"]
+    assert "exact-type rejection occurs only after getattr and __getattribute__" in run_33[
+        "proposal-subclass-checksum-instability"
+    ]["detail"]
     assert {
         finding["location"]["path"] for finding in normalized["findings"]
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}

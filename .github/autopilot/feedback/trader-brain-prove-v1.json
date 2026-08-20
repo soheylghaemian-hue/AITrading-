@@ -96,8 +96,8 @@
     {
       "id": "forged-result-aggregate-inconsistency",
       "severity": "P1",
-      "title": "Public PROVE result objects admit internally inconsistent proven totals",
-      "detail": "Independent reproduction on the immutable repaired candidate reviewed in Run 31 constructs public ProveMetrics, ProveEvaluation and ProveResult values whose proven aggregate reports net_return 999 while the declared window metrics sum to 0.03. Their constructors do not enforce the cross-object accounting invariant, so formally typed audit evidence can be forged outside evaluate_prove.",
+      "title": "Public PROVE audit objects admit forged evidence",
+      "detail": "Run 31 constructs a proven aggregate with net_return 999 while its window metrics sum to 0.03. Run 33 additionally finds arbitrary WindowMetrics counts and unrelated well-formed proposal and input digests. Public constructors do not enforce cross-object accounting or identity, so typed audit evidence remains forgeable outside evaluate_prove.",
       "location": {
         "path": "src/atp/brain/prove.py",
         "line": 290
@@ -108,6 +108,12 @@
           "job_id": 96340857621,
           "stage": "artifact_audit",
           "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        },
+        {
+          "run_id": 32391041286,
+          "job_id": 96508989387,
+          "stage": "final_review",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
         }
       ]
     },
@@ -115,7 +121,7 @@
       "id": "incomplete-outcome-manifest-proven",
       "severity": "P1",
       "title": "Empty or cherry-picked outcome sets can still be marked proven",
-      "detail": "Independent reproduction on the immutable repaired candidate reviewed in Run 31 shows that empty observations and a subset omitting a losing observation can both produce proven results. The input contains no immutable expected-opportunity manifest, and observation delay is not bound to the evaluation availability interval, so the harness cannot prove that the graded rows are complete or were available only after the declared window began.",
+      "detail": "Run 31 shows empty observations and a subset omitting a loss can both be proven because expected outcomes and availability are unbound. Run 33 adds a manifest, but it is neither timestamped nor bound to the pre-evaluation proposal, so a single winner can still be declared retrospectively. Completeness and prior declaration remain unverifiable.",
       "location": {
         "path": "src/atp/brain/prove.py",
         "line": 710
@@ -125,6 +131,12 @@
           "run_id": 32338959044,
           "job_id": 96340857621,
           "stage": "artifact_audit",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        },
+        {
+          "run_id": 32391041286,
+          "job_id": 96508989387,
+          "stage": "final_review",
           "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
         }
       ]
@@ -151,7 +163,7 @@
       "id": "input-checksum-semantic-collisions",
       "severity": "P1",
       "title": "Distinct explicit inputs share the same audit checksum",
-      "detail": "Independent reproduction on the immutable repaired candidate reviewed in Run 31 shows identical input and refusal checksums for 0.1 versus its next representable float, for large delays differing by one microsecond, and for distinct opaque values of the same type. Pre-rounding floats, total_seconds conversion and type-only opaque canonicalization erase semantically distinct supplied input.",
+      "detail": "Run 31 finds identical checksums for adjacent floats, delays differing by one microsecond and distinct same-type opaque values. Run 33 still maps every nested state beyond depth 16 to the same deep token. Canonicalization erases supplied distinctions, so input and result checksums remain neither lossless nor collision-resistant.",
       "location": {
         "path": "src/atp/brain/prove.py",
         "line": 431
@@ -161,6 +173,12 @@
           "run_id": 32338959044,
           "job_id": 96340857621,
           "stage": "artifact_audit",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        },
+        {
+          "run_id": 32391041286,
+          "job_id": 96508989387,
+          "stage": "final_review",
           "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
         }
       ]
@@ -187,7 +205,7 @@
       "id": "proposal-subclass-checksum-instability",
       "severity": "P1",
       "title": "A BrainProposal subclass can override trusted audit identity",
-      "detail": "Independent reproduction on the immutable repaired candidate reviewed in Run 31 uses one BrainProposal subclass instance whose checksum override changes between calls. Both calls are proven with the same evaluator input checksum but different proposal and result checksums because isinstance accepts the subclass and the boundary invokes its overridable method.",
+      "detail": "Run 31 shows a BrainProposal subclass checksum override changing proposal and result identity. Run 33 finds exact-type rejection occurs only after getattr and __getattribute__, so a rejected subclass can execute side effects and return changing fields before refusal. The boundary must reject without executing subclass behavior.",
       "location": {
         "path": "src/atp/brain/prove.py",
         "line": 595
@@ -197,6 +215,12 @@
           "run_id": 32338959044,
           "job_id": 96340857621,
           "stage": "artifact_audit",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        },
+        {
+          "run_id": 32391041286,
+          "job_id": 96508989387,
+          "stage": "final_review",
           "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
         }
       ]
