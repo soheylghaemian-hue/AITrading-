@@ -1,4 +1,4 @@
-# Trader Brain — SENSE and THINK (research only)
+# Trader Brain — SENSE, THINK and PROVE (research only)
 
 `atp.brain` is a research vocabulary. It holds no order, allocation, leverage or execution authority, it
 cannot mutate the safety constitution, and nothing here may be promoted to trading authority outside a
@@ -131,3 +131,145 @@ checksums.
 THINK performs no I/O, reads no clock, calls no provider and has no side effect. It represents no order,
 allocation, sizing, leverage, routing or execution authority, and `atp.brain.think` is covered by the
 import-graph proof that the brain loads no broker, execution, live, risk, runtime or service module.
+
+## PROVE — complete, embargoed, cost-aware walk-forward evidence
+
+`evaluate_prove(proposal, windows=..., manifest=..., observations=..., as_of=..., embargo=...)` grades one
+`BrainProposal` against outcomes that were declared *before* the evaluation windows opened. It is an offline
+harness: no persistence, no research provider, no live data, no risk or execution integration. It answers a
+single question — *does this predeclared, complete, embargoed and cost-charged record support the proposal?*
+— and it either returns a proven audit record or one stable failure reason with no metrics at all.
+
+### Closed windows, rolling folds and the embargo
+
+An `EvaluationWindow(window_id, role, start, end)` is a **closed interval** `[start, end]` over two
+timezone-aware instants with `start < end`. Window ids are unique, the `role` is an explicit `WindowRole`
+(`TRAINING` or `EVALUATION`), and windows are canonically ordered by `(start, end, window_id)` before any
+check, so the caller's tuple order is never load-bearing.
+
+Because the intervals are closed, adjacent windows must be strictly separated: `next.start > previous.end`.
+Overlapping *and* abutting schedules both fail with `WINDOW_OVERLAP`, since sharing an endpoint means
+sharing an instant of evidence.
+
+A rolling walk-forward schedule such as `train-1 / eval-1 / train-2 / eval-2` is the normal case. Each
+`EVALUATION` window is validated against **its own preceding `TRAINING` fold** — the nearest training window
+that ends before that evaluation starts — never against every training fold in the schedule. An evaluation
+with no earlier training fold fails with `MISSING_TRAINING_FOLD`, and every pair must be separated by at
+least the caller's non-negative `embargo` (`INSUFFICIENT_EMBARGO`).
+
+### Prior declaration is required
+
+| Requirement | Reason on failure |
+| --- | --- |
+| the proposal's `action` is `STUDY` or `SHADOW` | `INELIGIBLE_ACTION` |
+| `proposal.created_at` is **strictly** earlier than every evaluation start | `PROPOSAL_NOT_PRIOR` |
+| `manifest.declared_at` is **strictly** earlier than every evaluation start | `MANIFEST_NOT_PRIOR` |
+
+A proposal created *exactly at* an evaluation start is rejected: an instant that coincides with the first
+graded instant does not prove the proposal existed before the evidence it is graded on.
+
+### The manifest binds the outcome set
+
+An `OutcomeManifest(manifest_id, declared_at, proposal_id, proposal_identity, expectations)` is the
+predeclared list of every outcome that will be graded. It must be non-empty (`EMPTY_MANIFEST`), it must name
+the exact proposal — both `proposal_id` and the canonical `proposal_identity(proposal)` digest, else
+`MANIFEST_PROPOSAL_MISMATCH` — and every `ExpectedOutcome(observation_id, window_id)` must reference a
+declared `EVALUATION` window (`UNKNOWN_WINDOW_REFERENCE`). Every evaluation window in the schedule must be
+named by at least one expectation (`UNDECLARED_EVALUATION_WINDOW`), so a fold cannot be quietly excluded.
+
+The supplied observations must then match the manifest exactly: one observation per expected id, no more and
+no fewer.
+
+| Condition | Reason |
+| --- | --- |
+| an expected id has no observation | `MISSING_OUTCOME` |
+| an observation was never declared | `UNDECLARED_OUTCOME` |
+| an observation id appears twice | `DUPLICATE_OUTCOME_ID` |
+| an expectation id appears twice | `DUPLICATE_EXPECTED_OUTCOME` |
+| an observation names a different window than its expectation | `OUTCOME_WINDOW_MISMATCH` |
+| the outcome instant falls outside its closed window | `OUTCOME_OUTSIDE_WINDOW` |
+| `available_time` precedes `outcome_time` | `OUTCOME_TIMESTAMPS_OUT_OF_ORDER` |
+| `available_time` is later than `as_of` | `OUTCOME_NOT_AVAILABLE_AT_AS_OF` |
+
+An empty outcome set, a retrospective manifest, a manifest bound to an unrelated proposal, and a
+cherry-picked subset that silently drops a loss are therefore all unprovable.
+
+### Costs, delays and abstentions are explicit
+
+An `OutcomeObservation` carries `gross_return`, a non-negative `cost`, a non-negative `delay` and an
+explicit `abstained` flag. Nothing is implied or defaulted from another field. An abstention is a **complete
+declared outcome** — it still counts toward `expected_count` — but it contributes no graded return and no
+cost, so it must declare `gross_return == 0.0` and `cost == 0.0` (`INCONSISTENT_ABSTENTION`).
+
+Metrics are computed only from the complete canonical observation set and reconcile exactly:
+
+* `graded_count + abstention_count == expected_count`, per window and in aggregate;
+* `net_return == gross_return - costs`, per window and in aggregate;
+* the aggregate counts, gross return, costs and total delay equal the per-window sums taken in canonical
+  window order;
+* a window with no graded outcome carries neither return nor cost.
+
+### Audit objects revalidate instead of trusting construction
+
+`WindowMetrics`, `AggregateMetrics`, `ProveInputs` and `ProveResult` are public frozen dataclasses, and a
+frozen dataclass is still mutable through `object.__setattr__`. Every one of them re-proves its invariants
+at construction, and `ProveResult` re-proves them again on each `checksum()`.
+
+A proven `ProveResult` carries the accepted `ProveInputs` themselves, so it is self-contained: it rebinds
+and regrades those inputs and requires the stored per-window and aggregate metrics to match exactly
+(`INCONSISTENT_METRICS`). `proposal_identity` and `input_identity` are **derived properties**, never stored
+fields — an unrelated caller-supplied digest can never be recorded as a trusted fact. A failed result
+carries no inputs, no windows and no aggregate, so partial metrics from a rejected boundary cannot exist.
+
+The protocol metadata is held to the same standard as the numbers. `calibration` must equal this module's
+own `PROVE_WALK_FORWARD_V1` label, so an arbitrary or rewritten label is refused rather than recorded
+alongside otherwise valid metrics; and a refusal must name **exactly one** stable reason, never several and
+never the same reason twice. Rewriting either after construction fails the same way, because `checksum()`
+re-proves them before it signs anything.
+
+The proposal's canonical identity is derived inside PROVE from the exact `BrainProposal` fields; it never
+calls the proposal's own `checksum()`, which a subclass could override. `type(proposal) is BrainProposal` is
+checked **before any attribute access**, so a subclass is refused with `INVALID_PROPOSAL` without executing
+any overridden `__getattribute__`, property or method. An exact but tampered proposal is revalidated field
+by field and re-digested, so a mutated field either fails closed or visibly changes the identity the
+manifest is bound to.
+
+### One canonical serializer
+
+A single exhaustive encoder covers the supported schema and rejects everything else. Aware datetimes are
+normalised to UTC, `timedelta` values are encoded as their exact `(days, seconds, microseconds)` triple,
+finite floats are encoded losslessly with `float.hex()`, integers are encoded as exact decimal text, and
+every encoded value is tagged with its type so `1`, `"1"` and `True` can never collide. Semantic sets —
+windows, expectations, observations, required evidence, scenarios and the invalidation conditions inside a
+scenario — are sorted by canonical form before both evaluation and hashing, so the caller's iteration order
+binds nothing: listing the same two falsifiers in the other order leaves `proposal_identity`, the manifest
+binding and the proof checksum unchanged.
+
+Nothing is rounded, no value is collapsed to a token, and there is no `repr`/`str` fallback. An unsupported
+type, a non-finite float, or a structure nested deeper than the schema allows is **rejected**, not
+approximated. Consequently adjacent floats, delays differing by one microsecond, and every other distinct
+accepted value produce distinct `input_identity` and result checksums, while equivalent observation
+permutations and timezone spellings of the same instants produce identical ones.
+
+### Purity and repeatability
+
+`evaluate_prove` reads no clock, performs no I/O, calls no provider, touches no shared or rebindable module
+calibration, and has no side effect. The calibration label `PROVE_WALK_FORWARD_V1` is a literal inside the
+evaluator for the same reason THINK's weights are, and it is spelled as a literal again where the audit
+record re-proves it, so no importer can rebind a shared name and move both at once.
+
+The boundary accepts only exact built-in and schema types: `windows` and `observations` must be immutable
+tuples. A list, a generator or any other iterable is refused with a stable reason rather than materialised,
+so a result can never depend on how far a shared iterator had already been consumed. Evaluating the same
+accepted inputs twice yields equal results and identical checksums.
+
+Ordinary exceptions raised while validating or binding hostile explicit input — an enormous integer smuggled
+into a numeric field, a `tzinfo` whose `utcoffset` raises — are caught and returned as a deterministic
+failed `ProveResult` with no usable metrics. Malformed input is never partially graded.
+
+### Research-only limits
+
+PROVE represents no order, allocation, sizing, leverage, routing or execution authority. `atp.brain.prove`
+is covered by the same subprocess import-graph proof as the rest of the brain: importing it loads no broker,
+execution, live, risk, runtime or service module. That proof is executable — it inspects real imports, not
+the wording of any docstring.
