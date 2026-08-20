@@ -211,6 +211,12 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
             "final_review",
             "c4aba55569b505d118709ecb85be9cd1286b2b0d",
         ),
+        (
+            32406043752,
+            96552681529,
+            "gate",
+            "c4aba55569b505d118709ecb85be9cd1286b2b0d",
+        ),
     }
     assert len(normalized["findings"]) == MAX_FINDINGS
     run_32 = {
@@ -282,6 +288,43 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     assert "exact-type rejection occurs only after getattr and __getattribute__" in run_33[
         "proposal-subclass-checksum-instability"
     ]["detail"]
+    run_34 = {
+        finding["id"]: finding
+        for finding in normalized["findings"]
+        if any(source["run_id"] == 32406043752 for source in finding["sources"])
+    }
+    assert {
+        finding_id: (finding["location"]["path"], finding["location"]["line"])
+        for finding_id, finding in run_34.items()
+    } == {
+        "randomness-lexical-false-positive": ("tests/test_brain_prove.py", 532),
+    }
+    assert run_34["randomness-lexical-false-positive"]["sources"] == [
+        {
+            "run_id": 32229557214,
+            "job_id": 96002679156,
+            "stage": "gate",
+            "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d",
+        },
+        {
+            "run_id": 32406043752,
+            "job_id": 96552681529,
+            "stage": "gate",
+            "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d",
+        },
+    ]
+    assert run_34["randomness-lexical-false-positive"]["title"] == (
+        "Research-only source fixture treats documentation prose as safety evidence"
+    )
+    assert run_34["randomness-lexical-false-positive"]["detail"] == (
+        "Run 25 rejects the harmless docstring word randomness by scanning the complete "
+        "source text for the substring random although its executable imports and calls "
+        "are allowed. Run 34 replaces that scan with AST checks, which pass, but then "
+        "requires the prose words randomness, execution, broker, clock and trading to "
+        "exist; the candidate source lacks broker, so the gate fails. Documentation "
+        "wording is not executable safety evidence and must neither cause rejection nor "
+        "be required for acceptance."
+    )
     assert {
         finding["location"]["path"] for finding in normalized["findings"]
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
