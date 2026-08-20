@@ -300,16 +300,22 @@
     {
       "id": "randomness-lexical-false-positive",
       "severity": "P1",
-      "title": "Research-only source check confuses prose with a random dependency",
-      "detail": "The structural safety test bans the raw substring random across the complete source text, so the harmless docstring word randomness fails the gate although the module imports only the expected standard-library and local research modules. The assertion does not distinguish executable imports or calls from documentation prose.",
+      "title": "Research-only source fixture treats documentation prose as safety evidence",
+      "detail": "Run 25 rejects the harmless docstring word randomness by scanning the complete source text for the substring random although its executable imports and calls are allowed. Run 34 replaces that scan with AST checks, which pass, but then requires the prose words randomness, execution, broker, clock and trading to exist; the candidate source lacks broker, so the gate fails. Documentation wording is not executable safety evidence and must neither cause rejection nor be required for acceptance.",
       "location": {
         "path": "tests/test_brain_prove.py",
-        "line": 373
+        "line": 532
       },
       "sources": [
         {
           "run_id": 32229557214,
           "job_id": 96002679156,
+          "stage": "gate",
+          "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
+        },
+        {
+          "run_id": 32406043752,
+          "job_id": 96552681529,
           "stage": "gate",
           "base_sha": "c4aba55569b505d118709ecb85be9cd1286b2b0d"
         }
