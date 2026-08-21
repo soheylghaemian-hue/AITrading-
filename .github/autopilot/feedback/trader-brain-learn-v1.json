@@ -38,6 +38,42 @@
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
+    },
+    {
+      "id": "comparison-fixture-confounds-proof-mismatch",
+      "severity": "P1",
+      "title": "Proof-mismatch fixture also creates a self-comparison",
+      "detail": "Run 38 assigns CHALLENGER_PROPOSAL to the champion while the default challenger already uses that same proposal. The input therefore violates the earlier self-comparison invariant before proof binding, so SELF_COMPARISON is the correct deterministic first reason rather than the asserted PROOF_MODEL_MISMATCH. Give the mislabelled champion a distinct proposal identity whose supplied proof is bound to a different proposal, preserving both fail-closed checks and testing only the intended invariant.",
+      "location": {
+        "path": "tests/test_brain_learn.py",
+        "line": 360
+      },
+      "sources": [
+        {
+          "run_id": 32452907320,
+          "job_id": 96689547045,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        }
+      ]
+    },
+    {
+      "id": "transition-fixture-confounds-ordering",
+      "severity": "P1",
+      "title": "Transition-order fixture also supplies future evidence",
+      "detail": "Run 38 backdates effective_at to CREATED minus one day but retains the helper's default evidence, which is available only at EFFECTIVE. The evidence is therefore unknowable at the backdated instant, so EVIDENCE_NOT_KNOWABLE_AT_AS_OF is the correct deterministic first reason before the ModelTransition chronology guard can return TRANSITION_NOT_ORDERED. Supply evidence available no later than the backdated instant so the fixture isolates transition ordering; do not weaken either fail-closed check.",
+      "location": {
+        "path": "tests/test_brain_learn.py",
+        "line": 452
+      },
+      "sources": [
+        {
+          "run_id": 32452907320,
+          "job_id": 96689547045,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        }
+      ]
     }
   ]
 }

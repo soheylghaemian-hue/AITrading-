@@ -335,13 +335,15 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_36_gate_evidence() -> None:
+def test_learn_feedback_records_exact_run_36_and_38_gate_evidence() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
     assert {finding["id"] for finding in normalized["findings"]} == {
         "authority-field-lexical-false-positive",
+        "comparison-fixture-confounds-proof-mismatch",
         "tamper-fixture-leaks-champion-role",
+        "transition-fixture-confounds-ordering",
     }
     assert {finding["severity"] for finding in normalized["findings"]} == {"P1"}
     assert {
@@ -349,16 +351,35 @@ def test_learn_feedback_records_exact_run_36_gate_evidence() -> None:
         for finding in normalized["findings"]
     } == {
         "authority-field-lexical-false-positive": ("tests/test_brain_learn.py", 396),
+        "comparison-fixture-confounds-proof-mismatch": (
+            "tests/test_brain_learn.py",
+            360,
+        ),
         "tamper-fixture-leaks-champion-role": ("tests/test_brain_learn.py", 614),
+        "transition-fixture-confounds-ordering": ("tests/test_brain_learn.py", 452),
     }
-    source = {
+    run_36_source = {
         "run_id": 32438421194,
         "job_id": 96648106153,
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
-    assert all(finding["sources"] == [source] for finding in normalized["findings"])
+    run_38_source = {
+        "run_id": 32452907320,
+        "job_id": 96689547045,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
+    assert {
+        finding_id: finding["sources"]
+        for finding_id, finding in findings.items()
+    } == {
+        "authority-field-lexical-false-positive": [run_36_source],
+        "comparison-fixture-confounds-proof-mismatch": [run_38_source],
+        "tamper-fixture-leaks-champion-role": [run_36_source],
+        "transition-fixture-confounds-ordering": [run_38_source],
+    }
     assert findings["authority-field-lexical-false-positive"]["title"] == (
         "Authority safety fixture rejects a benign freshness bound"
     )
@@ -371,6 +392,18 @@ def test_learn_feedback_records_exact_run_36_gate_evidence() -> None:
     assert "aliases the module-level CHAMPION fixture and is not restored" in findings[
         "tamper-fixture-leaks-champion-role"
     ]["detail"]
+    assert findings["comparison-fixture-confounds-proof-mismatch"]["title"] == (
+        "Proof-mismatch fixture also creates a self-comparison"
+    )
+    assert "SELF_COMPARISON is the correct deterministic first reason" in findings[
+        "comparison-fixture-confounds-proof-mismatch"
+    ]["detail"]
+    assert findings["transition-fixture-confounds-ordering"]["title"] == (
+        "Transition-order fixture also supplies future evidence"
+    )
+    assert "EVIDENCE_NOT_KNOWABLE_AT_AS_OF is the correct deterministic first reason" in (
+        findings["transition-fixture-confounds-ordering"]["detail"]
+    )
     assert {
         finding["location"]["path"] for finding in normalized["findings"]
     } == {"tests/test_brain_learn.py"}
