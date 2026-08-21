@@ -335,13 +335,15 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_36_and_38_gate_evidence() -> None:
+def test_learn_feedback_records_exact_run_36_38_and_40_evidence() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
     assert {finding["id"] for finding in normalized["findings"]} == {
         "authority-field-lexical-false-positive",
         "comparison-fixture-confounds-proof-mismatch",
+        "coordinated-drift-tampering-bypasses-revalidation",
+        "evidence-failure-precedence-permutation-dependent",
         "tamper-fixture-leaks-champion-role",
         "transition-fixture-confounds-ordering",
     }
@@ -354,6 +356,14 @@ def test_learn_feedback_records_exact_run_36_and_38_gate_evidence() -> None:
         "comparison-fixture-confounds-proof-mismatch": (
             "tests/test_brain_learn.py",
             360,
+        ),
+        "coordinated-drift-tampering-bypasses-revalidation": (
+            "src/atp/brain/learn.py",
+            397,
+        ),
+        "evidence-failure-precedence-permutation-dependent": (
+            "src/atp/brain/learn.py",
+            734,
         ),
         "tamper-fixture-leaks-champion-role": ("tests/test_brain_learn.py", 614),
         "transition-fixture-confounds-ordering": ("tests/test_brain_learn.py", 452),
@@ -370,6 +380,12 @@ def test_learn_feedback_records_exact_run_36_and_38_gate_evidence() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_40_source = {
+        "run_id": 32458581800,
+        "job_id": 96710258496,
+        "stage": "final_review",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -377,6 +393,8 @@ def test_learn_feedback_records_exact_run_36_and_38_gate_evidence() -> None:
     } == {
         "authority-field-lexical-false-positive": [run_36_source],
         "comparison-fixture-confounds-proof-mismatch": [run_38_source],
+        "coordinated-drift-tampering-bypasses-revalidation": [run_40_source],
+        "evidence-failure-precedence-permutation-dependent": [run_40_source],
         "tamper-fixture-leaks-champion-role": [run_36_source],
         "transition-fixture-confounds-ordering": [run_38_source],
     }
@@ -404,9 +422,31 @@ def test_learn_feedback_records_exact_run_36_and_38_gate_evidence() -> None:
     assert "EVIDENCE_NOT_KNOWABLE_AT_AS_OF is the correct deterministic first reason" in (
         findings["transition-fixture-confounds-ordering"]["detail"]
     )
+    assert findings["coordinated-drift-tampering-bypasses-revalidation"]["title"] == (
+        "Coordinated drift tampering bypasses revalidation"
+    )
+    assert (
+        findings["coordinated-drift-tampering-bypasses-revalidation"]["detail"]
+        == "DriftResult revalidates only the current mutable input graph against equally "
+        "mutable cached outputs. Changing accepted evidence severity from severe to mild "
+        "and updating severity, adjusted_confidence, and abstain accordingly makes "
+        "checksum() succeed; downstream comparison therefore accepts tampered evidence "
+        "and restored confidence instead of failing closed."
+    )
+    assert findings["evidence-failure-precedence-permutation-dependent"]["title"] == (
+        "Evidence failure precedence depends on tuple order"
+    )
+    assert (
+        findings["evidence-failure-precedence-permutation-dependent"]["detail"]
+        == "_admit interleaves per-item consistency validation with duplicate-ID "
+        "detection. The same evidence multiset containing duplicate IDs and an "
+        "out-of-order timestamp returns DUPLICATE_EVIDENCE_ID in one permutation and "
+        "EVIDENCE_TIMESTAMPS_OUT_OF_ORDER in another, producing different refusal "
+        "checksums and violating permutation determinism."
+    )
     assert {
         finding["location"]["path"] for finding in normalized["findings"]
-    } == {"tests/test_brain_learn.py"}
+    } == {"src/atp/brain/learn.py", "tests/test_brain_learn.py"}
 
 
 def test_schema_is_strict_and_matches_validator_bounds() -> None:
