@@ -335,7 +335,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_36_38_40_and_42_evidence() -> None:
+def test_learn_feedback_records_exact_run_36_38_40_42_and_43_evidence() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
@@ -346,8 +346,11 @@ def test_learn_feedback_records_exact_run_36_38_40_and_42_evidence() -> None:
         "evidence-failure-precedence-permutation-dependent",
         "equivalent-permutations-produce-unequal-results",
         "evaluator-closure-exposes-commitment-sealer",
+        "learn-documentation-omits-model-role",
+        "local-proposal-tamper-invalidates-proof-first",
         "reinstate-chain-allows-challenger-promotion",
         "tamper-fixture-leaks-champion-role",
+        "timezone-spelling-fixture-assumes-evidence-inequality",
         "transition-fixture-confounds-ordering",
     }
     assert {finding["severity"] for finding in normalized["findings"]} == {"P1"}
@@ -376,11 +379,20 @@ def test_learn_feedback_records_exact_run_36_38_40_and_42_evidence() -> None:
             "src/atp/brain/learn.py",
             1081,
         ),
+        "learn-documentation-omits-model-role": ("tests/test_brain_learn.py", 759),
+        "local-proposal-tamper-invalidates-proof-first": (
+            "tests/test_brain_learn.py",
+            381,
+        ),
         "reinstate-chain-allows-challenger-promotion": (
             "src/atp/brain/learn.py",
             891,
         ),
         "tamper-fixture-leaks-champion-role": ("tests/test_brain_learn.py", 614),
+        "timezone-spelling-fixture-assumes-evidence-inequality": (
+            "tests/test_brain_learn.py",
+            280,
+        ),
         "transition-fixture-confounds-ordering": ("tests/test_brain_learn.py", 452),
     }
     run_36_source = {
@@ -407,6 +419,12 @@ def test_learn_feedback_records_exact_run_36_38_40_and_42_evidence() -> None:
         "stage": "final_review",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_43_source = {
+        "run_id": 32491533881,
+        "job_id": 96806873114,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -418,8 +436,11 @@ def test_learn_feedback_records_exact_run_36_38_40_and_42_evidence() -> None:
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
         "equivalent-permutations-produce-unequal-results": [run_42_source],
         "evaluator-closure-exposes-commitment-sealer": [run_42_source],
+        "learn-documentation-omits-model-role": [run_43_source],
+        "local-proposal-tamper-invalidates-proof-first": [run_43_source],
         "reinstate-chain-allows-challenger-promotion": [run_42_source],
         "tamper-fixture-leaks-champion-role": [run_36_source],
+        "timezone-spelling-fixture-assumes-evidence-inequality": [run_43_source],
         "transition-fixture-confounds-ordering": [run_38_source],
     }
     assert findings["authority-field-lexical-false-positive"]["title"] == (
@@ -494,6 +515,39 @@ def test_learn_feedback_records_exact_run_36_38_40_and_42_evidence() -> None:
         "use canonical ordering. Equivalent evidence or transition permutations therefore "
         "produce unequal result objects with differently ordered inputs, contradicting the "
         "required identical canonical results; tests assert only checksum equality."
+    )
+    assert findings["timezone-spelling-fixture-assumes-evidence-inequality"][
+        "title"
+    ] == "Timezone-spelling fixture expects semantically unequal evidence"
+    assert findings["timezone-spelling-fixture-assumes-evidence-inequality"][
+        "detail"
+    ] == (
+        "Run 43 converts every timestamp of plain into the America/New_York spelling "
+        "of the same instant and leaves every other DriftEvidence field unchanged. "
+        "Python aware-datetime equality compares the instants, so plain == spelled and "
+        "the fixture fails before evaluate_drift is exercised. Assert that the timezone "
+        "representations differ while the instants remain equal, then pin identical "
+        "results; do not weaken timestamp canonicalization."
+    )
+    assert findings["local-proposal-tamper-invalidates-proof-first"]["title"] == (
+        "Local proposal tampering invalidates the proof before model matching"
+    )
+    assert findings["local-proposal-tamper-invalidates-proof-first"]["detail"] == (
+        "Run 43 mutates the same proposal object used inside the champion's proof. The "
+        "proof's own revalidation therefore fails first, so evaluate_comparison correctly "
+        "returns PROOF_NOT_PROVEN before it can consider PROOF_MODEL_MISMATCH. Keep the "
+        "proposal local and assert the deterministic earlier reason, then retain the later "
+        "clean-fixture check; do not weaken proof revalidation or failure ordering."
+    )
+    assert findings["learn-documentation-omits-model-role"]["title"] == (
+        "LEARN documentation omits a public API symbol"
+    )
+    assert findings["learn-documentation-omits-model-role"]["detail"] == (
+        "Run 43's LEARN documentation adds the feature narrative but omits the literal "
+        "public symbol ModelRole, so the API-documentation contract fails at "
+        "tests/test_brain_learn.py:759 before checking the remaining names. Add the "
+        "missing public API name and verify every LEARN_PUBLIC_NAMES entry is documented; "
+        "do not remove exports or relax the contract test."
     )
     assert {
         finding["location"]["path"] for finding in normalized["findings"]
