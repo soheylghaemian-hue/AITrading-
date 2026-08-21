@@ -164,6 +164,60 @@
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
+    },
+    {
+      "id": "timezone-spelling-fixture-assumes-evidence-inequality",
+      "severity": "P1",
+      "title": "Timezone-spelling fixture expects semantically unequal evidence",
+      "detail": "Run 43 converts every timestamp of plain into the America/New_York spelling of the same instant and leaves every other DriftEvidence field unchanged. Python aware-datetime equality compares the instants, so plain == spelled and the fixture fails before evaluate_drift is exercised. Assert that the timezone representations differ while the instants remain equal, then pin identical results; do not weaken timestamp canonicalization.",
+      "location": {
+        "path": "tests/test_brain_learn.py",
+        "line": 280
+      },
+      "sources": [
+        {
+          "run_id": 32491533881,
+          "job_id": 96806873114,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        }
+      ]
+    },
+    {
+      "id": "local-proposal-tamper-invalidates-proof-first",
+      "severity": "P1",
+      "title": "Local proposal tampering invalidates the proof before model matching",
+      "detail": "Run 43 mutates the same proposal object used inside the champion's proof. The proof's own revalidation therefore fails first, so evaluate_comparison correctly returns PROOF_NOT_PROVEN before it can consider PROOF_MODEL_MISMATCH. Keep the proposal local and assert the deterministic earlier reason, then retain the later clean-fixture check; do not weaken proof revalidation or failure ordering.",
+      "location": {
+        "path": "tests/test_brain_learn.py",
+        "line": 381
+      },
+      "sources": [
+        {
+          "run_id": 32491533881,
+          "job_id": 96806873114,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        }
+      ]
+    },
+    {
+      "id": "learn-documentation-omits-model-role",
+      "severity": "P1",
+      "title": "LEARN documentation omits a public API symbol",
+      "detail": "Run 43's LEARN documentation adds the feature narrative but omits the literal public symbol ModelRole, so the API-documentation contract fails at tests/test_brain_learn.py:759 before checking the remaining names. Add the missing public API name and verify every LEARN_PUBLIC_NAMES entry is documented; do not remove exports or relax the contract test.",
+      "location": {
+        "path": "tests/test_brain_learn.py",
+        "line": 759
+      },
+      "sources": [
+        {
+          "run_id": 32491533881,
+          "job_id": 96806873114,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        }
+      ]
     }
   ]
 }
