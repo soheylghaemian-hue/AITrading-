@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "kind": "unresolved_review_findings",
+  "goal_id": "trader-brain-learn-v1",
+  "findings": [
+    {
+      "id": "authority-field-lexical-false-positive",
+      "severity": "P1",
+      "title": "Authority safety fixture rejects a benign freshness bound",
+      "detail": "The authority test bans any dataclass field containing limit, so it rejects DriftPolicy.freshness_limit even though that field is only the explicit maximum evidence age used to reject stale research evidence. The executable import and call safety checks pass, and this lexical failure supplies no evidence of deployment, execution or risk-limit authority.",
+      "location": {
+        "path": "tests/test_brain_learn.py",
+        "line": 396
+      },
+      "sources": [
+        {
+          "run_id": 32438421194,
+          "job_id": 96648106153,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        }
+      ]
+    },
+    {
+      "id": "tamper-fixture-leaks-champion-role",
+      "severity": "P1",
+      "title": "Tamper fixture mutates the shared champion across tests",
+      "detail": "The tamper test changes rerolled.inputs.champion.role with object.__setattr__, but that champion aliases the module-level CHAMPION fixture and is not restored. A later regression fixture therefore receives ROLE_MISMATCH and becomes order-dependent; the LEARN implementation itself correctly rejects the contaminated input fail-closed.",
+      "location": {
+        "path": "tests/test_brain_learn.py",
+        "line": 614
+      },
+      "sources": [
+        {
+          "run_id": 32438421194,
+          "job_id": 96648106153,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        }
+      ]
+    }
+  ]
+}
