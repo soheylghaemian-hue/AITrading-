@@ -312,6 +312,22 @@ def test_claude_payload_comes_only_from_one_final_success_event(
                 "structured_output": None,
             }
         ],
+        [
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": True,
+                "result": json.dumps(EDIT),
+            }
+        ],
+        [
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": json.dumps(EDIT),
+            }
+        ],
         ["not-an-event"],
     ],
 )
