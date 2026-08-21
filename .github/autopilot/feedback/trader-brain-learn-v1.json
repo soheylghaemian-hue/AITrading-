@@ -110,6 +110,60 @@
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
+    },
+    {
+      "id": "evaluator-closure-exposes-commitment-sealer",
+      "severity": "P1",
+      "title": "Internal commitment can be forged through the evaluator closure",
+      "detail": "The sealer is directly recoverable from evaluate_drift.__closure__. A caller can mutate evidence and all derived fields, invoke that sealer on the recomputed state, replace commitment, and make checksum() succeed; downstream comparison then trusts the tampered drift. The purported full-bypass test never checks this accessible path.",
+      "location": {
+        "path": "src/atp/brain/learn.py",
+        "line": 1081
+      },
+      "sources": [
+        {
+          "run_id": 32481392244,
+          "job_id": 96778775008,
+          "stage": "final_review",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        }
+      ]
+    },
+    {
+      "id": "reinstate-chain-allows-challenger-promotion",
+      "severity": "P1",
+      "title": "Transition chains permit challenger-to-champion promotion",
+      "detail": "REINSTATE may omit reverses_transition_id and select any active next_role. A valid CHALLENGER→RETIRED transition followed by RETIRED→CHAMPION is accepted with final_role CHAMPION, violating the no-self-promotion criterion.",
+      "location": {
+        "path": "src/atp/brain/learn.py",
+        "line": 891
+      },
+      "sources": [
+        {
+          "run_id": 32481392244,
+          "job_id": 96778775008,
+          "stage": "final_review",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        }
+      ]
+    },
+    {
+      "id": "equivalent-permutations-produce-unequal-results",
+      "severity": "P1",
+      "title": "Equivalent permutations do not produce identical results",
+      "detail": "DriftInputs and TransitionInputs retain caller tuple order even though checksums use canonical ordering. Equivalent evidence or transition permutations therefore produce unequal result objects with differently ordered inputs, contradicting the required identical canonical results; tests assert only checksum equality.",
+      "location": {
+        "path": "src/atp/brain/learn.py",
+        "line": 1009
+      },
+      "sources": [
+        {
+          "run_id": 32481392244,
+          "job_id": 96778775008,
+          "stage": "final_review",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        }
+      ]
     }
   ]
 }
