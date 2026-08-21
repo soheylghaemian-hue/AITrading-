@@ -74,6 +74,42 @@
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
+    },
+    {
+      "id": "coordinated-drift-tampering-bypasses-revalidation",
+      "severity": "P1",
+      "title": "Coordinated drift tampering bypasses revalidation",
+      "detail": "DriftResult revalidates only the current mutable input graph against equally mutable cached outputs. Changing accepted evidence severity from severe to mild and updating severity, adjusted_confidence, and abstain accordingly makes checksum() succeed; downstream comparison therefore accepts tampered evidence and restored confidence instead of failing closed.",
+      "location": {
+        "path": "src/atp/brain/learn.py",
+        "line": 397
+      },
+      "sources": [
+        {
+          "run_id": 32458581800,
+          "job_id": 96710258496,
+          "stage": "final_review",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        }
+      ]
+    },
+    {
+      "id": "evidence-failure-precedence-permutation-dependent",
+      "severity": "P1",
+      "title": "Evidence failure precedence depends on tuple order",
+      "detail": "_admit interleaves per-item consistency validation with duplicate-ID detection. The same evidence multiset containing duplicate IDs and an out-of-order timestamp returns DUPLICATE_EVIDENCE_ID in one permutation and EVIDENCE_TIMESTAMPS_OUT_OF_ORDER in another, producing different refusal checksums and violating permutation determinism.",
+      "location": {
+        "path": "src/atp/brain/learn.py",
+        "line": 734
+      },
+      "sources": [
+        {
+          "run_id": 32458581800,
+          "job_id": 96710258496,
+          "stage": "final_review",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        }
+      ]
     }
   ]
 }
