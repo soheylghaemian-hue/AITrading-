@@ -38,6 +38,11 @@ PROVE_FEEDBACK_PATH = (
     PROJECT
     / ".github/autopilot/feedback/trader-brain-prove-v1.json"
 )
+LEARN_GOAL_PATH = PROJECT / "autopilot/goals/trader-brain-learn-v1.json"
+LEARN_FEEDBACK_PATH = (
+    PROJECT
+    / ".github/autopilot/feedback/trader-brain-learn-v1.json"
+)
 SCHEMA_PATH = PROJECT / ".github/autopilot/schemas/review-feedback.schema.json"
 GOAL_RELATIVE = "autopilot/goals/trader-brain-think-v1.json"
 GOAL_ID = "trader-brain-think-v1"
@@ -328,6 +333,47 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     assert {
         finding["location"]["path"] for finding in normalized["findings"]
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
+
+
+def test_learn_feedback_records_exact_run_36_gate_evidence() -> None:
+    goal = load_goal(LEARN_GOAL_PATH)
+    normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
+    assert normalized["goal_id"] == "trader-brain-learn-v1"
+    assert {finding["id"] for finding in normalized["findings"]} == {
+        "authority-field-lexical-false-positive",
+        "tamper-fixture-leaks-champion-role",
+    }
+    assert {finding["severity"] for finding in normalized["findings"]} == {"P1"}
+    assert {
+        finding["id"]: (finding["location"]["path"], finding["location"]["line"])
+        for finding in normalized["findings"]
+    } == {
+        "authority-field-lexical-false-positive": ("tests/test_brain_learn.py", 396),
+        "tamper-fixture-leaks-champion-role": ("tests/test_brain_learn.py", 614),
+    }
+    source = {
+        "run_id": 32438421194,
+        "job_id": 96648106153,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
+    assert all(finding["sources"] == [source] for finding in normalized["findings"])
+    findings = {finding["id"]: finding for finding in normalized["findings"]}
+    assert findings["authority-field-lexical-false-positive"]["title"] == (
+        "Authority safety fixture rejects a benign freshness bound"
+    )
+    assert "maximum evidence age used to reject stale research evidence" in findings[
+        "authority-field-lexical-false-positive"
+    ]["detail"]
+    assert findings["tamper-fixture-leaks-champion-role"]["title"] == (
+        "Tamper fixture mutates the shared champion across tests"
+    )
+    assert "aliases the module-level CHAMPION fixture and is not restored" in findings[
+        "tamper-fixture-leaks-champion-role"
+    ]["detail"]
+    assert {
+        finding["location"]["path"] for finding in normalized["findings"]
+    } == {"tests/test_brain_learn.py"}
 
 
 def test_schema_is_strict_and_matches_validator_bounds() -> None:
