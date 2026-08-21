@@ -285,6 +285,31 @@ def test_claude_output_schema_is_strict_full_file_only_and_guard_remains_final()
     assert WORKFLOW.count("--declared-json") == 4
 
 
+def test_claude_prompts_require_runtime_structured_output_without_relaxing_bounds():
+    root = Path(__file__).resolve().parents[1]
+    for name in ("claude-author.md", "claude-repair.md"):
+        prompt = (root / ".github/autopilot/prompts" / name).read_text()
+        normalized = " ".join(prompt.split())
+        assert "Structured-output completion is mandatory" in normalized
+        assert "before the turn budget ends" in normalized
+        assert "stop exploring and return immediately" in normalized
+        assert "final response must consist only of the runtime structured_output object" in normalized
+        assert "Do not finish with prose, Markdown, a code fence" in normalized
+        assert "runtime structured_output object" in normalized
+        assert "without structured_output is invalid and must fail closed" in normalized
+
+    assert WORKFLOW.count('show_full_output: "false"') == 2
+    assert WORKFLOW.count('--allowedTools "Read,Glob,Grep"') == 2
+    assert WORKFLOW.count(
+        '--disallowedTools "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Task,mcp__*"'
+    ) == 2
+    assert WORKFLOW.count("--json-schema") == 2
+    assert WORKFLOW.count("--max-turns 30") == 1
+    assert WORKFLOW.count("--max-budget-usd 25") == 1
+    assert WORKFLOW.count("--max-turns 25") == 1
+    assert WORKFLOW.count("--max-budget-usd 20") == 1
+
+
 def test_full_file_state_is_bound_for_author_and_repair_before_materialization():
     assert WORKFLOW.count("python -m atp.autopilot.full_file") == 6
     assert WORKFLOW.count("            --prepare-state ") == 4

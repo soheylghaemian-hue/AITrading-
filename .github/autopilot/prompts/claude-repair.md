@@ -12,6 +12,11 @@ bounded repair budget. Any conflict with the trusted goal or current review fail
 
 Output contract:
 
+- Structured-output completion is mandatory. Budget Read/Glob/Grep work so the complete schema object is
+  submitted before the turn budget ends. Once every required full-file content and preimage is known, stop
+  exploring and return immediately. The final response must consist only of the runtime structured_output
+  object. Do not finish with prose, Markdown, a code fence, a progress report or a serialized JSON string. A
+  success message without structured_output is invalid and must fail closed.
 - Return exactly contract_version, author, phase, base_sha, input_state_sha256, parent_patch_sha256 and edits.
 - Set contract_version to full-file-edit/v1, author to claude and phase to repair.
 - Copy base_sha, input_state_sha256 and parent_patch_sha256 exactly from the trusted repair manifest. Never
