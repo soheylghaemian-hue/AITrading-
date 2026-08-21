@@ -335,7 +335,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_36_38_and_40_evidence() -> None:
+def test_learn_feedback_records_exact_run_36_38_40_and_42_evidence() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
@@ -344,6 +344,9 @@ def test_learn_feedback_records_exact_run_36_38_and_40_evidence() -> None:
         "comparison-fixture-confounds-proof-mismatch",
         "coordinated-drift-tampering-bypasses-revalidation",
         "evidence-failure-precedence-permutation-dependent",
+        "equivalent-permutations-produce-unequal-results",
+        "evaluator-closure-exposes-commitment-sealer",
+        "reinstate-chain-allows-challenger-promotion",
         "tamper-fixture-leaks-champion-role",
         "transition-fixture-confounds-ordering",
     }
@@ -364,6 +367,18 @@ def test_learn_feedback_records_exact_run_36_38_and_40_evidence() -> None:
         "evidence-failure-precedence-permutation-dependent": (
             "src/atp/brain/learn.py",
             734,
+        ),
+        "equivalent-permutations-produce-unequal-results": (
+            "src/atp/brain/learn.py",
+            1009,
+        ),
+        "evaluator-closure-exposes-commitment-sealer": (
+            "src/atp/brain/learn.py",
+            1081,
+        ),
+        "reinstate-chain-allows-challenger-promotion": (
+            "src/atp/brain/learn.py",
+            891,
         ),
         "tamper-fixture-leaks-champion-role": ("tests/test_brain_learn.py", 614),
         "transition-fixture-confounds-ordering": ("tests/test_brain_learn.py", 452),
@@ -386,6 +401,12 @@ def test_learn_feedback_records_exact_run_36_38_and_40_evidence() -> None:
         "stage": "final_review",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_42_source = {
+        "run_id": 32481392244,
+        "job_id": 96778775008,
+        "stage": "final_review",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -395,6 +416,9 @@ def test_learn_feedback_records_exact_run_36_38_and_40_evidence() -> None:
         "comparison-fixture-confounds-proof-mismatch": [run_38_source],
         "coordinated-drift-tampering-bypasses-revalidation": [run_40_source],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
+        "equivalent-permutations-produce-unequal-results": [run_42_source],
+        "evaluator-closure-exposes-commitment-sealer": [run_42_source],
+        "reinstate-chain-allows-challenger-promotion": [run_42_source],
         "tamper-fixture-leaks-champion-role": [run_36_source],
         "transition-fixture-confounds-ordering": [run_38_source],
     }
@@ -443,6 +467,33 @@ def test_learn_feedback_records_exact_run_36_38_and_40_evidence() -> None:
         "out-of-order timestamp returns DUPLICATE_EVIDENCE_ID in one permutation and "
         "EVIDENCE_TIMESTAMPS_OUT_OF_ORDER in another, producing different refusal "
         "checksums and violating permutation determinism."
+    )
+    assert findings["evaluator-closure-exposes-commitment-sealer"]["title"] == (
+        "Internal commitment can be forged through the evaluator closure"
+    )
+    assert findings["evaluator-closure-exposes-commitment-sealer"]["detail"] == (
+        "The sealer is directly recoverable from evaluate_drift.__closure__. A caller "
+        "can mutate evidence and all derived fields, invoke that sealer on the recomputed "
+        "state, replace commitment, and make checksum() succeed; downstream comparison "
+        "then trusts the tampered drift. The purported full-bypass test never checks this "
+        "accessible path."
+    )
+    assert findings["reinstate-chain-allows-challenger-promotion"]["title"] == (
+        "Transition chains permit challenger-to-champion promotion"
+    )
+    assert findings["reinstate-chain-allows-challenger-promotion"]["detail"] == (
+        "REINSTATE may omit reverses_transition_id and select any active next_role. A "
+        "valid CHALLENGER→RETIRED transition followed by RETIRED→CHAMPION is accepted "
+        "with final_role CHAMPION, violating the no-self-promotion criterion."
+    )
+    assert findings["equivalent-permutations-produce-unequal-results"]["title"] == (
+        "Equivalent permutations do not produce identical results"
+    )
+    assert findings["equivalent-permutations-produce-unequal-results"]["detail"] == (
+        "DriftInputs and TransitionInputs retain caller tuple order even though checksums "
+        "use canonical ordering. Equivalent evidence or transition permutations therefore "
+        "produce unequal result objects with differently ordered inputs, contradicting the "
+        "required identical canonical results; tests assert only checksum equality."
     )
     assert {
         finding["location"]["path"] for finding in normalized["findings"]
