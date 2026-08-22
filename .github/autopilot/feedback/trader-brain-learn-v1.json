@@ -313,10 +313,10 @@
       "id": "learn-documentation-omits-model-role",
       "severity": "P1",
       "title": "LEARN doc",
-      "detail": "43/61 omit ModelRole/exact research-only wording; 65's raw-substring fixture rejects line breaks. Pin public symbols/guard phrases; keep export/docs checks strict.",
+      "detail": "43/61 omit ModelRole/exact research-only wording; 65/66 raw scans reject line breaks or Markdown markup. Pin plain public/guard/equality phrases; keep export/docs checks strict.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 645
+        "line": 882
       },
       "sources": [
         {
@@ -336,6 +336,12 @@
           "job_id": 97092753578,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32599754306,
+          "job_id": 97099076876,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
     },
@@ -343,10 +349,10 @@
       "id": "invalid-policy-fixture-raises-before-result-refusal",
       "severity": "P1",
       "title": "Evaluator fixture errors",
-      "detail": "44-45/55-56/58-59/61-62 misuse constructors/defaults/thresholds, __setstate__ shape or helpers. Use distinct inputs; reach evaluator; keep strict guards/order.",
+      "detail": "44-45/55-56/58-59/61-62/66 misuse constructors/defaults/thresholds, __setstate__ shape or helpers; 66 replaces explicit None. Use sentinels/distinct inputs; reach evaluator; keep guards/order strict.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 376
+        "line": 210
       },
       "sources": [
         {
@@ -394,6 +400,12 @@
         {
           "run_id": 32589317435,
           "job_id": 97073687658,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32599754306,
+          "job_id": 97099076876,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }

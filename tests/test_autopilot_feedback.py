@@ -13,6 +13,9 @@ import pytest
 
 from atp.autopilot.feedback import (
     FEEDBACK_KIND,
+    LEARN_GOAL_ID,
+    LEARN_MAX_FEEDBACK_BYTES,
+    LEARN_MAX_SOURCES_PER_FINDING,
     MAX_FEEDBACK_BYTES,
     MAX_FINDINGS,
     MAX_SOURCES_PER_FINDING,
@@ -335,8 +338,9 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_65() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_66() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
+    assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
     assert {finding["id"] for finding in normalized["findings"]} == {
@@ -393,9 +397,9 @@ def test_learn_feedback_records_exact_run_evidence_through_65() -> None:
         ),
         "invalid-policy-fixture-raises-before-result-refusal": (
             "tests/test_brain_learn.py",
-            376,
+            210,
         ),
-        "learn-documentation-omits-model-role": ("tests/test_brain_learn.py", 645),
+        "learn-documentation-omits-model-role": ("tests/test_brain_learn.py", 882),
         "local-proposal-tamper-invalidates-proof-first": (
             "tests/test_brain_learn.py",
             381,
@@ -571,6 +575,12 @@ def test_learn_feedback_records_exact_run_evidence_through_65() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_66_gate_source = {
+        "run_id": 32599754306,
+        "job_id": 97099076876,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -621,11 +631,13 @@ def test_learn_feedback_records_exact_run_evidence_through_65() -> None:
             run_59_gate_source,
             run_61_gate_source,
             run_62_gate_source,
+            run_66_gate_source,
         ],
         "learn-documentation-omits-model-role": [
             run_43_source,
             run_61_gate_source,
             run_65_gate_source,
+            run_66_gate_source,
         ],
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
         "reinstate-chain-allows-challenger-promotion": [run_42_source],
@@ -746,16 +758,17 @@ def test_learn_feedback_records_exact_run_evidence_through_65() -> None:
         "LEARN doc"
     )
     assert findings["learn-documentation-omits-model-role"]["detail"] == (
-        "43/61 omit ModelRole/exact research-only wording; 65's raw-substring fixture "
-        "rejects line breaks. Pin public symbols/guard phrases; keep export/docs checks "
-        "strict."
+        "43/61 omit ModelRole/exact research-only wording; 65/66 raw scans reject line "
+        "breaks or Markdown markup. Pin plain public/guard/equality phrases; keep "
+        "export/docs checks strict."
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["title"] == (
         "Evaluator fixture errors"
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["detail"] == (
-        "44-45/55-56/58-59/61-62 misuse constructors/defaults/thresholds, __setstate__ "
-        "shape or helpers. Use distinct inputs; reach evaluator; keep strict guards/order."
+        "44-45/55-56/58-59/61-62/66 misuse constructors/defaults/thresholds, "
+        "__setstate__ shape or helpers; 66 replaces explicit None. Use sentinels/distinct "
+        "inputs; reach evaluator; keep guards/order strict."
     )
     assert findings["timezone-utc-fixture-not-in-immutable-allowlist"]["title"] == (
         "Fixture immutability conflict"
@@ -886,6 +899,14 @@ def test_learn_feedback_records_exact_run_evidence_through_65() -> None:
         for finding_id, finding in findings.items()
         if run_65_gate_source in finding["sources"]
     } == {"learn-documentation-omits-model-role"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_66_gate_source in finding["sources"]
+    } == {
+        "invalid-policy-fixture-raises-before-result-refusal",
+        "learn-documentation-omits-model-role",
+    }
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Proof order"
     )
@@ -903,6 +924,11 @@ def test_learn_feedback_records_exact_run_evidence_through_65() -> None:
 
 def test_schema_is_strict_and_matches_validator_bounds() -> None:
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    assert MAX_FEEDBACK_BYTES == 16_384
+    assert MAX_FINDINGS == 16
+    assert MAX_SOURCES_PER_FINDING == 8
+    assert LEARN_MAX_FEEDBACK_BYTES == 32_768
+    assert LEARN_MAX_SOURCES_PER_FINDING == 16
     assert schema["additionalProperties"] is False
     assert schema["properties"]["schema_version"]["const"] == 1
     assert schema["properties"]["kind"]["const"] == FEEDBACK_KIND
@@ -916,7 +942,28 @@ def test_schema_is_strict_and_matches_validator_bounds() -> None:
         "final_review",
     ]
     assert "does not assert" in schema["$defs"]["source"]["properties"]["stage"]["description"]
-    assert schema["$defs"]["finding"]["properties"]["sources"]["maxItems"] == MAX_SOURCES_PER_FINDING
+    assert (
+        schema["$defs"]["finding"]["properties"]["sources"]["maxItems"]
+        == LEARN_MAX_SOURCES_PER_FINDING
+    )
+    goal_limit = schema["allOf"]
+    assert goal_limit == [
+        {
+            "if": {"properties": {"goal_id": {"const": LEARN_GOAL_ID}}},
+            "then": {},
+            "else": {
+                "properties": {
+                    "findings": {
+                        "items": {
+                            "properties": {
+                                "sources": {"maxItems": MAX_SOURCES_PER_FINDING}
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    ]
 
 
 @pytest.mark.parametrize("severity", ["P2", "P3", "", 1, None])
@@ -1040,8 +1087,50 @@ def test_finding_and_source_counts_are_bounded() -> None:
         source = deepcopy(_finding()["sources"][0])
         source["job_id"] += index
         sources.append(source)
+    normalized = validate_feedback(
+        _minimal_payload(findings=[_finding(sources=sources[:-1])]),
+        _goal(),
+    )
+    assert len(normalized["findings"][0]["sources"]) == MAX_SOURCES_PER_FINDING
     with pytest.raises(FeedbackViolation, match="sources count"):
         validate_feedback(_minimal_payload(findings=[_finding(sources=sources)]), _goal())
+
+
+def test_learn_source_count_has_a_separate_authorized_bound() -> None:
+    sources = []
+    for index in range(LEARN_MAX_SOURCES_PER_FINDING + 1):
+        source = deepcopy(_finding()["sources"][0])
+        source["job_id"] += index
+        sources.append(source)
+    finding = _finding(
+        location={"path": "tests/test_brain_learn.py", "line": 1},
+        sources=sources[:-1],
+    )
+    payload = _minimal_payload(goal_id=LEARN_GOAL_ID, findings=[finding])
+    normalized = validate_feedback(payload, load_goal(LEARN_GOAL_PATH))
+    assert len(normalized["findings"][0]["sources"]) == LEARN_MAX_SOURCES_PER_FINDING
+    finding["sources"] = sources
+    with pytest.raises(FeedbackViolation, match="sources count"):
+        validate_feedback(payload, load_goal(LEARN_GOAL_PATH))
+
+
+def test_prove_keeps_the_default_source_bound() -> None:
+    sources = []
+    for index in range(MAX_SOURCES_PER_FINDING + 1):
+        source = deepcopy(_finding()["sources"][0])
+        source["job_id"] += index
+        sources.append(source)
+    goal = load_goal(PROVE_GOAL_PATH)
+    finding = _finding(
+        location={"path": "tests/test_brain_prove.py", "line": 1},
+        sources=sources[:-1],
+    )
+    payload = _minimal_payload(goal_id=goal.goal_id, findings=[finding])
+    normalized = validate_feedback(payload, goal)
+    assert len(normalized["findings"][0]["sources"]) == MAX_SOURCES_PER_FINDING
+    finding["sources"] = sources
+    with pytest.raises(FeedbackViolation, match="sources count"):
+        validate_feedback(payload, goal)
 
 
 @pytest.mark.parametrize(
@@ -1077,11 +1166,91 @@ def test_duplicate_json_keys_and_nonfinite_numbers_are_rejected(tmp_path: Path) 
         load_feedback(nonfinite, _goal())
 
 
-def test_size_is_checked_before_json_decoding(tmp_path: Path) -> None:
-    path = tmp_path / "oversized.json"
+@pytest.mark.parametrize("goal_path", [GOAL_PATH, PROVE_GOAL_PATH])
+def test_non_learn_size_is_checked_before_json_decoding(
+    tmp_path: Path,
+    goal_path: Path,
+) -> None:
+    path = tmp_path / "bounded.json"
+    path.write_bytes(b"{" + b"x" * (MAX_FEEDBACK_BYTES - 1))
+    with pytest.raises(FeedbackViolation, match="not valid UTF-8 JSON"):
+        load_feedback(path, load_goal(goal_path))
     path.write_bytes(b"{" + b"x" * MAX_FEEDBACK_BYTES)
     with pytest.raises(FeedbackViolation, match="size limit"):
-        load_feedback(path, _goal())
+        load_feedback(path, load_goal(goal_path))
+
+
+def test_learn_size_has_a_separate_authorized_bound(tmp_path: Path) -> None:
+    path = tmp_path / "learn-bounded.json"
+    goal = load_goal(LEARN_GOAL_PATH)
+    sources = []
+    for index in range(MAX_SOURCES_PER_FINDING):
+        source = deepcopy(_finding()["sources"][0])
+        source["job_id"] += index
+        source["stage"] = "gate"
+        sources.append(source)
+    findings = [
+        _finding(
+            id=f"finding-{index}",
+            title="T",
+            detail="D",
+            location={"path": "tests/test_brain_learn.py", "line": 1},
+            sources=deepcopy(sources),
+        )
+        for index in range(MAX_FINDINGS)
+    ]
+    payload = _minimal_payload(goal_id=LEARN_GOAL_ID, findings=findings)
+    raw = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    remaining = LEARN_MAX_FEEDBACK_BYTES - len(raw)
+    for finding in findings:
+        extension = min(remaining, 3000 - len(finding["detail"]))
+        finding["detail"] += "x" * extension
+        remaining -= extension
+    assert remaining == 0
+    raw = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    assert len(raw) == LEARN_MAX_FEEDBACK_BYTES
+    path.write_bytes(raw)
+    assert load_feedback(path, goal)["goal_id"] == LEARN_GOAL_ID
+    path.write_bytes(raw + b" ")
+    with pytest.raises(FeedbackViolation, match="size limit"):
+        load_feedback(path, goal)
+
+
+def test_learn_canonical_size_cannot_exceed_the_authorized_bound(tmp_path: Path) -> None:
+    path = tmp_path / "learn-canonical-bounded.json"
+    goal = load_goal(LEARN_GOAL_PATH)
+    findings = [
+        _finding(
+            id=f"finding-{index}",
+            title="T",
+            detail="D",
+            location={"path": "tests/test_brain_learn.py", "line": 1},
+        )
+        for index in range(MAX_FINDINGS)
+    ]
+    payload = _minimal_payload(goal_id=LEARN_GOAL_ID, findings=findings)
+    raw = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    remaining = LEARN_MAX_FEEDBACK_BYTES - len(raw)
+    for finding in findings:
+        extension = min(remaining, 3000 - len(finding["detail"]))
+        finding["detail"] += "x" * extension
+        remaining -= extension
+    assert remaining == 0
+    raw = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert len(raw) == LEARN_MAX_FEEDBACK_BYTES
+    path.write_bytes(raw)
+    with pytest.raises(FeedbackViolation, match="canonical feedback exceeds"):
+        load_feedback(path, goal)
 
 
 def test_bom_nul_and_invalid_utf8_are_rejected(tmp_path: Path) -> None:
