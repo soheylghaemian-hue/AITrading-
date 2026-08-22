@@ -335,7 +335,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_64() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_65() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
@@ -395,7 +395,7 @@ def test_learn_feedback_records_exact_run_evidence_through_64() -> None:
             "tests/test_brain_learn.py",
             376,
         ),
-        "learn-documentation-omits-model-role": ("tests/test_brain_learn.py", 761),
+        "learn-documentation-omits-model-role": ("tests/test_brain_learn.py", 645),
         "local-proposal-tamper-invalidates-proof-first": (
             "tests/test_brain_learn.py",
             381,
@@ -565,6 +565,12 @@ def test_learn_feedback_records_exact_run_evidence_through_64() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_65_gate_source = {
+        "run_id": 32597293666,
+        "job_id": 97092753578,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -619,6 +625,7 @@ def test_learn_feedback_records_exact_run_evidence_through_64() -> None:
         "learn-documentation-omits-model-role": [
             run_43_source,
             run_61_gate_source,
+            run_65_gate_source,
         ],
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
         "reinstate-chain-allows-challenger-promotion": [run_42_source],
@@ -666,12 +673,12 @@ def test_learn_feedback_records_exact_run_evidence_through_64() -> None:
         "IDs and wrong role; pin both."
     )
     assert findings["transition-fixture-confounds-ordering"]["title"] == (
-        "Transition-order fixtures do not isolate chronology"
+        "Transition order"
     )
     assert findings["transition-fixture-confounds-ordering"]["detail"] == (
-        "Runs 38/50 mix reversal order with unknowable evidence or a CHALLENGER start, "
-        "so prior refusals are correct. Start RETIRED to isolate TRANSITION_NOT_ORDERED; "
-        "pin active result, qualify docs, keep guard."
+        "38/50 mix reversal order with unknowable evidence/CHALLENGER start, correctly "
+        "refusing. Start RETIRED to isolate TRANSITION_NOT_ORDERED; pin active result, "
+        "qualify docs; keep guard."
     )
     assert findings["coordinated-drift-tampering-bypasses-revalidation"]["title"] == (
         "Accepted-state minting persists"
@@ -729,18 +736,19 @@ def test_learn_feedback_records_exact_run_evidence_through_64() -> None:
         "then canonical state."
     )
     assert findings["local-proposal-tamper-invalidates-proof-first"]["title"] == (
-        "Local proposal tampering invalidates the proof before model matching"
+        "Proof-tamper"
     )
     assert findings["local-proposal-tamper-invalidates-proof-first"]["detail"] == (
-        "Run 43 mutates proof-bound proposal, so PROOF_NOT_PROVEN rightly precedes "
-        "PROOF_MODEL_MISMATCH. Use clean data; keep strict revalidation/order."
+        "43 tampers proof-bound proposal; PROOF_NOT_PROVEN rightly precedes "
+        "PROOF_MODEL_MISMATCH. Use clean data; keep revalidation/order strict."
     )
     assert findings["learn-documentation-omits-model-role"]["title"] == (
-        "LEARN docs incomplete"
+        "LEARN doc"
     )
     assert findings["learn-documentation-omits-model-role"]["detail"] == (
-        "43/61 omit ModelRole or exact research-only wording. Pin every public "
-        "symbol/guard phrase; keep exports/docs checks strict."
+        "43/61 omit ModelRole/exact research-only wording; 65's raw-substring fixture "
+        "rejects line breaks. Pin public symbols/guard phrases; keep export/docs checks "
+        "strict."
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["title"] == (
         "Evaluator fixture errors"
@@ -873,14 +881,19 @@ def test_learn_feedback_records_exact_run_evidence_through_64() -> None:
         for finding_id, finding in findings.items()
         if run_64_gate_source in finding["sources"]
     } == {"authority-field-lexical-false-positive"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_65_gate_source in finding["sources"]
+    } == {"learn-documentation-omits-model-role"}
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
-        "Comparison proof precedence remains role-dependent"
+        "Proof order"
     )
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["detail"] == (
-        "45/47 bind proof shape, then classify champion before challenger, so role swaps "
-        "change wrong/unproven reasons. Validate model shells, then proofs phasewise: "
-        "INVALID_PROOF, PROOF_NOT_PROVEN, PROOF_MODEL_MISMATCH, knowability; keep strict "
-        "construction/checksum binding/fail-closed order."
+        "45/47 bind proofs; champion-first checks make role swaps change wrong/unproven "
+        "reasons. Validate shells then proofs: INVALID_PROOF, PROOF_NOT_PROVEN, "
+        "PROOF_MODEL_MISMATCH, knowability. Keep construction/checksum "
+        "binding/fail-closed order."
     )
     assert len(normalized["findings"]) == MAX_FINDINGS
     assert {

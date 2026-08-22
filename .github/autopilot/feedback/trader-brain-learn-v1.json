@@ -84,8 +84,8 @@
     {
       "id": "transition-fixture-confounds-ordering",
       "severity": "P1",
-      "title": "Transition-order fixtures do not isolate chronology",
-      "detail": "Runs 38/50 mix reversal order with unknowable evidence or a CHALLENGER start, so prior refusals are correct. Start RETIRED to isolate TRANSITION_NOT_ORDERED; pin active result, qualify docs, keep guard.",
+      "title": "Transition order",
+      "detail": "38/50 mix reversal order with unknowable evidence/CHALLENGER start, correctly refusing. Start RETIRED to isolate TRANSITION_NOT_ORDERED; pin active result, qualify docs; keep guard.",
       "location": {
         "path": "tests/test_brain_learn.py",
         "line": 503
@@ -294,8 +294,8 @@
     {
       "id": "local-proposal-tamper-invalidates-proof-first",
       "severity": "P1",
-      "title": "Local proposal tampering invalidates the proof before model matching",
-      "detail": "Run 43 mutates proof-bound proposal, so PROOF_NOT_PROVEN rightly precedes PROOF_MODEL_MISMATCH. Use clean data; keep strict revalidation/order.",
+      "title": "Proof-tamper",
+      "detail": "43 tampers proof-bound proposal; PROOF_NOT_PROVEN rightly precedes PROOF_MODEL_MISMATCH. Use clean data; keep revalidation/order strict.",
       "location": {
         "path": "tests/test_brain_learn.py",
         "line": 381
@@ -312,11 +312,11 @@
     {
       "id": "learn-documentation-omits-model-role",
       "severity": "P1",
-      "title": "LEARN docs incomplete",
-      "detail": "43/61 omit ModelRole or exact research-only wording. Pin every public symbol/guard phrase; keep exports/docs checks strict.",
+      "title": "LEARN doc",
+      "detail": "43/61 omit ModelRole/exact research-only wording; 65's raw-substring fixture rejects line breaks. Pin public symbols/guard phrases; keep export/docs checks strict.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 761
+        "line": 645
       },
       "sources": [
         {
@@ -328,6 +328,12 @@
         {
           "run_id": 32586981689,
           "job_id": 97067468408,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32597293666,
+          "job_id": 97092753578,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
@@ -444,8 +450,8 @@
     {
       "id": "comparison-invalid-proof-shadowed-by-model-validation",
       "severity": "P1",
-      "title": "Comparison proof precedence remains role-dependent",
-      "detail": "45/47 bind proof shape, then classify champion before challenger, so role swaps change wrong/unproven reasons. Validate model shells, then proofs phasewise: INVALID_PROOF, PROOF_NOT_PROVEN, PROOF_MODEL_MISMATCH, knowability; keep strict construction/checksum binding/fail-closed order.",
+      "title": "Proof order",
+      "detail": "45/47 bind proofs; champion-first checks make role swaps change wrong/unproven reasons. Validate shells then proofs: INVALID_PROOF, PROOF_NOT_PROVEN, PROOF_MODEL_MISMATCH, knowability. Keep construction/checksum binding/fail-closed order.",
       "location": {
         "path": "src/atp/brain/learn.py",
         "line": 765
