@@ -321,6 +321,57 @@ def test_five_sorted_edits_accept_exactly_one_lf_per_content(
     assert verify_model_output(repo, phase, bound.sha256, goal_file=GOAL_FILE) == bound
 
 
+@pytest.mark.parametrize("phase", ["author", "repair"])
+@pytest.mark.parametrize("violation", ["out-of-order", "duplicate-path"])
+def test_five_edits_reject_path_order_and_uniqueness_violations_without_binding(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    phase: str,
+    violation: str,
+) -> None:
+    repo = _repo(tmp_path)
+    runner = _runner_temp(tmp_path)
+    payload = _five_sorted_edit_payload(repo, phase, last_content="replacement\n")
+    if violation == "out-of-order":
+        payload["edits"][0], payload["edits"][1] = (
+            payload["edits"][1],
+            payload["edits"][0],
+        )
+    else:
+        payload["edits"][1] = {
+            **payload["edits"][1],
+            "path": payload["edits"][0]["path"],
+        }
+    execution = _write_execution(runner, payload)
+    github_output = _github_output(tmp_path)
+
+    assert main(
+        [
+            "--repo",
+            str(repo),
+            "--phase",
+            phase,
+            "--bind",
+            "--goal",
+            GOAL_FILE,
+            "--execution-file",
+            str(execution),
+            "--runner-temp",
+            str(runner),
+            "--github-output",
+            str(github_output),
+        ]
+    ) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert json.loads(captured.err) == {
+        "error": "model_output_validation_failed",
+        "message": f"{phase}.edits paths must be unique and sorted",
+    }
+    assert github_output.read_bytes() == b""
+    assert not (repo / PHASE_PATHS[phase]).exists()
+
+
 @pytest.mark.parametrize(
     "events",
     [
