@@ -97,10 +97,10 @@
       "id": "coordinated-drift-tampering-bypasses-revalidation",
       "severity": "P1",
       "title": "Accepted-state minting persists",
-      "detail": "Runs 40/47-49/51/54 expose public constructors, _Warrant and __setstate__ minting. Close non-evaluator paths; retain revalidation.",
+      "detail": "Runs 40/47-49/51/54/56 expose minting through constructors, _Warrant or __setstate__. Close non-evaluator paths; retain revalidation.",
       "location": {
         "path": "src/atp/brain/learn.py",
-        "line": 268
+        "line": 408
       },
       "sources": [
         {
@@ -136,6 +136,12 @@
         {
           "run_id": 32571575828,
           "job_id": 97030214389,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32575669191,
+          "job_id": 97040696467,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
@@ -199,7 +205,7 @@
       "id": "equivalent-permutations-produce-unequal-results",
       "severity": "P1",
       "title": "Equivalent inputs still produce unequal result objects",
-      "detail": "Run 42 showed that DriftInputs and TransitionInputs retained caller tuple order even though checksums used canonical ordering. Run 48 sorts the tuples but normalizes timestamps only for hashes and order keys; the accepted input objects retain original datetime spellings. Across a DST fold, UTC and ZoneInfo spellings of the same instants therefore yield identical checksums but unequal inputs and results, while the January fixture misses the fold-sensitive case. Canonicalize every stored as_of, evidence timestamp and transition effective_at to UTC inside the accepted input graph, and pin equality for ambiguous fold instants as well as permutations.",
+      "detail": "Runs 42/48 leave stored tuples or datetimes noncanonical despite canonical checksums, so permutations and DST-fold spellings yield unequal inputs/results. Sort tuples, normalize every stored datetime to UTC, and pin permutation/fold equality.",
       "location": {
         "path": "src/atp/brain/learn.py",
         "line": 391
@@ -222,11 +228,11 @@
     {
       "id": "timezone-spelling-fixture-assumes-evidence-inequality",
       "severity": "P1",
-      "title": "Timezone fixture misuses aware-datetime equality",
-      "detail": "Run 43 expected unequal spellings of one instant. Run 49 asserts raw equality across an ambiguous DST fold; Python returns false although early and early_utc have the same UTC instant, so LEARN is never exercised. Compare UTC instants and spellings separately, then require equal canonical evidence, inputs and results.",
+      "title": "Timezone fixtures miss the equivalence path",
+      "detail": "Runs 43/49/56 miss timezone equivalence through misleading raw equality or stale evidence. Compare UTC instants and spellings separately, use fresh evidence, then require equal canonical inputs and results.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 239
+        "line": 257
       },
       "sources": [
         {
@@ -238,6 +244,12 @@
         {
           "run_id": 32561133319,
           "job_id": 97005629148,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32575669191,
+          "job_id": 97040696467,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
@@ -282,11 +294,11 @@
     {
       "id": "invalid-policy-fixture-raises-before-result-refusal",
       "severity": "P1",
-      "title": "None-boundary fixtures still inject defaults",
-      "detail": "Runs 44/45/55 miss public refusal paths: _drift(policy=None) and _transit(model=None) inject valid defaults. Use an omitted-value sentinel; pin direct INVALID_POLICY/INVALID_MODEL refusals without relaxing guards.",
+      "title": "Invalid fixtures still miss typed refusals",
+      "detail": "Runs 44/45/55/56 raise before evaluators or replace explicit None with defaults. Test constructors separately; use omission sentinels for evaluator refusals; keep guards strict.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 63
+        "line": 209
       },
       "sources": [
         {
@@ -306,6 +318,12 @@
           "job_id": 97035359522,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32575669191,
+          "job_id": 97040696467,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
     },
@@ -313,10 +331,10 @@
       "id": "timezone-utc-fixture-not-in-immutable-allowlist",
       "severity": "P1",
       "title": "Fixture immutability contract remains self-inconsistent",
-      "detail": "Runs 44-45 exposed an incomplete allowlist and mutable uppercase sets. Run 49 freezes them, but _is_immutable rejects class objects inside IMMUTABLE_FIXTURE_TYPES, so the registry rejects itself. Exempt only that exact registry as immutable metadata; keep rejecting mutable fixtures and requiring shared collections to be frozenset.",
+      "detail": "Runs 44/45/49/56 misclassify mutable fixtures, registry classes or timezone.utc. Exempt only exact immutable metadata; keep mutable values rejected.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 649
+        "line": 731
       },
       "sources": [
         {
@@ -334,6 +352,12 @@
         {
           "run_id": 32561133319,
           "job_id": 97005629148,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32575669191,
+          "job_id": 97040696467,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
