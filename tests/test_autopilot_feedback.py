@@ -335,12 +335,13 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_and_48_evidence() -> None:
+def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_48_and_49_evidence() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
     assert {finding["id"] for finding in normalized["findings"]} == {
         "authority-field-lexical-false-positive",
+        "closure-fixture-rejects-benign-class-cell",
         "comparison-invalid-proof-shadowed-by-model-validation",
         "comparison-fixture-confounds-proof-mismatch",
         "coordinated-drift-tampering-bypasses-revalidation",
@@ -362,6 +363,10 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_and_48_evidenc
         for finding in normalized["findings"]
     } == {
         "authority-field-lexical-false-positive": ("tests/test_brain_learn.py", 396),
+        "closure-fixture-rejects-benign-class-cell": (
+            "tests/test_brain_learn.py",
+            292,
+        ),
         "comparison-invalid-proof-shadowed-by-model-validation": (
             "src/atp/brain/learn.py",
             765,
@@ -372,7 +377,7 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_and_48_evidenc
         ),
         "coordinated-drift-tampering-bypasses-revalidation": (
             "src/atp/brain/learn.py",
-            192,
+            459,
         ),
         "evidence-failure-precedence-permutation-dependent": (
             "src/atp/brain/learn.py",
@@ -402,11 +407,11 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_and_48_evidenc
         "tamper-fixture-leaks-champion-role": ("tests/test_brain_learn.py", 614),
         "timezone-spelling-fixture-assumes-evidence-inequality": (
             "tests/test_brain_learn.py",
-            280,
+            239,
         ),
         "timezone-utc-fixture-not-in-immutable-allowlist": (
             "tests/test_brain_learn.py",
-            560,
+            649,
         ),
         "transition-fixture-confounds-ordering": ("tests/test_brain_learn.py", 452),
     }
@@ -464,12 +469,25 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_and_48_evidenc
         "stage": "final_review",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_49_gate_source = {
+        "run_id": 32561133319,
+        "job_id": 97005629148,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
+    run_49_artifact_audit_source = {
+        "run_id": 32561133319,
+        "job_id": 97003088227,
+        "stage": "artifact_audit",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
         for finding_id, finding in findings.items()
     } == {
         "authority-field-lexical-false-positive": [run_36_source],
+        "closure-fixture-rejects-benign-class-cell": [run_49_gate_source],
         "comparison-invalid-proof-shadowed-by-model-validation": [
             run_45_source,
             run_47_source,
@@ -479,6 +497,7 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_and_48_evidenc
             run_40_source,
             run_47_source,
             run_48_source,
+            run_49_artifact_audit_source,
         ],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
         "equivalent-permutations-produce-unequal-results": [
@@ -494,10 +513,14 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_and_48_evidenc
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
         "reinstate-chain-allows-challenger-promotion": [run_42_source],
         "tamper-fixture-leaks-champion-role": [run_36_source],
-        "timezone-spelling-fixture-assumes-evidence-inequality": [run_43_source],
+        "timezone-spelling-fixture-assumes-evidence-inequality": [
+            run_43_source,
+            run_49_gate_source,
+        ],
         "timezone-utc-fixture-not-in-immutable-allowlist": [
             run_44_source,
             run_45_source,
+            run_49_gate_source,
         ],
         "transition-fixture-confounds-ordering": [run_38_source],
     }
@@ -526,19 +549,16 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_and_48_evidenc
         findings["transition-fixture-confounds-ordering"]["detail"]
     )
     assert findings["coordinated-drift-tampering-bypasses-revalidation"]["title"] == (
-        "Coordinated drift tampering still bypasses evaluator authorship"
+        "Accepted drift construction bypasses evaluator authorship"
     )
     assert (
         findings["coordinated-drift-tampering-bypasses-revalidation"]["detail"]
-        == "Run 40 showed that coordinated mutation of accepted severe evidence plus "
-        "cached outputs could restore confidence; Run 47 showed that a public result "
-        "constructor let callers transplant an honest mild baseline. Run 48 adds an "
-        "_Authorship witness, but _Authorship and _bind_drift remain reachable module "
-        "attributes, so a caller can compute the mutated input identity, mint the "
-        "expected witness and construct an accepted DriftResult. Make accepted-result "
-        "creation a genuinely evaluator-held capability that cannot be reconstructed "
-        "through imports, reflection or closures, while retaining full recomputation and "
-        "downstream fail-closed checks."
+        == "Runs 40/47/48 exposed tampered cached state, a public constructor and a "
+        "forgeable witness. Run 49 recomputes outputs, but DriftResult(inputs, None) "
+        "remains the accepted-state constructor used by evaluate_drift; valid inputs yield "
+        "accepted state without evaluator authorship. Keep recomputation, require an "
+        "evaluator-held capability unavailable through imports, reflection or closures, "
+        "and retain fail-closed validation."
     )
     assert findings["evidence-failure-precedence-permutation-dependent"]["title"] == (
         "Evidence failure precedence depends on tuple order"
@@ -593,16 +613,14 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_and_48_evidenc
     }
     assert findings["timezone-spelling-fixture-assumes-evidence-inequality"][
         "title"
-    ] == "Timezone-spelling fixture expects semantically unequal evidence"
+    ] == "Timezone fixture misuses aware-datetime equality"
     assert findings["timezone-spelling-fixture-assumes-evidence-inequality"][
         "detail"
     ] == (
-        "Run 43 converts every timestamp of plain into the America/New_York spelling "
-        "of the same instant and leaves every other DriftEvidence field unchanged. "
-        "Python aware-datetime equality compares the instants, so plain == spelled and "
-        "the fixture fails before evaluate_drift is exercised. Assert that the timezone "
-        "representations differ while the instants remain equal, then pin identical "
-        "results; do not weaken timestamp canonicalization."
+        "Run 43 expected unequal spellings of one instant. Run 49 asserts raw equality "
+        "across an ambiguous DST fold; Python returns false although early and early_utc "
+        "have the same UTC instant, so LEARN is never exercised. Compare UTC instants and "
+        "spellings separately, then require equal canonical evidence, inputs and results."
     )
     assert findings["local-proposal-tamper-invalidates-proof-first"]["title"] == (
         "Local proposal tampering invalidates the proof before model matching"
@@ -637,17 +655,39 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_and_48_evidenc
         "monotonic-confidence guard."
     )
     assert findings["timezone-utc-fixture-not-in-immutable-allowlist"]["title"] == (
-        "Fixture immutability contract remains inconsistent"
+        "Fixture immutability contract remains self-inconsistent"
     )
     assert findings["timezone-utc-fixture-not-in-immutable-allowlist"]["detail"] == (
-        "Run 44's guard rejects uppercase datetime.timezone.utc even though it is "
-        "immutable. Run 45 admits timezone values, but declares ALLOWED_IMPORT_ROOTS, "
-        "RISKY_CALLS and FORBIDDEN_SYMBOLS as uppercase mutable sets; the same guard "
-        "correctly rejects the first and would reject the others next. Admit exact "
-        "immutable timezone instances and store all shared membership collections as "
-        "frozenset; do not admit set or weaken the global-state and collection-order "
-        "isolation guard."
+        "Runs 44-45 exposed an incomplete allowlist and mutable uppercase sets. Run 49 "
+        "freezes them, but _is_immutable rejects class objects inside "
+        "IMMUTABLE_FIXTURE_TYPES, so the registry rejects itself. Exempt only that exact "
+        "registry as immutable metadata; keep rejecting mutable fixtures and requiring "
+        "shared collections to be frozenset."
     )
+    assert findings["closure-fixture-rejects-benign-class-cell"]["title"] == (
+        "Closure guard rejects a benign class cell"
+    )
+    assert findings["closure-fixture-rejects-benign-class-cell"]["detail"] == (
+        "Run 49 bans every closure cell. Zero-argument super() gives "
+        "_LearnError.__init__ an inert __class__ cell, so the gate fails without exposing "
+        "acceptance authority. Inspect cells for state-minting capabilities instead of "
+        "requiring no closure; keep construction, reflection and mutation probes and never "
+        "restore a sealer."
+    )
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_49_gate_source in finding["sources"]
+    } == {
+        "closure-fixture-rejects-benign-class-cell",
+        "timezone-spelling-fixture-assumes-evidence-inequality",
+        "timezone-utc-fixture-not-in-immutable-allowlist",
+    }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_49_artifact_audit_source in finding["sources"]
+    } == {"coordinated-drift-tampering-bypasses-revalidation"}
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Comparison proof precedence remains role-dependent"
     )
@@ -662,7 +702,7 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_and_48_evidenc
         "PROOF_MODEL_MISMATCH, knowability), independent of role; preserve strict "
         "construction, checksum binding and fail-closed ordering."
     )
-    assert len(normalized["findings"]) == MAX_FINDINGS - 1
+    assert len(normalized["findings"]) == MAX_FINDINGS
     assert {
         finding["location"]["path"] for finding in normalized["findings"]
     } == {"src/atp/brain/learn.py", "tests/test_brain_learn.py"}

@@ -78,11 +78,11 @@
     {
       "id": "coordinated-drift-tampering-bypasses-revalidation",
       "severity": "P1",
-      "title": "Coordinated drift tampering still bypasses evaluator authorship",
-      "detail": "Run 40 showed that coordinated mutation of accepted severe evidence plus cached outputs could restore confidence; Run 47 showed that a public result constructor let callers transplant an honest mild baseline. Run 48 adds an _Authorship witness, but _Authorship and _bind_drift remain reachable module attributes, so a caller can compute the mutated input identity, mint the expected witness and construct an accepted DriftResult. Make accepted-result creation a genuinely evaluator-held capability that cannot be reconstructed through imports, reflection or closures, while retaining full recomputation and downstream fail-closed checks.",
+      "title": "Accepted drift construction bypasses evaluator authorship",
+      "detail": "Runs 40/47/48 exposed tampered cached state, a public constructor and a forgeable witness. Run 49 recomputes outputs, but DriftResult(inputs, None) remains the accepted-state constructor used by evaluate_drift; valid inputs yield accepted state without evaluator authorship. Keep recomputation, require an evaluator-held capability unavailable through imports, reflection or closures, and retain fail-closed validation.",
       "location": {
         "path": "src/atp/brain/learn.py",
-        "line": 192
+        "line": 459
       },
       "sources": [
         {
@@ -101,6 +101,12 @@
           "run_id": 32558489491,
           "job_id": 97000836840,
           "stage": "final_review",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32561133319,
+          "job_id": 97003088227,
+          "stage": "artifact_audit",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
@@ -186,16 +192,22 @@
     {
       "id": "timezone-spelling-fixture-assumes-evidence-inequality",
       "severity": "P1",
-      "title": "Timezone-spelling fixture expects semantically unequal evidence",
-      "detail": "Run 43 converts every timestamp of plain into the America/New_York spelling of the same instant and leaves every other DriftEvidence field unchanged. Python aware-datetime equality compares the instants, so plain == spelled and the fixture fails before evaluate_drift is exercised. Assert that the timezone representations differ while the instants remain equal, then pin identical results; do not weaken timestamp canonicalization.",
+      "title": "Timezone fixture misuses aware-datetime equality",
+      "detail": "Run 43 expected unequal spellings of one instant. Run 49 asserts raw equality across an ambiguous DST fold; Python returns false although early and early_utc have the same UTC instant, so LEARN is never exercised. Compare UTC instants and spellings separately, then require equal canonical evidence, inputs and results.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 280
+        "line": 239
       },
       "sources": [
         {
           "run_id": 32491533881,
           "job_id": 96806873114,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32561133319,
+          "job_id": 97005629148,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
@@ -264,11 +276,11 @@
     {
       "id": "timezone-utc-fixture-not-in-immutable-allowlist",
       "severity": "P1",
-      "title": "Fixture immutability contract remains inconsistent",
-      "detail": "Run 44's guard rejects uppercase datetime.timezone.utc even though it is immutable. Run 45 admits timezone values, but declares ALLOWED_IMPORT_ROOTS, RISKY_CALLS and FORBIDDEN_SYMBOLS as uppercase mutable sets; the same guard correctly rejects the first and would reject the others next. Admit exact immutable timezone instances and store all shared membership collections as frozenset; do not admit set or weaken the global-state and collection-order isolation guard.",
+      "title": "Fixture immutability contract remains self-inconsistent",
+      "detail": "Runs 44-45 exposed an incomplete allowlist and mutable uppercase sets. Run 49 freezes them, but _is_immutable rejects class objects inside IMMUTABLE_FIXTURE_TYPES, so the registry rejects itself. Exempt only that exact registry as immutable metadata; keep rejecting mutable fixtures and requiring shared collections to be frozenset.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 560
+        "line": 649
       },
       "sources": [
         {
@@ -280,6 +292,12 @@
         {
           "run_id": 32542812818,
           "job_id": 96958966128,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32561133319,
+          "job_id": 97005629148,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
@@ -305,6 +323,24 @@
           "run_id": 32554139745,
           "job_id": 96991065888,
           "stage": "final_review",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        }
+      ]
+    },
+    {
+      "id": "closure-fixture-rejects-benign-class-cell",
+      "severity": "P1",
+      "title": "Closure guard rejects a benign class cell",
+      "detail": "Run 49 bans every closure cell. Zero-argument super() gives _LearnError.__init__ an inert __class__ cell, so the gate fails without exposing acceptance authority. Inspect cells for state-minting capabilities instead of requiring no closure; keep construction, reflection and mutation probes and never restore a sealer.",
+      "location": {
+        "path": "tests/test_brain_learn.py",
+        "line": 292
+      },
+      "sources": [
+        {
+          "run_id": 32561133319,
+          "job_id": 97005629148,
+          "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
