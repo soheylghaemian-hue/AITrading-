@@ -335,7 +335,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_58() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_59() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
@@ -393,7 +393,7 @@ def test_learn_feedback_records_exact_run_evidence_through_58() -> None:
         ),
         "invalid-policy-fixture-raises-before-result-refusal": (
             "tests/test_brain_learn.py",
-            207,
+            450,
         ),
         "learn-documentation-omits-model-role": ("tests/test_brain_learn.py", 759),
         "local-proposal-tamper-invalidates-proof-first": (
@@ -407,7 +407,7 @@ def test_learn_feedback_records_exact_run_evidence_through_58() -> None:
         "tamper-fixture-leaks-champion-role": ("tests/test_brain_learn.py", 614),
         "timezone-spelling-fixture-assumes-evidence-inequality": (
             "tests/test_brain_learn.py",
-            257,
+            283,
         ),
         "timezone-utc-fixture-not-in-immutable-allowlist": (
             "tests/test_brain_learn.py",
@@ -529,6 +529,12 @@ def test_learn_feedback_records_exact_run_evidence_through_58() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_59_gate_source = {
+        "run_id": 32582631576,
+        "job_id": 97056894378,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -571,6 +577,7 @@ def test_learn_feedback_records_exact_run_evidence_through_58() -> None:
             run_55_gate_source,
             run_56_gate_source,
             run_58_gate_source,
+            run_59_gate_source,
         ],
         "learn-documentation-omits-model-role": [run_43_source],
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
@@ -580,6 +587,7 @@ def test_learn_feedback_records_exact_run_evidence_through_58() -> None:
             run_43_source,
             run_49_gate_source,
             run_56_gate_source,
+            run_59_gate_source,
         ],
         "timezone-utc-fixture-not-in-immutable-allowlist": [
             run_44_source,
@@ -621,12 +629,9 @@ def test_learn_feedback_records_exact_run_evidence_through_58() -> None:
         "Transition-order fixtures do not isolate chronology"
     )
     assert findings["transition-fixture-confounds-ordering"]["detail"] == (
-        "Runs 38/50 do not isolate reversal ordering: Run 38 uses unknowable evidence; "
-        "Run 50 sorts T+2 REINSTATE before T+5 RETIRE while the default model is "
-        "CHALLENGER, so TRANSITION_ROLE_MISMATCH is correct. The goal requires "
-        "reversible, evidence-backed transitions, not a multi-fault precedence. Use a "
-        "RETIRED starting model to reach the existing TRANSITION_NOT_ORDERED branch, pin "
-        "the active-model result, qualify the docs, and do not move the guard."
+        "Runs 38/50 mix reversal order with unknowable evidence or a CHALLENGER start, "
+        "so prior refusals are correct. Start RETIRED to isolate TRANSITION_NOT_ORDERED; "
+        "pin active result, qualify docs, keep guard."
     )
     assert findings["coordinated-drift-tampering-bypasses-revalidation"]["title"] == (
         "Accepted-state minting persists"
@@ -684,13 +689,12 @@ def test_learn_feedback_records_exact_run_evidence_through_58() -> None:
     }
     assert findings["timezone-spelling-fixture-assumes-evidence-inequality"][
         "title"
-    ] == "Timezone fixtures miss the equivalence path"
+    ] == "Timezone fixture errors"
     assert findings["timezone-spelling-fixture-assumes-evidence-inequality"][
         "detail"
     ] == (
-        "Runs 43/49/56 miss timezone equivalence through misleading raw equality or stale "
-        "evidence. Compare UTC instants and spellings separately, use fresh evidence, then "
-        "require equal canonical inputs and results."
+        "43/49/56/59 misuse raw fold equality or stale evidence. Compare UTC instants, "
+        "then canonical state."
     )
     assert findings["local-proposal-tamper-invalidates-proof-first"]["title"] == (
         "Local proposal tampering invalidates the proof before model matching"
@@ -713,11 +717,11 @@ def test_learn_feedback_records_exact_run_evidence_through_58() -> None:
         "do not remove exports or relax the contract test."
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["title"] == (
-        "Drift fixture errors"
+        "Evaluator fixture errors"
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["detail"] == (
-        "44/45/55/56 misuse constructors/None; 58 expects no abstention at .533 below "
-        ".6. Fix fixtures; keep guards."
+        "44/45/55/56/58/59 misuse constructors, defaults or thresholds. Use sentinels and "
+        "explicit cases; keep guards strict."
     )
     assert findings["timezone-utc-fixture-not-in-immutable-allowlist"]["title"] == (
         "Fixture immutability contract remains self-inconsistent"
@@ -796,6 +800,14 @@ def test_learn_feedback_records_exact_run_evidence_through_58() -> None:
         for finding_id, finding in findings.items()
         if run_58_gate_source in finding["sources"]
     } == {"invalid-policy-fixture-raises-before-result-refusal"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_59_gate_source in finding["sources"]
+    } == {
+        "invalid-policy-fixture-raises-before-result-refusal",
+        "timezone-spelling-fixture-assumes-evidence-inequality",
+    }
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Comparison proof precedence remains role-dependent"
     )
