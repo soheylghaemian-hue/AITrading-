@@ -354,16 +354,22 @@
     {
       "id": "closure-fixture-rejects-benign-class-cell",
       "severity": "P1",
-      "title": "Closure guard rejects a benign class cell",
-      "detail": "Run 49 bans every closure cell. Zero-argument super() gives _LearnError.__init__ an inert __class__ cell, so the gate fails without exposing acceptance authority. Inspect cells for state-minting capabilities instead of requiring no closure; keep construction, reflection and mutation probes and never restore a sealer.",
+      "title": "Closure scan flags inert cells",
+      "detail": "Runs 49/52 flag inert __class__ and dataclass __repr__ cells as minters. Detect real accepted-state factories; retain constructor/reflection/mutation probes; never expose a sealer.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 292
+        "line": 465
       },
       "sources": [
         {
           "run_id": 32561133319,
           "job_id": 97005629148,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32567915055,
+          "job_id": 97021257732,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
