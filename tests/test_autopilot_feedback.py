@@ -335,7 +335,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_54() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_55() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
@@ -393,7 +393,7 @@ def test_learn_feedback_records_exact_run_evidence_through_54() -> None:
         ),
         "invalid-policy-fixture-raises-before-result-refusal": (
             "tests/test_brain_learn.py",
-            297,
+            63,
         ),
         "learn-documentation-omits-model-role": ("tests/test_brain_learn.py", 759),
         "local-proposal-tamper-invalidates-proof-first": (
@@ -511,6 +511,12 @@ def test_learn_feedback_records_exact_run_evidence_through_54() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_55_gate_source = {
+        "run_id": 32573632245,
+        "job_id": 97035359522,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -549,6 +555,7 @@ def test_learn_feedback_records_exact_run_evidence_through_54() -> None:
         "invalid-policy-fixture-raises-before-result-refusal": [
             run_44_source,
             run_45_source,
+            run_55_gate_source,
         ],
         "learn-documentation-omits-model-role": [run_43_source],
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
@@ -695,16 +702,12 @@ def test_learn_feedback_records_exact_run_evidence_through_54() -> None:
         "do not remove exports or relax the contract test."
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["title"] == (
-        "Invalid-policy fixtures still miss evaluator refusal"
+        "None-boundary fixtures still inject defaults"
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["detail"] == (
-        "Run 44 constructs a policy that fails validation before the evaluator can "
-        "return a typed refusal. Run 45 asserts construction rejection, but its "
-        "_drift(policy=None) helper replaces None with a valid default policy, so "
-        "evaluate_drift accepts and the INVALID_POLICY Result path remains untested. "
-        "Assert constructor rejection separately and call evaluate_drift with None or "
-        "a tampered policy through the public boundary; do not relax the "
-        "monotonic-confidence guard."
+        "Runs 44/45/55 miss public refusal paths: _drift(policy=None) and "
+        "_transit(model=None) inject valid defaults. Use an omitted-value sentinel; pin "
+        "direct INVALID_POLICY/INVALID_MODEL refusals without relaxing guards."
     )
     assert findings["timezone-utc-fixture-not-in-immutable-allowlist"]["title"] == (
         "Fixture immutability contract remains self-inconsistent"
@@ -766,6 +769,11 @@ def test_learn_feedback_records_exact_run_evidence_through_54() -> None:
         for finding_id, finding in findings.items()
         if run_54_gate_source in finding["sources"]
     } == {"coordinated-drift-tampering-bypasses-revalidation"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_55_gate_source in finding["sources"]
+    } == {"invalid-policy-fixture-raises-before-result-refusal"}
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Comparison proof precedence remains role-dependent"
     )
