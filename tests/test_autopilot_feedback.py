@@ -335,7 +335,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_50() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_51() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
@@ -362,7 +362,7 @@ def test_learn_feedback_records_exact_run_evidence_through_50() -> None:
         finding["id"]: (finding["location"]["path"], finding["location"]["line"])
         for finding in normalized["findings"]
     } == {
-        "authority-field-lexical-false-positive": ("tests/test_brain_learn.py", 396),
+        "authority-field-lexical-false-positive": ("tests/test_brain_learn.py", 625),
         "closure-fixture-rejects-benign-class-cell": (
             "tests/test_brain_learn.py",
             292,
@@ -377,7 +377,7 @@ def test_learn_feedback_records_exact_run_evidence_through_50() -> None:
         ),
         "coordinated-drift-tampering-bypasses-revalidation": (
             "src/atp/brain/learn.py",
-            459,
+            575,
         ),
         "evidence-failure-precedence-permutation-dependent": (
             "src/atp/brain/learn.py",
@@ -487,12 +487,27 @@ def test_learn_feedback_records_exact_run_evidence_through_50() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_51_gate_source = {
+        "run_id": 32566023747,
+        "job_id": 97016998982,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
+    run_51_artifact_audit_source = {
+        "run_id": 32566023747,
+        "job_id": 97014947094,
+        "stage": "artifact_audit",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
         for finding_id, finding in findings.items()
     } == {
-        "authority-field-lexical-false-positive": [run_36_source],
+        "authority-field-lexical-false-positive": [
+            run_36_source,
+            run_51_gate_source,
+        ],
         "closure-fixture-rejects-benign-class-cell": [run_49_gate_source],
         "comparison-invalid-proof-shadowed-by-model-validation": [
             run_45_source,
@@ -507,6 +522,7 @@ def test_learn_feedback_records_exact_run_evidence_through_50() -> None:
             run_47_source,
             run_48_source,
             run_49_artifact_audit_source,
+            run_51_artifact_audit_source,
         ],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
         "equivalent-permutations-produce-unequal-results": [
@@ -537,11 +553,14 @@ def test_learn_feedback_records_exact_run_evidence_through_50() -> None:
         ],
     }
     assert findings["authority-field-lexical-false-positive"]["title"] == (
-        "Authority safety fixture rejects a benign freshness bound"
+        "Authority scan remains lexical"
     )
-    assert "maximum evidence age used to reject stale research evidence" in findings[
-        "authority-field-lexical-false-positive"
-    ]["detail"]
+    assert findings["authority-field-lexical-false-positive"]["detail"] == (
+        "Runs 36/51 reject harmless names by substring: freshness_limit plus "
+        "EVIDENCE_TIMESTAMPS_OUT_OF_ORDER and TRANSITION_NOT_ORDERED. They grant no "
+        "trading authority. Check imports, calls and exact authority APIs; keep "
+        "no-order/no-execution."
+    )
     assert findings["tamper-fixture-leaks-champion-role"]["title"] == (
         "Tamper fixture mutates the shared champion across tests"
     )
@@ -570,16 +589,14 @@ def test_learn_feedback_records_exact_run_evidence_through_50() -> None:
         "the active-model result, qualify the docs, and do not move the guard."
     )
     assert findings["coordinated-drift-tampering-bypasses-revalidation"]["title"] == (
-        "Accepted drift construction bypasses evaluator authorship"
+        "Accepted-state warrant remains public"
     )
     assert (
         findings["coordinated-drift-tampering-bypasses-revalidation"]["detail"]
-        == "Runs 40/47/48 exposed tampered cached state, a public constructor and a "
-        "forgeable witness. Run 49 recomputes outputs, but DriftResult(inputs, None) "
-        "remains the accepted-state constructor used by evaluate_drift; valid inputs yield "
-        "accepted state without evaluator authorship. Keep recomputation, require an "
-        "evaluator-held capability unavailable through imports, reflection or closures, "
-        "and retain fail-closed validation."
+        == "Run 51's hasattr failure sees an InitVar class-level None marker, not retained "
+        "capability. But public construction and reflectable _Warrant(inputs) still let "
+        "callers mint accepted results, recurring Runs 40/47-49. Remove "
+        "public/reflectable minting; keep recomputation and evaluator-only authorship."
     )
     assert findings["evidence-failure-precedence-permutation-dependent"]["title"] == (
         "Evidence failure precedence depends on tuple order"
@@ -717,6 +734,16 @@ def test_learn_feedback_records_exact_run_evidence_through_50() -> None:
         "comparison-fixture-confounds-proof-mismatch",
         "transition-fixture-confounds-ordering",
     }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_51_gate_source in finding["sources"]
+    } == {"authority-field-lexical-false-positive"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_51_artifact_audit_source in finding["sources"]
+    } == {"coordinated-drift-tampering-bypasses-revalidation"}
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Comparison proof precedence remains role-dependent"
     )
