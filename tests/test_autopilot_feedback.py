@@ -335,7 +335,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_51() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_52() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
@@ -365,7 +365,7 @@ def test_learn_feedback_records_exact_run_evidence_through_51() -> None:
         "authority-field-lexical-false-positive": ("tests/test_brain_learn.py", 625),
         "closure-fixture-rejects-benign-class-cell": (
             "tests/test_brain_learn.py",
-            292,
+            465,
         ),
         "comparison-invalid-proof-shadowed-by-model-validation": (
             "src/atp/brain/learn.py",
@@ -499,6 +499,12 @@ def test_learn_feedback_records_exact_run_evidence_through_51() -> None:
         "stage": "artifact_audit",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_52_gate_source = {
+        "run_id": 32567915055,
+        "job_id": 97021257732,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -508,7 +514,10 @@ def test_learn_feedback_records_exact_run_evidence_through_51() -> None:
             run_36_source,
             run_51_gate_source,
         ],
-        "closure-fixture-rejects-benign-class-cell": [run_49_gate_source],
+        "closure-fixture-rejects-benign-class-cell": [
+            run_49_gate_source,
+            run_52_gate_source,
+        ],
         "comparison-invalid-proof-shadowed-by-model-validation": [
             run_45_source,
             run_47_source,
@@ -703,14 +712,12 @@ def test_learn_feedback_records_exact_run_evidence_through_51() -> None:
         "shared collections to be frozenset."
     )
     assert findings["closure-fixture-rejects-benign-class-cell"]["title"] == (
-        "Closure guard rejects a benign class cell"
+        "Closure scan flags inert cells"
     )
     assert findings["closure-fixture-rejects-benign-class-cell"]["detail"] == (
-        "Run 49 bans every closure cell. Zero-argument super() gives "
-        "_LearnError.__init__ an inert __class__ cell, so the gate fails without exposing "
-        "acceptance authority. Inspect cells for state-minting capabilities instead of "
-        "requiring no closure; keep construction, reflection and mutation probes and never "
-        "restore a sealer."
+        "Runs 49/52 flag inert __class__ and dataclass __repr__ cells as minters. Detect "
+        "real accepted-state factories; retain constructor/reflection/mutation probes; "
+        "never expose a sealer."
     )
     assert {
         finding_id
@@ -744,6 +751,11 @@ def test_learn_feedback_records_exact_run_evidence_through_51() -> None:
         for finding_id, finding in findings.items()
         if run_51_artifact_audit_source in finding["sources"]
     } == {"coordinated-drift-tampering-bypasses-revalidation"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_52_gate_source in finding["sources"]
+    } == {"closure-fixture-rejects-benign-class-cell"}
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Comparison proof precedence remains role-dependent"
     )
