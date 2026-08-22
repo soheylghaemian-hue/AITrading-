@@ -79,10 +79,10 @@
       "id": "coordinated-drift-tampering-bypasses-revalidation",
       "severity": "P1",
       "title": "Coordinated drift tampering still bypasses evaluator authorship",
-      "detail": "Run 40 showed that coordinated mutation of accepted severe evidence plus cached outputs could restore confidence and pass revalidation. Run 47 replaces cached outputs with an immutable baseline, but _Result.__new__ remains public: after changing severe evidence into coherent mild evidence, a caller can construct DriftResult(True, (), mutated_inputs, honest_mild.baseline, honest_mild.calibration), yielding a valid checksum and downstream acceptance. Make accepted-result creation evaluator-private and unforgeably tied to the evaluator-authored assessment; do not add an exposed sealer or weaken revalidation.",
+      "detail": "Run 40 showed that coordinated mutation of accepted severe evidence plus cached outputs could restore confidence; Run 47 showed that a public result constructor let callers transplant an honest mild baseline. Run 48 adds an _Authorship witness, but _Authorship and _bind_drift remain reachable module attributes, so a caller can compute the mutated input identity, mint the expected witness and construct an accepted DriftResult. Make accepted-result creation a genuinely evaluator-held capability that cannot be reconstructed through imports, reflection or closures, while retaining full recomputation and downstream fail-closed checks.",
       "location": {
         "path": "src/atp/brain/learn.py",
-        "line": 252
+        "line": 192
       },
       "sources": [
         {
@@ -94,6 +94,12 @@
         {
           "run_id": 32554139745,
           "job_id": 96991065888,
+          "stage": "final_review",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32558489491,
+          "job_id": 97000836840,
           "stage": "final_review",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
@@ -156,16 +162,22 @@
     {
       "id": "equivalent-permutations-produce-unequal-results",
       "severity": "P1",
-      "title": "Equivalent permutations do not produce identical results",
-      "detail": "DriftInputs and TransitionInputs retain caller tuple order even though checksums use canonical ordering. Equivalent evidence or transition permutations therefore produce unequal result objects with differently ordered inputs, contradicting the required identical canonical results; tests assert only checksum equality.",
+      "title": "Equivalent inputs still produce unequal result objects",
+      "detail": "Run 42 showed that DriftInputs and TransitionInputs retained caller tuple order even though checksums used canonical ordering. Run 48 sorts the tuples but normalizes timestamps only for hashes and order keys; the accepted input objects retain original datetime spellings. Across a DST fold, UTC and ZoneInfo spellings of the same instants therefore yield identical checksums but unequal inputs and results, while the January fixture misses the fold-sensitive case. Canonicalize every stored as_of, evidence timestamp and transition effective_at to UTC inside the accepted input graph, and pin equality for ambiguous fold instants as well as permutations.",
       "location": {
         "path": "src/atp/brain/learn.py",
-        "line": 1009
+        "line": 391
       },
       "sources": [
         {
           "run_id": 32481392244,
           "job_id": 96778775008,
+          "stage": "final_review",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32558489491,
+          "job_id": 97000836840,
           "stage": "final_review",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
