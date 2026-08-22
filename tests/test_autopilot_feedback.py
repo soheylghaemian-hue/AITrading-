@@ -335,7 +335,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_48_and_49_evidence() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_50() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
@@ -373,7 +373,7 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_48_and_49_evid
         ),
         "comparison-fixture-confounds-proof-mismatch": (
             "tests/test_brain_learn.py",
-            360,
+            357,
         ),
         "coordinated-drift-tampering-bypasses-revalidation": (
             "src/atp/brain/learn.py",
@@ -413,7 +413,7 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_48_and_49_evid
             "tests/test_brain_learn.py",
             649,
         ),
-        "transition-fixture-confounds-ordering": ("tests/test_brain_learn.py", 452),
+        "transition-fixture-confounds-ordering": ("tests/test_brain_learn.py", 503),
     }
     run_36_source = {
         "run_id": 32438421194,
@@ -481,6 +481,12 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_48_and_49_evid
         "stage": "artifact_audit",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_50_gate_source = {
+        "run_id": 32563676193,
+        "job_id": 97011712519,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -492,7 +498,10 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_48_and_49_evid
             run_45_source,
             run_47_source,
         ],
-        "comparison-fixture-confounds-proof-mismatch": [run_38_source],
+        "comparison-fixture-confounds-proof-mismatch": [
+            run_38_source,
+            run_50_gate_source,
+        ],
         "coordinated-drift-tampering-bypasses-revalidation": [
             run_40_source,
             run_47_source,
@@ -522,7 +531,10 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_48_and_49_evid
             run_45_source,
             run_49_gate_source,
         ],
-        "transition-fixture-confounds-ordering": [run_38_source],
+        "transition-fixture-confounds-ordering": [
+            run_38_source,
+            run_50_gate_source,
+        ],
     }
     assert findings["authority-field-lexical-false-positive"]["title"] == (
         "Authority safety fixture rejects a benign freshness bound"
@@ -537,16 +549,25 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_48_and_49_evid
         "tamper-fixture-leaks-champion-role"
     ]["detail"]
     assert findings["comparison-fixture-confounds-proof-mismatch"]["title"] == (
-        "Proof-mismatch fixture also creates a self-comparison"
+        "Comparison fixtures still collapse into self-comparison"
     )
-    assert "SELF_COMPARISON is the correct deterministic first reason" in findings[
-        "comparison-fixture-confounds-proof-mismatch"
-    ]["detail"]
+    assert findings["comparison-fixture-confounds-proof-mismatch"]["detail"] == (
+        "Runs 38/50 self-compare while aiming at other checks. Run 38 reuses the "
+        "challenger proposal; Run 50's champion has the correct role plus the default "
+        "challenger's model_id and proposal. SELF_COMPARISON is correct and "
+        "ROLE_MISMATCH cannot apply. Give proof and role fixtures distinct identities; "
+        "make the role fixture actually wrong; pin both refusals."
+    )
     assert findings["transition-fixture-confounds-ordering"]["title"] == (
-        "Transition-order fixture also supplies future evidence"
+        "Transition-order fixtures do not isolate chronology"
     )
-    assert "EVIDENCE_NOT_KNOWABLE_AT_AS_OF is the correct deterministic first reason" in (
-        findings["transition-fixture-confounds-ordering"]["detail"]
+    assert findings["transition-fixture-confounds-ordering"]["detail"] == (
+        "Runs 38/50 do not isolate reversal ordering: Run 38 uses unknowable evidence; "
+        "Run 50 sorts T+2 REINSTATE before T+5 RETIRE while the default model is "
+        "CHALLENGER, so TRANSITION_ROLE_MISMATCH is correct. The goal requires "
+        "reversible, evidence-backed transitions, not a multi-fault precedence. Use a "
+        "RETIRED starting model to reach the existing TRANSITION_NOT_ORDERED branch, pin "
+        "the active-model result, qualify the docs, and do not move the guard."
     )
     assert findings["coordinated-drift-tampering-bypasses-revalidation"]["title"] == (
         "Accepted drift construction bypasses evaluator authorship"
@@ -688,6 +709,14 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_48_and_49_evid
         for finding_id, finding in findings.items()
         if run_49_artifact_audit_source in finding["sources"]
     } == {"coordinated-drift-tampering-bypasses-revalidation"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_50_gate_source in finding["sources"]
+    } == {
+        "comparison-fixture-confounds-proof-mismatch",
+        "transition-fixture-confounds-ordering",
+    }
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Comparison proof precedence remains role-dependent"
     )
