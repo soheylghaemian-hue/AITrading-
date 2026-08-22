@@ -294,11 +294,11 @@
     {
       "id": "invalid-policy-fixture-raises-before-result-refusal",
       "severity": "P1",
-      "title": "Invalid fixtures still miss typed refusals",
-      "detail": "Runs 44/45/55/56 raise before evaluators or replace explicit None with defaults. Test constructors separately; use omission sentinels for evaluator refusals; keep guards strict.",
+      "title": "Drift fixture errors",
+      "detail": "44/45/55/56 misuse constructors/None; 58 expects no abstention at .533 below .6. Fix fixtures; keep guards.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 209
+        "line": 207
       },
       "sources": [
         {
@@ -322,6 +322,12 @@
         {
           "run_id": 32575669191,
           "job_id": 97040696467,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32580176027,
+          "job_id": 97051417091,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
