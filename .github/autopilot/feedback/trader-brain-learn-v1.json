@@ -96,11 +96,11 @@
     {
       "id": "coordinated-drift-tampering-bypasses-revalidation",
       "severity": "P1",
-      "title": "Accepted-state warrant remains public",
-      "detail": "Run 51's hasattr failure sees an InitVar class-level None marker, not retained capability. But public construction and reflectable _Warrant(inputs) still let callers mint accepted results, recurring Runs 40/47-49. Remove public/reflectable minting; keep recomputation and evaluator-only authorship.",
+      "title": "Accepted-state minting persists",
+      "detail": "Runs 40/47-49/51/54 expose public constructors, _Warrant and __setstate__ minting. Close non-evaluator paths; retain revalidation.",
       "location": {
         "path": "src/atp/brain/learn.py",
-        "line": 575
+        "line": 268
       },
       "sources": [
         {
@@ -131,6 +131,12 @@
           "run_id": 32566023747,
           "job_id": 97014947094,
           "stage": "artifact_audit",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32571575828,
+          "job_id": 97030214389,
+          "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
