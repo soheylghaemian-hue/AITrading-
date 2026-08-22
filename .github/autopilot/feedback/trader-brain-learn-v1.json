@@ -6,11 +6,11 @@
     {
       "id": "authority-field-lexical-false-positive",
       "severity": "P1",
-      "title": "Authority scan remains lexical",
-      "detail": "Runs 36/51 reject harmless names by substring: freshness_limit plus EVIDENCE_TIMESTAMPS_OUT_OF_ORDER and TRANSITION_NOT_ORDERED. They grant no trading authority. Check imports, calls and exact authority APIs; keep no-order/no-execution.",
+      "title": "Authority scan mixes categories",
+      "detail": "36/51/60 conflate lexical names or AST call sets. Check imports/calls and exact authority APIs separately; keep no-order/no-execution.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 625
+        "line": 895
       },
       "sources": [
         {
@@ -22,6 +22,12 @@
         {
           "run_id": 32566023747,
           "job_id": 97016998982,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32584681403,
+          "job_id": 97062107703,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
@@ -385,7 +391,7 @@
       "id": "comparison-invalid-proof-shadowed-by-model-validation",
       "severity": "P1",
       "title": "Comparison proof precedence remains role-dependent",
-      "detail": "Run 45 showed that _bind_comparison let model validation consume proof shape before the documented INVALID_PROOF phase. Run 47 fixes that split but still calls _bind_proof to completion for the champion before the challenger: a wrong-proposal champion proof plus an unproven challenger yields PROOF_MODEL_MISMATCH, while reversing roles yields PROOF_NOT_PROVEN. Validate both model shells, then classify both proofs category-by-category in the documented global order (INVALID_PROOF, PROOF_NOT_PROVEN, PROOF_MODEL_MISMATCH, knowability), independent of role; preserve strict construction, checksum binding and fail-closed ordering.",
+      "detail": "Runs 45/47 make proof precedence role-dependent: model binding consumes proof shape, then champion proof is fully classified before challenger, so wrong-proposal/unproven faults swap reasons with roles. Validate both model shells, then both proofs phase-by-phase (INVALID_PROOF, PROOF_NOT_PROVEN, PROOF_MODEL_MISMATCH, knowability); keep strict construction, checksum binding and fail-closed order.",
       "location": {
         "path": "src/atp/brain/learn.py",
         "line": 765
@@ -409,10 +415,10 @@
       "id": "closure-fixture-rejects-benign-class-cell",
       "severity": "P1",
       "title": "Closure scan flags inert cells",
-      "detail": "Runs 49/52 flag inert __class__ and dataclass __repr__ cells as minters. Detect real accepted-state factories; retain constructor/reflection/mutation probes; never expose a sealer.",
+      "detail": "49/52/60 flag inert class/dataclass repr cells as minters. Detect real accepted-state factories; keep constructor/reflection/mutation probes and no sealer.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 465
+        "line": 463
       },
       "sources": [
         {
@@ -424,6 +430,12 @@
         {
           "run_id": 32567915055,
           "job_id": 97021257732,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32584681403,
+          "job_id": 97062107703,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }

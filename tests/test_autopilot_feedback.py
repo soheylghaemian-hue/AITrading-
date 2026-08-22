@@ -335,7 +335,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_59() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_60() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
@@ -362,10 +362,10 @@ def test_learn_feedback_records_exact_run_evidence_through_59() -> None:
         finding["id"]: (finding["location"]["path"], finding["location"]["line"])
         for finding in normalized["findings"]
     } == {
-        "authority-field-lexical-false-positive": ("tests/test_brain_learn.py", 625),
+        "authority-field-lexical-false-positive": ("tests/test_brain_learn.py", 895),
         "closure-fixture-rejects-benign-class-cell": (
             "tests/test_brain_learn.py",
-            465,
+            463,
         ),
         "comparison-invalid-proof-shadowed-by-model-validation": (
             "src/atp/brain/learn.py",
@@ -535,6 +535,12 @@ def test_learn_feedback_records_exact_run_evidence_through_59() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_60_gate_source = {
+        "run_id": 32584681403,
+        "job_id": 97062107703,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -543,10 +549,12 @@ def test_learn_feedback_records_exact_run_evidence_through_59() -> None:
         "authority-field-lexical-false-positive": [
             run_36_source,
             run_51_gate_source,
+            run_60_gate_source,
         ],
         "closure-fixture-rejects-benign-class-cell": [
             run_49_gate_source,
             run_52_gate_source,
+            run_60_gate_source,
         ],
         "comparison-invalid-proof-shadowed-by-model-validation": [
             run_45_source,
@@ -601,13 +609,11 @@ def test_learn_feedback_records_exact_run_evidence_through_59() -> None:
         ],
     }
     assert findings["authority-field-lexical-false-positive"]["title"] == (
-        "Authority scan remains lexical"
+        "Authority scan mixes categories"
     )
     assert findings["authority-field-lexical-false-positive"]["detail"] == (
-        "Runs 36/51 reject harmless names by substring: freshness_limit plus "
-        "EVIDENCE_TIMESTAMPS_OUT_OF_ORDER and TRANSITION_NOT_ORDERED. They grant no "
-        "trading authority. Check imports, calls and exact authority APIs; keep "
-        "no-order/no-execution."
+        "36/51/60 conflate lexical names or AST call sets. Check imports/calls and "
+        "exact authority APIs separately; keep no-order/no-execution."
     )
     assert findings["tamper-fixture-leaks-champion-role"]["title"] == (
         "Tamper fixture mutates the shared champion across tests"
@@ -734,9 +740,9 @@ def test_learn_feedback_records_exact_run_evidence_through_59() -> None:
         "Closure scan flags inert cells"
     )
     assert findings["closure-fixture-rejects-benign-class-cell"]["detail"] == (
-        "Runs 49/52 flag inert __class__ and dataclass __repr__ cells as minters. Detect "
-        "real accepted-state factories; retain constructor/reflection/mutation probes; "
-        "never expose a sealer."
+        "49/52/60 flag inert class/dataclass repr cells as minters. Detect real "
+        "accepted-state factories; keep constructor/reflection/mutation probes and no "
+        "sealer."
     )
     assert {
         finding_id
@@ -808,19 +814,24 @@ def test_learn_feedback_records_exact_run_evidence_through_59() -> None:
         "invalid-policy-fixture-raises-before-result-refusal",
         "timezone-spelling-fixture-assumes-evidence-inequality",
     }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_60_gate_source in finding["sources"]
+    } == {
+        "authority-field-lexical-false-positive",
+        "closure-fixture-rejects-benign-class-cell",
+    }
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Comparison proof precedence remains role-dependent"
     )
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["detail"] == (
-        "Run 45 showed that _bind_comparison let model validation consume proof shape "
-        "before the documented INVALID_PROOF phase. Run 47 fixes that split but still "
-        "calls _bind_proof to completion for the champion before the challenger: a "
-        "wrong-proposal champion proof plus an unproven challenger yields "
-        "PROOF_MODEL_MISMATCH, while reversing roles yields PROOF_NOT_PROVEN. Validate "
-        "both model shells, then classify both proofs category-by-category in the "
-        "documented global order (INVALID_PROOF, PROOF_NOT_PROVEN, "
-        "PROOF_MODEL_MISMATCH, knowability), independent of role; preserve strict "
-        "construction, checksum binding and fail-closed ordering."
+        "Runs 45/47 make proof precedence role-dependent: model binding consumes proof "
+        "shape, then champion proof is fully classified before challenger, so "
+        "wrong-proposal/unproven faults swap reasons with roles. Validate both model "
+        "shells, then both proofs phase-by-phase (INVALID_PROOF, PROOF_NOT_PROVEN, "
+        "PROOF_MODEL_MISMATCH, knowability); keep strict construction, checksum binding "
+        "and fail-closed order."
     )
     assert len(normalized["findings"]) == MAX_FINDINGS
     assert {
