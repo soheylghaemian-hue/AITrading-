@@ -6,11 +6,11 @@
     {
       "id": "authority-field-lexical-false-positive",
       "severity": "P1",
-      "title": "Authority scan mixes categories",
-      "detail": "36/51/60 conflate lexical names or AST call sets. Check imports/calls and exact authority APIs separately; keep no-order/no-execution.",
+      "title": "Authority API mismatch",
+      "detail": "36/51/60/64 mix lexical/import/call with dotted/bare names. Match forms; keep no-order/no-execution.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 895
+        "line": 878
       },
       "sources": [
         {
@@ -28,6 +28,12 @@
         {
           "run_id": 32584681403,
           "job_id": 97062107703,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32594040692,
+          "job_id": 97086336473,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
@@ -198,8 +204,8 @@
     {
       "id": "reinstate-chain-allows-challenger-promotion",
       "severity": "P1",
-      "title": "Transition chains permit challenger-to-champion promotion",
-      "detail": "REINSTATE may omit reverses_transition_id and select any active next_role. A valid CHALLENGER→RETIRED transition followed by RETIRED→CHAMPION is accepted with final_role CHAMPION, violating the no-self-promotion criterion.",
+      "title": "Challenger promotion",
+      "detail": "REINSTATE permits no reversal ID/any active next_role: CHALLENGER→RETIRED→CHAMPION. Bind reversal; forbid self-promotion.",
       "location": {
         "path": "src/atp/brain/learn.py",
         "line": 891
