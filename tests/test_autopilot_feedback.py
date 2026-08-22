@@ -335,7 +335,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_and_47_evidence() -> None:
+def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_47_and_48_evidence() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
@@ -372,7 +372,7 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_and_47_evidence()
         ),
         "coordinated-drift-tampering-bypasses-revalidation": (
             "src/atp/brain/learn.py",
-            252,
+            192,
         ),
         "evidence-failure-precedence-permutation-dependent": (
             "src/atp/brain/learn.py",
@@ -380,7 +380,7 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_and_47_evidence()
         ),
         "equivalent-permutations-produce-unequal-results": (
             "src/atp/brain/learn.py",
-            1009,
+            391,
         ),
         "evaluator-closure-exposes-commitment-sealer": (
             "src/atp/brain/learn.py",
@@ -458,6 +458,12 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_and_47_evidence()
         "stage": "final_review",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_48_source = {
+        "run_id": 32558489491,
+        "job_id": 97000836840,
+        "stage": "final_review",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -472,9 +478,13 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_and_47_evidence()
         "coordinated-drift-tampering-bypasses-revalidation": [
             run_40_source,
             run_47_source,
+            run_48_source,
         ],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
-        "equivalent-permutations-produce-unequal-results": [run_42_source],
+        "equivalent-permutations-produce-unequal-results": [
+            run_42_source,
+            run_48_source,
+        ],
         "evaluator-closure-exposes-commitment-sealer": [run_42_source],
         "invalid-policy-fixture-raises-before-result-refusal": [
             run_44_source,
@@ -521,14 +531,14 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_and_47_evidence()
     assert (
         findings["coordinated-drift-tampering-bypasses-revalidation"]["detail"]
         == "Run 40 showed that coordinated mutation of accepted severe evidence plus "
-        "cached outputs could restore confidence and pass revalidation. Run 47 replaces "
-        "cached outputs with an immutable baseline, but _Result.__new__ remains public: "
-        "after changing severe evidence into coherent mild evidence, a caller can "
-        "construct DriftResult(True, (), mutated_inputs, honest_mild.baseline, "
-        "honest_mild.calibration), yielding a valid checksum and downstream acceptance. "
-        "Make accepted-result creation evaluator-private and unforgeably tied to the "
-        "evaluator-authored assessment; do not add an exposed sealer or weaken "
-        "revalidation."
+        "cached outputs could restore confidence; Run 47 showed that a public result "
+        "constructor let callers transplant an honest mild baseline. Run 48 adds an "
+        "_Authorship witness, but _Authorship and _bind_drift remain reachable module "
+        "attributes, so a caller can compute the mutated input identity, mint the "
+        "expected witness and construct an accepted DriftResult. Make accepted-result "
+        "creation a genuinely evaluator-held capability that cannot be reconstructed "
+        "through imports, reflection or closures, while retaining full recomputation and "
+        "downstream fail-closed checks."
     )
     assert findings["evidence-failure-precedence-permutation-dependent"]["title"] == (
         "Evidence failure precedence depends on tuple order"
@@ -560,14 +570,27 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_and_47_evidence()
         "with final_role CHAMPION, violating the no-self-promotion criterion."
     )
     assert findings["equivalent-permutations-produce-unequal-results"]["title"] == (
-        "Equivalent permutations do not produce identical results"
+        "Equivalent inputs still produce unequal result objects"
     )
     assert findings["equivalent-permutations-produce-unequal-results"]["detail"] == (
-        "DriftInputs and TransitionInputs retain caller tuple order even though checksums "
-        "use canonical ordering. Equivalent evidence or transition permutations therefore "
-        "produce unequal result objects with differently ordered inputs, contradicting the "
-        "required identical canonical results; tests assert only checksum equality."
+        "Run 42 showed that DriftInputs and TransitionInputs retained caller tuple order "
+        "even though checksums used canonical ordering. Run 48 sorts the tuples but "
+        "normalizes timestamps only for hashes and order keys; the accepted input objects "
+        "retain original datetime spellings. Across a DST fold, UTC and ZoneInfo spellings "
+        "of the same instants therefore yield identical checksums but unequal inputs and "
+        "results, while the January fixture misses the fold-sensitive case. Canonicalize "
+        "every stored as_of, evidence timestamp and transition effective_at to UTC inside "
+        "the accepted input graph, and pin equality for ambiguous fold instants as well as "
+        "permutations."
     )
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_48_source in finding["sources"]
+    } == {
+        "coordinated-drift-tampering-bypasses-revalidation",
+        "equivalent-permutations-produce-unequal-results",
+    }
     assert findings["timezone-spelling-fixture-assumes-evidence-inequality"][
         "title"
     ] == "Timezone-spelling fixture expects semantically unequal evidence"
