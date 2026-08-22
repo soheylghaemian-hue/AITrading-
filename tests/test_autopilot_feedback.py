@@ -335,7 +335,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_52() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_54() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
@@ -377,7 +377,7 @@ def test_learn_feedback_records_exact_run_evidence_through_52() -> None:
         ),
         "coordinated-drift-tampering-bypasses-revalidation": (
             "src/atp/brain/learn.py",
-            575,
+            268,
         ),
         "evidence-failure-precedence-permutation-dependent": (
             "src/atp/brain/learn.py",
@@ -505,6 +505,12 @@ def test_learn_feedback_records_exact_run_evidence_through_52() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_54_gate_source = {
+        "run_id": 32571575828,
+        "job_id": 97030214389,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -532,6 +538,7 @@ def test_learn_feedback_records_exact_run_evidence_through_52() -> None:
             run_48_source,
             run_49_artifact_audit_source,
             run_51_artifact_audit_source,
+            run_54_gate_source,
         ],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
         "equivalent-permutations-produce-unequal-results": [
@@ -598,14 +605,12 @@ def test_learn_feedback_records_exact_run_evidence_through_52() -> None:
         "the active-model result, qualify the docs, and do not move the guard."
     )
     assert findings["coordinated-drift-tampering-bypasses-revalidation"]["title"] == (
-        "Accepted-state warrant remains public"
+        "Accepted-state minting persists"
     )
     assert (
         findings["coordinated-drift-tampering-bypasses-revalidation"]["detail"]
-        == "Run 51's hasattr failure sees an InitVar class-level None marker, not retained "
-        "capability. But public construction and reflectable _Warrant(inputs) still let "
-        "callers mint accepted results, recurring Runs 40/47-49. Remove "
-        "public/reflectable minting; keep recomputation and evaluator-only authorship."
+        == "Runs 40/47-49/51/54 expose public constructors, _Warrant and __setstate__ "
+        "minting. Close non-evaluator paths; retain revalidation."
     )
     assert findings["evidence-failure-precedence-permutation-dependent"]["title"] == (
         "Evidence failure precedence depends on tuple order"
@@ -756,6 +761,11 @@ def test_learn_feedback_records_exact_run_evidence_through_52() -> None:
         for finding_id, finding in findings.items()
         if run_52_gate_source in finding["sources"]
     } == {"closure-fixture-rejects-benign-class-cell"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_54_gate_source in finding["sources"]
+    } == {"coordinated-drift-tampering-bypasses-revalidation"}
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Comparison proof precedence remains role-dependent"
     )
