@@ -55,7 +55,7 @@
       "id": "comparison-fixture-confounds-proof-mismatch",
       "severity": "P1",
       "title": "Comparison fixtures still collapse into self-comparison",
-      "detail": "Runs 38/50 self-compare while aiming at other checks. Run 38 reuses the challenger proposal; Run 50's champion has the correct role plus the default challenger's model_id and proposal. SELF_COMPARISON is correct and ROLE_MISMATCH cannot apply. Give proof and role fixtures distinct identities; make the role fixture actually wrong; pin both refusals.",
+      "detail": "38/50 self-compare: 38 reuses challenger proposal; 50's champion shares challenger ID/proposal and correct role. SELF_COMPARISON is right; use distinct IDs and wrong role; pin both.",
       "location": {
         "path": "tests/test_brain_learn.py",
         "line": 357
@@ -103,10 +103,10 @@
       "id": "coordinated-drift-tampering-bypasses-revalidation",
       "severity": "P1",
       "title": "Accepted-state minting persists",
-      "detail": "Runs 40/47-49/51/54/56 expose minting through constructors, _Warrant or __setstate__. Close non-evaluator paths; retain revalidation.",
+      "detail": "40/47-49/51/54/56/63 mint/restore accepted state via constructors, _Warrant or __setstate__. Block non-evaluator paths; retain revalidation.",
       "location": {
-        "path": "src/atp/brain/learn.py",
-        "line": 408
+        "path": "tests/test_brain_learn.py",
+        "line": 368
       },
       "sources": [
         {
@@ -148,6 +148,12 @@
         {
           "run_id": 32575669191,
           "job_id": 97040696467,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32591600980,
+          "job_id": 97079081660,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
@@ -210,11 +216,11 @@
     {
       "id": "equivalent-permutations-produce-unequal-results",
       "severity": "P1",
-      "title": "Equivalent inputs still produce unequal result objects",
-      "detail": "Runs 42/48 leave stored tuples or datetimes noncanonical despite canonical checksums, so permutations and DST-fold spellings yield unequal inputs/results. Sort tuples, normalize every stored datetime to UTC, and pin permutation/fold equality.",
+      "title": "Equivalent inputs produce unequal results",
+      "detail": "42/48/63 store noncanonical tuples/datetimes despite canonical checksums, so permutations/fold spellings yield unequal results. Sort tuples, normalize UTC, pin equality.",
       "location": {
-        "path": "src/atp/brain/learn.py",
-        "line": 391
+        "path": "tests/test_brain_learn.py",
+        "line": 268
       },
       "sources": [
         {
@@ -227,6 +233,12 @@
           "run_id": 32558489491,
           "job_id": 97000836840,
           "stage": "final_review",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32591600980,
+          "job_id": 97079081660,
+          "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
@@ -427,7 +439,7 @@
       "id": "comparison-invalid-proof-shadowed-by-model-validation",
       "severity": "P1",
       "title": "Comparison proof precedence remains role-dependent",
-      "detail": "Runs 45/47 make proof precedence role-dependent: model binding consumes proof shape, then champion proof is fully classified before challenger, so wrong-proposal/unproven faults swap reasons with roles. Validate both model shells, then both proofs phase-by-phase (INVALID_PROOF, PROOF_NOT_PROVEN, PROOF_MODEL_MISMATCH, knowability); keep strict construction, checksum binding and fail-closed order.",
+      "detail": "45/47 bind proof shape, then classify champion before challenger, so role swaps change wrong/unproven reasons. Validate model shells, then proofs phasewise: INVALID_PROOF, PROOF_NOT_PROVEN, PROOF_MODEL_MISMATCH, knowability; keep strict construction/checksum binding/fail-closed order.",
       "location": {
         "path": "src/atp/brain/learn.py",
         "line": 765
