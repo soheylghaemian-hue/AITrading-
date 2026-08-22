@@ -310,6 +310,18 @@ def test_claude_prompts_require_runtime_structured_output_without_relaxing_bound
     assert WORKFLOW.count("--max-budget-usd 20") == 1
 
 
+def test_claude_prompts_require_a_final_per_edit_transport_preflight():
+    root = Path(__file__).resolve().parents[1]
+    for name in ("claude-author.md", "claude-repair.md"):
+        prompt = (root / ".github/autopilot/prompts" / name).read_text()
+        normalized = " ".join(prompt.split())
+        assert "Final pre-submit preflight" in normalized
+        assert "every `edits[i]`, including the last edit" in normalized
+        assert "strictly increasing in lexicographic order with no duplicate path" in normalized
+        assert r"every `edits[i].content` ends with `\n` but not `\n\n`" in normalized
+        assert "Never rely on the trusted binder to normalize model output" in normalized
+
+
 def test_full_file_state_is_bound_for_author_and_repair_before_materialization():
     assert WORKFLOW.count("python -m atp.autopilot.full_file") == 6
     assert WORKFLOW.count("            --prepare-state ") == 4

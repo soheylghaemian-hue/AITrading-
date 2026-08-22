@@ -135,6 +135,21 @@ def _prepare_claude_payload(repo: Path, phase: str, *, content: str = "new\n") -
     }
 
 
+def _five_sorted_edit_payload(repo: Path, phase: str, *, last_content: str) -> dict:
+    payload = _prepare_claude_payload(repo, phase)
+    final_edit = {**payload["edits"][0], "content": last_content}
+    payload["edits"] = [
+        {
+            "op": "create",
+            "path": f"src/atp/research/{name}.py",
+            "before_sha256": None,
+            "content": f"{name}\n",
+        }
+        for name in ("a", "b", "c", "d")
+    ] + [final_edit]
+    return payload
+
+
 def _write_fixed(
     repo: Path,
     phase: str,
@@ -258,6 +273,52 @@ def test_claude_payload_comes_only_from_one_final_success_event(
     assert stat.S_IMODE(output.stat().st_mode) == 0o600
     assert verify_model_output(repo, phase, bound.sha256, goal_file=GOAL_FILE) == bound
     assert bound.approved is None
+
+
+@pytest.mark.parametrize("phase", ["author", "repair"])
+@pytest.mark.parametrize("last_content", ["missing final LF", "double final LF\n\n"])
+def test_five_sorted_edits_reject_invalid_lf_on_the_last_content(
+    tmp_path: Path, phase: str, last_content: str
+) -> None:
+    repo = _repo(tmp_path)
+    runner = _runner_temp(tmp_path)
+    payload = _five_sorted_edit_payload(repo, phase, last_content=last_content)
+    execution = _write_execution(runner, payload)
+
+    with pytest.raises(
+        ModelOutputViolation,
+        match=rf"{phase}\.edits\[4\]\.content must end in exactly one LF",
+    ):
+        bind_model_output(
+            repo,
+            phase,
+            goal_file=GOAL_FILE,
+            execution_file=execution,
+            runner_temp=runner,
+        )
+    assert not (repo / PHASE_PATHS[phase]).exists()
+
+
+@pytest.mark.parametrize("phase", ["author", "repair"])
+def test_five_sorted_edits_accept_exactly_one_lf_per_content(
+    tmp_path: Path, phase: str
+) -> None:
+    repo = _repo(tmp_path)
+    runner = _runner_temp(tmp_path)
+    payload = _five_sorted_edit_payload(repo, phase, last_content="replacement\n")
+    execution = _write_execution(runner, payload)
+
+    bound = bind_model_output(
+        repo,
+        phase,
+        goal_file=GOAL_FILE,
+        execution_file=execution,
+        runner_temp=runner,
+    )
+
+    assert bound.phase == phase
+    assert (repo / PHASE_PATHS[phase]).read_bytes() == canonical_phase_bytes(phase, payload)
+    assert verify_model_output(repo, phase, bound.sha256, goal_file=GOAL_FILE) == bound
 
 
 @pytest.mark.parametrize(

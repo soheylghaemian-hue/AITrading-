@@ -36,3 +36,11 @@ patch, goal, plan, review, prior output or memory. Modified and created content 
 no BOM, NUL or CR, and end in exactly one LF. Do not emit a patch, partial hunk, mode change or path outside
 the trusted goal. If any required preimage or full repaired content is uncertain, fail closed instead of
 guessing.
+
+Final pre-submit preflight:
+
+- Walk every `edits[i]`, including the last edit, and verify paths are strictly increasing in lexicographic
+  order with no duplicate path.
+- Verify every `edits[i].content` ends with `\n` but not `\n\n`.
+- Correct any violation in the structured object before submitting it. Never rely on the trusted binder to
+  normalize model output.
