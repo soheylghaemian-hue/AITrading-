@@ -335,7 +335,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_63() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_64() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
@@ -362,7 +362,7 @@ def test_learn_feedback_records_exact_run_evidence_through_63() -> None:
         finding["id"]: (finding["location"]["path"], finding["location"]["line"])
         for finding in normalized["findings"]
     } == {
-        "authority-field-lexical-false-positive": ("tests/test_brain_learn.py", 895),
+        "authority-field-lexical-false-positive": ("tests/test_brain_learn.py", 878),
         "closure-fixture-rejects-benign-class-cell": (
             "tests/test_brain_learn.py",
             463,
@@ -559,6 +559,12 @@ def test_learn_feedback_records_exact_run_evidence_through_63() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_64_gate_source = {
+        "run_id": 32594040692,
+        "job_id": 97086336473,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -568,6 +574,7 @@ def test_learn_feedback_records_exact_run_evidence_through_63() -> None:
             run_36_source,
             run_51_gate_source,
             run_60_gate_source,
+            run_64_gate_source,
         ],
         "closure-fixture-rejects-benign-class-cell": [
             run_49_gate_source,
@@ -637,11 +644,11 @@ def test_learn_feedback_records_exact_run_evidence_through_63() -> None:
         ],
     }
     assert findings["authority-field-lexical-false-positive"]["title"] == (
-        "Authority scan mixes categories"
+        "Authority API mismatch"
     )
     assert findings["authority-field-lexical-false-positive"]["detail"] == (
-        "36/51/60 conflate lexical names or AST call sets. Check imports/calls and "
-        "exact authority APIs separately; keep no-order/no-execution."
+        "36/51/60/64 mix lexical/import/call with dotted/bare names. Match forms; keep "
+        "no-order/no-execution."
     )
     assert findings["tamper-fixture-leaks-champion-role"]["title"] == (
         "Tamper fixture mutates the shared champion across tests"
@@ -690,12 +697,11 @@ def test_learn_feedback_records_exact_run_evidence_through_63() -> None:
         "fields, and checksum/comparison trust them. Hide it; test bypass."
     )
     assert findings["reinstate-chain-allows-challenger-promotion"]["title"] == (
-        "Transition chains permit challenger-to-champion promotion"
+        "Challenger promotion"
     )
     assert findings["reinstate-chain-allows-challenger-promotion"]["detail"] == (
-        "REINSTATE may omit reverses_transition_id and select any active next_role. A "
-        "valid CHALLENGER→RETIRED transition followed by RETIRED→CHAMPION is accepted "
-        "with final_role CHAMPION, violating the no-self-promotion criterion."
+        "REINSTATE permits no reversal ID/any active next_role: "
+        "CHALLENGER→RETIRED→CHAMPION. Bind reversal; forbid self-promotion."
     )
     assert findings["equivalent-permutations-produce-unequal-results"]["title"] == (
         "Equivalent inputs produce unequal results"
@@ -862,6 +868,11 @@ def test_learn_feedback_records_exact_run_evidence_through_63() -> None:
         "coordinated-drift-tampering-bypasses-revalidation",
         "equivalent-permutations-produce-unequal-results",
     }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_64_gate_source in finding["sources"]
+    } == {"authority-field-lexical-false-positive"}
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Comparison proof precedence remains role-dependent"
     )
