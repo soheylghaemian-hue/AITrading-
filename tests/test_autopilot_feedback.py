@@ -335,7 +335,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_36_38_40_42_43_44_and_45_evidence() -> None:
+def test_learn_feedback_records_exact_run_36_38_40_42_43_44_45_and_47_evidence() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
@@ -364,7 +364,7 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_and_45_evidence() ->
         "authority-field-lexical-false-positive": ("tests/test_brain_learn.py", 396),
         "comparison-invalid-proof-shadowed-by-model-validation": (
             "src/atp/brain/learn.py",
-            656,
+            765,
         ),
         "comparison-fixture-confounds-proof-mismatch": (
             "tests/test_brain_learn.py",
@@ -372,7 +372,7 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_and_45_evidence() ->
         ),
         "coordinated-drift-tampering-bypasses-revalidation": (
             "src/atp/brain/learn.py",
-            397,
+            252,
         ),
         "evidence-failure-precedence-permutation-dependent": (
             "src/atp/brain/learn.py",
@@ -452,15 +452,27 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_and_45_evidence() ->
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_47_source = {
+        "run_id": 32554139745,
+        "job_id": 96991065888,
+        "stage": "final_review",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
         for finding_id, finding in findings.items()
     } == {
         "authority-field-lexical-false-positive": [run_36_source],
-        "comparison-invalid-proof-shadowed-by-model-validation": [run_45_source],
+        "comparison-invalid-proof-shadowed-by-model-validation": [
+            run_45_source,
+            run_47_source,
+        ],
         "comparison-fixture-confounds-proof-mismatch": [run_38_source],
-        "coordinated-drift-tampering-bypasses-revalidation": [run_40_source],
+        "coordinated-drift-tampering-bypasses-revalidation": [
+            run_40_source,
+            run_47_source,
+        ],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
         "equivalent-permutations-produce-unequal-results": [run_42_source],
         "evaluator-closure-exposes-commitment-sealer": [run_42_source],
@@ -504,15 +516,19 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_and_45_evidence() ->
         findings["transition-fixture-confounds-ordering"]["detail"]
     )
     assert findings["coordinated-drift-tampering-bypasses-revalidation"]["title"] == (
-        "Coordinated drift tampering bypasses revalidation"
+        "Coordinated drift tampering still bypasses evaluator authorship"
     )
     assert (
         findings["coordinated-drift-tampering-bypasses-revalidation"]["detail"]
-        == "DriftResult revalidates only the current mutable input graph against equally "
-        "mutable cached outputs. Changing accepted evidence severity from severe to mild "
-        "and updating severity, adjusted_confidence, and abstain accordingly makes "
-        "checksum() succeed; downstream comparison therefore accepts tampered evidence "
-        "and restored confidence instead of failing closed."
+        == "Run 40 showed that coordinated mutation of accepted severe evidence plus "
+        "cached outputs could restore confidence and pass revalidation. Run 47 replaces "
+        "cached outputs with an immutable baseline, but _Result.__new__ remains public: "
+        "after changing severe evidence into coherent mild evidence, a caller can "
+        "construct DriftResult(True, (), mutated_inputs, honest_mild.baseline, "
+        "honest_mild.calibration), yielding a valid checksum and downstream acceptance. "
+        "Make accepted-result creation evaluator-private and unforgeably tied to the "
+        "evaluator-authored assessment; do not add an exposed sealer or weaken "
+        "revalidation."
     )
     assert findings["evidence-failure-precedence-permutation-dependent"]["title"] == (
         "Evidence failure precedence depends on tuple order"
@@ -610,16 +626,18 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_44_and_45_evidence() ->
         "isolation guard."
     )
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
-        "Model validation shadows invalid-proof classification"
+        "Comparison proof precedence remains role-dependent"
     )
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["detail"] == (
-        "Run 45 mutates ModelRecord.proof to a string. _bind_comparison calls "
-        "_validate_model first, which classifies the record as INVALID_MODEL, so the "
-        "later documented INVALID_PROOF branch cannot be reached for a malformed proof. "
-        "Preserve strict ModelRecord construction, but validate the comparison model "
-        "shell without consuming the proof, then apply self/role precedence and classify "
-        "a non-ProveResult proof as INVALID_PROOF; do not weaken checksum, proof binding "
-        "or fail-closed ordering."
+        "Run 45 showed that _bind_comparison let model validation consume proof shape "
+        "before the documented INVALID_PROOF phase. Run 47 fixes that split but still "
+        "calls _bind_proof to completion for the champion before the challenger: a "
+        "wrong-proposal champion proof plus an unproven challenger yields "
+        "PROOF_MODEL_MISMATCH, while reversing roles yields PROOF_NOT_PROVEN. Validate "
+        "both model shells, then classify both proofs category-by-category in the "
+        "documented global order (INVALID_PROOF, PROOF_NOT_PROVEN, "
+        "PROOF_MODEL_MISMATCH, knowability), independent of role; preserve strict "
+        "construction, checksum binding and fail-closed ordering."
     )
     assert len(normalized["findings"]) == MAX_FINDINGS - 1
     assert {

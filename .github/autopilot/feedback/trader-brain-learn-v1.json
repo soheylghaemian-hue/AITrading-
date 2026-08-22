@@ -78,16 +78,22 @@
     {
       "id": "coordinated-drift-tampering-bypasses-revalidation",
       "severity": "P1",
-      "title": "Coordinated drift tampering bypasses revalidation",
-      "detail": "DriftResult revalidates only the current mutable input graph against equally mutable cached outputs. Changing accepted evidence severity from severe to mild and updating severity, adjusted_confidence, and abstain accordingly makes checksum() succeed; downstream comparison therefore accepts tampered evidence and restored confidence instead of failing closed.",
+      "title": "Coordinated drift tampering still bypasses evaluator authorship",
+      "detail": "Run 40 showed that coordinated mutation of accepted severe evidence plus cached outputs could restore confidence and pass revalidation. Run 47 replaces cached outputs with an immutable baseline, but _Result.__new__ remains public: after changing severe evidence into coherent mild evidence, a caller can construct DriftResult(True, (), mutated_inputs, honest_mild.baseline, honest_mild.calibration), yielding a valid checksum and downstream acceptance. Make accepted-result creation evaluator-private and unforgeably tied to the evaluator-authored assessment; do not add an exposed sealer or weaken revalidation.",
       "location": {
         "path": "src/atp/brain/learn.py",
-        "line": 397
+        "line": 252
       },
       "sources": [
         {
           "run_id": 32458581800,
           "job_id": 96710258496,
+          "stage": "final_review",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32554139745,
+          "job_id": 96991065888,
           "stage": "final_review",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
@@ -270,17 +276,23 @@
     {
       "id": "comparison-invalid-proof-shadowed-by-model-validation",
       "severity": "P1",
-      "title": "Model validation shadows invalid-proof classification",
-      "detail": "Run 45 mutates ModelRecord.proof to a string. _bind_comparison calls _validate_model first, which classifies the record as INVALID_MODEL, so the later documented INVALID_PROOF branch cannot be reached for a malformed proof. Preserve strict ModelRecord construction, but validate the comparison model shell without consuming the proof, then apply self/role precedence and classify a non-ProveResult proof as INVALID_PROOF; do not weaken checksum, proof binding or fail-closed ordering.",
+      "title": "Comparison proof precedence remains role-dependent",
+      "detail": "Run 45 showed that _bind_comparison let model validation consume proof shape before the documented INVALID_PROOF phase. Run 47 fixes that split but still calls _bind_proof to completion for the champion before the challenger: a wrong-proposal champion proof plus an unproven challenger yields PROOF_MODEL_MISMATCH, while reversing roles yields PROOF_NOT_PROVEN. Validate both model shells, then classify both proofs category-by-category in the documented global order (INVALID_PROOF, PROOF_NOT_PROVEN, PROOF_MODEL_MISMATCH, knowability), independent of role; preserve strict construction, checksum binding and fail-closed ordering.",
       "location": {
         "path": "src/atp/brain/learn.py",
-        "line": 656
+        "line": 765
       },
       "sources": [
         {
           "run_id": 32542812818,
           "job_id": 96958966128,
           "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32554139745,
+          "job_id": 96991065888,
+          "stage": "final_review",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
