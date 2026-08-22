@@ -73,7 +73,7 @@
       "id": "transition-fixture-confounds-ordering",
       "severity": "P1",
       "title": "Transition-order fixtures do not isolate chronology",
-      "detail": "Runs 38/50 do not isolate reversal ordering: Run 38 uses unknowable evidence; Run 50 sorts T+2 REINSTATE before T+5 RETIRE while the default model is CHALLENGER, so TRANSITION_ROLE_MISMATCH is correct. The goal requires reversible, evidence-backed transitions, not a multi-fault precedence. Use a RETIRED starting model to reach the existing TRANSITION_NOT_ORDERED branch, pin the active-model result, qualify the docs, and do not move the guard.",
+      "detail": "Runs 38/50 mix reversal order with unknowable evidence or a CHALLENGER start, so prior refusals are correct. Start RETIRED to isolate TRANSITION_NOT_ORDERED; pin active result, qualify docs, keep guard.",
       "location": {
         "path": "tests/test_brain_learn.py",
         "line": 503
@@ -228,11 +228,11 @@
     {
       "id": "timezone-spelling-fixture-assumes-evidence-inequality",
       "severity": "P1",
-      "title": "Timezone fixtures miss the equivalence path",
-      "detail": "Runs 43/49/56 miss timezone equivalence through misleading raw equality or stale evidence. Compare UTC instants and spellings separately, use fresh evidence, then require equal canonical inputs and results.",
+      "title": "Timezone fixture errors",
+      "detail": "43/49/56/59 misuse raw fold equality or stale evidence. Compare UTC instants, then canonical state.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 257
+        "line": 283
       },
       "sources": [
         {
@@ -250,6 +250,12 @@
         {
           "run_id": 32575669191,
           "job_id": 97040696467,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32582631576,
+          "job_id": 97056894378,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
@@ -294,11 +300,11 @@
     {
       "id": "invalid-policy-fixture-raises-before-result-refusal",
       "severity": "P1",
-      "title": "Drift fixture errors",
-      "detail": "44/45/55/56 misuse constructors/None; 58 expects no abstention at .533 below .6. Fix fixtures; keep guards.",
+      "title": "Evaluator fixture errors",
+      "detail": "44/45/55/56/58/59 misuse constructors, defaults or thresholds. Use sentinels and explicit cases; keep guards strict.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 207
+        "line": 450
       },
       "sources": [
         {
@@ -328,6 +334,12 @@
         {
           "run_id": 32580176027,
           "job_id": 97051417091,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32582631576,
+          "job_id": 97056894378,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
