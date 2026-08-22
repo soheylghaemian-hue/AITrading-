@@ -37,7 +37,7 @@
       "id": "tamper-fixture-leaks-champion-role",
       "severity": "P1",
       "title": "Tamper fixture mutates the shared champion across tests",
-      "detail": "The tamper test changes rerolled.inputs.champion.role with object.__setattr__, but that champion aliases the module-level CHAMPION fixture and is not restored. A later regression fixture therefore receives ROLE_MISMATCH and becomes order-dependent; the LEARN implementation itself correctly rejects the contaminated input fail-closed.",
+      "detail": "Run 36 mutates aliased CHAMPION without restoring it, causing ROLE_MISMATCH/order dependence. Build fresh models; keep fail-closed rejection.",
       "location": {
         "path": "tests/test_brain_learn.py",
         "line": 614
@@ -235,10 +235,10 @@
       "id": "timezone-spelling-fixture-assumes-evidence-inequality",
       "severity": "P1",
       "title": "Timezone fixture errors",
-      "detail": "43/49/56/59 misuse raw fold equality or stale evidence. Compare UTC instants, then canonical state.",
+      "detail": "43/49/56/59/61 use raw fold equality or stale evidence. Compare UTC instants, then canonical state.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 283
+        "line": 245
       },
       "sources": [
         {
@@ -264,6 +264,12 @@
           "job_id": 97056894378,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32586981689,
+          "job_id": 97067468408,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
     },
@@ -271,7 +277,7 @@
       "id": "local-proposal-tamper-invalidates-proof-first",
       "severity": "P1",
       "title": "Local proposal tampering invalidates the proof before model matching",
-      "detail": "Run 43 mutates the same proposal object used inside the champion's proof. The proof's own revalidation therefore fails first, so evaluate_comparison correctly returns PROOF_NOT_PROVEN before it can consider PROOF_MODEL_MISMATCH. Keep the proposal local and assert the deterministic earlier reason, then retain the later clean-fixture check; do not weaken proof revalidation or failure ordering.",
+      "detail": "Run 43 mutates proof-bound proposal, so PROOF_NOT_PROVEN rightly precedes PROOF_MODEL_MISMATCH. Use clean data; keep strict revalidation/order.",
       "location": {
         "path": "tests/test_brain_learn.py",
         "line": 381
@@ -288,16 +294,22 @@
     {
       "id": "learn-documentation-omits-model-role",
       "severity": "P1",
-      "title": "LEARN documentation omits a public API symbol",
-      "detail": "Run 43's LEARN documentation adds the feature narrative but omits the literal public symbol ModelRole, so the API-documentation contract fails at tests/test_brain_learn.py:759 before checking the remaining names. Add the missing public API name and verify every LEARN_PUBLIC_NAMES entry is documented; do not remove exports or relax the contract test.",
+      "title": "LEARN docs incomplete",
+      "detail": "43/61 omit ModelRole or exact research-only wording. Pin every public symbol/guard phrase; keep exports/docs checks strict.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 759
+        "line": 761
       },
       "sources": [
         {
           "run_id": 32491533881,
           "job_id": 96806873114,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32586981689,
+          "job_id": 97067468408,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
@@ -307,10 +319,10 @@
       "id": "invalid-policy-fixture-raises-before-result-refusal",
       "severity": "P1",
       "title": "Evaluator fixture errors",
-      "detail": "44/45/55/56/58/59 misuse constructors, defaults or thresholds. Use sentinels and explicit cases; keep guards strict.",
+      "detail": "44-45/55-56/58-59/61 misuse constructors, defaults or thresholds. Use distinct IDs/sentinels/cases; keep guards and precedence strict.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 450
+        "line": 213
       },
       "sources": [
         {
@@ -348,17 +360,23 @@
           "job_id": 97056894378,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32586981689,
+          "job_id": 97067468408,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
     },
     {
       "id": "timezone-utc-fixture-not-in-immutable-allowlist",
       "severity": "P1",
-      "title": "Fixture immutability contract remains self-inconsistent",
-      "detail": "Runs 44/45/49/56 misclassify mutable fixtures, registry classes or timezone.utc. Exempt only exact immutable metadata; keep mutable values rejected.",
+      "title": "Fixture immutability conflict",
+      "detail": "44-45/49/56/61 misclassify mutable fixtures, registry classes or timezone.utc. Exempt exact immutable metadata; reject mutable values.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 731
+        "line": 740
       },
       "sources": [
         {
@@ -382,6 +400,12 @@
         {
           "run_id": 32575669191,
           "job_id": 97040696467,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32586981689,
+          "job_id": 97067468408,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
