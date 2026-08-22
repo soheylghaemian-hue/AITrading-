@@ -335,7 +335,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_55() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_56() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
@@ -377,7 +377,7 @@ def test_learn_feedback_records_exact_run_evidence_through_55() -> None:
         ),
         "coordinated-drift-tampering-bypasses-revalidation": (
             "src/atp/brain/learn.py",
-            268,
+            408,
         ),
         "evidence-failure-precedence-permutation-dependent": (
             "src/atp/brain/learn.py",
@@ -393,7 +393,7 @@ def test_learn_feedback_records_exact_run_evidence_through_55() -> None:
         ),
         "invalid-policy-fixture-raises-before-result-refusal": (
             "tests/test_brain_learn.py",
-            63,
+            209,
         ),
         "learn-documentation-omits-model-role": ("tests/test_brain_learn.py", 759),
         "local-proposal-tamper-invalidates-proof-first": (
@@ -407,11 +407,11 @@ def test_learn_feedback_records_exact_run_evidence_through_55() -> None:
         "tamper-fixture-leaks-champion-role": ("tests/test_brain_learn.py", 614),
         "timezone-spelling-fixture-assumes-evidence-inequality": (
             "tests/test_brain_learn.py",
-            239,
+            257,
         ),
         "timezone-utc-fixture-not-in-immutable-allowlist": (
             "tests/test_brain_learn.py",
-            649,
+            731,
         ),
         "transition-fixture-confounds-ordering": ("tests/test_brain_learn.py", 503),
     }
@@ -517,6 +517,12 @@ def test_learn_feedback_records_exact_run_evidence_through_55() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_56_gate_source = {
+        "run_id": 32575669191,
+        "job_id": 97040696467,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -545,6 +551,7 @@ def test_learn_feedback_records_exact_run_evidence_through_55() -> None:
             run_49_artifact_audit_source,
             run_51_artifact_audit_source,
             run_54_gate_source,
+            run_56_gate_source,
         ],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
         "equivalent-permutations-produce-unequal-results": [
@@ -556,6 +563,7 @@ def test_learn_feedback_records_exact_run_evidence_through_55() -> None:
             run_44_source,
             run_45_source,
             run_55_gate_source,
+            run_56_gate_source,
         ],
         "learn-documentation-omits-model-role": [run_43_source],
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
@@ -564,11 +572,13 @@ def test_learn_feedback_records_exact_run_evidence_through_55() -> None:
         "timezone-spelling-fixture-assumes-evidence-inequality": [
             run_43_source,
             run_49_gate_source,
+            run_56_gate_source,
         ],
         "timezone-utc-fixture-not-in-immutable-allowlist": [
             run_44_source,
             run_45_source,
             run_49_gate_source,
+            run_56_gate_source,
         ],
         "transition-fixture-confounds-ordering": [
             run_38_source,
@@ -616,8 +626,8 @@ def test_learn_feedback_records_exact_run_evidence_through_55() -> None:
     )
     assert (
         findings["coordinated-drift-tampering-bypasses-revalidation"]["detail"]
-        == "Runs 40/47-49/51/54 expose public constructors, _Warrant and __setstate__ "
-        "minting. Close non-evaluator paths; retain revalidation."
+        == "Runs 40/47-49/51/54/56 expose minting through constructors, _Warrant or "
+        "__setstate__. Close non-evaluator paths; retain revalidation."
     )
     assert findings["evidence-failure-precedence-permutation-dependent"]["title"] == (
         "Evidence failure precedence depends on tuple order"
@@ -652,15 +662,10 @@ def test_learn_feedback_records_exact_run_evidence_through_55() -> None:
         "Equivalent inputs still produce unequal result objects"
     )
     assert findings["equivalent-permutations-produce-unequal-results"]["detail"] == (
-        "Run 42 showed that DriftInputs and TransitionInputs retained caller tuple order "
-        "even though checksums used canonical ordering. Run 48 sorts the tuples but "
-        "normalizes timestamps only for hashes and order keys; the accepted input objects "
-        "retain original datetime spellings. Across a DST fold, UTC and ZoneInfo spellings "
-        "of the same instants therefore yield identical checksums but unequal inputs and "
-        "results, while the January fixture misses the fold-sensitive case. Canonicalize "
-        "every stored as_of, evidence timestamp and transition effective_at to UTC inside "
-        "the accepted input graph, and pin equality for ambiguous fold instants as well as "
-        "permutations."
+        "Runs 42/48 leave stored tuples or datetimes noncanonical despite canonical "
+        "checksums, so permutations and DST-fold spellings yield unequal inputs/results. "
+        "Sort tuples, normalize every stored datetime to UTC, and pin permutation/fold "
+        "equality."
     )
     assert {
         finding_id
@@ -672,14 +677,13 @@ def test_learn_feedback_records_exact_run_evidence_through_55() -> None:
     }
     assert findings["timezone-spelling-fixture-assumes-evidence-inequality"][
         "title"
-    ] == "Timezone fixture misuses aware-datetime equality"
+    ] == "Timezone fixtures miss the equivalence path"
     assert findings["timezone-spelling-fixture-assumes-evidence-inequality"][
         "detail"
     ] == (
-        "Run 43 expected unequal spellings of one instant. Run 49 asserts raw equality "
-        "across an ambiguous DST fold; Python returns false although early and early_utc "
-        "have the same UTC instant, so LEARN is never exercised. Compare UTC instants and "
-        "spellings separately, then require equal canonical evidence, inputs and results."
+        "Runs 43/49/56 miss timezone equivalence through misleading raw equality or stale "
+        "evidence. Compare UTC instants and spellings separately, use fresh evidence, then "
+        "require equal canonical inputs and results."
     )
     assert findings["local-proposal-tamper-invalidates-proof-first"]["title"] == (
         "Local proposal tampering invalidates the proof before model matching"
@@ -702,22 +706,19 @@ def test_learn_feedback_records_exact_run_evidence_through_55() -> None:
         "do not remove exports or relax the contract test."
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["title"] == (
-        "None-boundary fixtures still inject defaults"
+        "Invalid fixtures still miss typed refusals"
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["detail"] == (
-        "Runs 44/45/55 miss public refusal paths: _drift(policy=None) and "
-        "_transit(model=None) inject valid defaults. Use an omitted-value sentinel; pin "
-        "direct INVALID_POLICY/INVALID_MODEL refusals without relaxing guards."
+        "Runs 44/45/55/56 raise before evaluators or replace explicit None with defaults. "
+        "Test constructors separately; use omission sentinels for evaluator refusals; keep "
+        "guards strict."
     )
     assert findings["timezone-utc-fixture-not-in-immutable-allowlist"]["title"] == (
         "Fixture immutability contract remains self-inconsistent"
     )
     assert findings["timezone-utc-fixture-not-in-immutable-allowlist"]["detail"] == (
-        "Runs 44-45 exposed an incomplete allowlist and mutable uppercase sets. Run 49 "
-        "freezes them, but _is_immutable rejects class objects inside "
-        "IMMUTABLE_FIXTURE_TYPES, so the registry rejects itself. Exempt only that exact "
-        "registry as immutable metadata; keep rejecting mutable fixtures and requiring "
-        "shared collections to be frozenset."
+        "Runs 44/45/49/56 misclassify mutable fixtures, registry classes or timezone.utc. "
+        "Exempt only exact immutable metadata; keep mutable values rejected."
     )
     assert findings["closure-fixture-rejects-benign-class-cell"]["title"] == (
         "Closure scan flags inert cells"
@@ -774,6 +775,16 @@ def test_learn_feedback_records_exact_run_evidence_through_55() -> None:
         for finding_id, finding in findings.items()
         if run_55_gate_source in finding["sources"]
     } == {"invalid-policy-fixture-raises-before-result-refusal"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_56_gate_source in finding["sources"]
+    } == {
+        "coordinated-drift-tampering-bypasses-revalidation",
+        "invalid-policy-fixture-raises-before-result-refusal",
+        "timezone-spelling-fixture-assumes-evidence-inequality",
+        "timezone-utc-fixture-not-in-immutable-allowlist",
+    }
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Comparison proof precedence remains role-dependent"
     )
