@@ -335,7 +335,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_61() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_62() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
@@ -393,7 +393,7 @@ def test_learn_feedback_records_exact_run_evidence_through_61() -> None:
         ),
         "invalid-policy-fixture-raises-before-result-refusal": (
             "tests/test_brain_learn.py",
-            213,
+            376,
         ),
         "learn-documentation-omits-model-role": ("tests/test_brain_learn.py", 761),
         "local-proposal-tamper-invalidates-proof-first": (
@@ -411,7 +411,7 @@ def test_learn_feedback_records_exact_run_evidence_through_61() -> None:
         ),
         "timezone-utc-fixture-not-in-immutable-allowlist": (
             "tests/test_brain_learn.py",
-            740,
+            437,
         ),
         "transition-fixture-confounds-ordering": ("tests/test_brain_learn.py", 503),
     }
@@ -547,6 +547,12 @@ def test_learn_feedback_records_exact_run_evidence_through_61() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_62_gate_source = {
+        "run_id": 32589317435,
+        "job_id": 97073687658,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -593,6 +599,7 @@ def test_learn_feedback_records_exact_run_evidence_through_61() -> None:
             run_58_gate_source,
             run_59_gate_source,
             run_61_gate_source,
+            run_62_gate_source,
         ],
         "learn-documentation-omits-model-role": [
             run_43_source,
@@ -614,6 +621,7 @@ def test_learn_feedback_records_exact_run_evidence_through_61() -> None:
             run_49_gate_source,
             run_56_gate_source,
             run_61_gate_source,
+            run_62_gate_source,
         ],
         "transition-fixture-confounds-ordering": [
             run_38_source,
@@ -665,21 +673,15 @@ def test_learn_feedback_records_exact_run_evidence_through_61() -> None:
     )
     assert (
         findings["evidence-failure-precedence-permutation-dependent"]["detail"]
-        == "_admit interleaves per-item consistency validation with duplicate-ID "
-        "detection. The same evidence multiset containing duplicate IDs and an "
-        "out-of-order timestamp returns DUPLICATE_EVIDENCE_ID in one permutation and "
-        "EVIDENCE_TIMESTAMPS_OUT_OF_ORDER in another, producing different refusal "
-        "checksums and violating permutation determinism."
+        == "Duplicate+out-of-order permutations differ in reason/checksum: _admit "
+        "interleaves evidence and ID checks. Phase checks deterministically."
     )
     assert findings["evaluator-closure-exposes-commitment-sealer"]["title"] == (
         "Internal commitment can be forged through the evaluator closure"
     )
     assert findings["evaluator-closure-exposes-commitment-sealer"]["detail"] == (
-        "The sealer is directly recoverable from evaluate_drift.__closure__. A caller "
-        "can mutate evidence and all derived fields, invoke that sealer on the recomputed "
-        "state, replace commitment, and make checksum() succeed; downstream comparison "
-        "then trusts the tampered drift. The purported full-bypass test never checks this "
-        "accessible path."
+        "evaluate_drift.__closure__ exposes a sealer: recommit mutated evidence/derived "
+        "fields, and checksum/comparison trust them. Hide it; test bypass."
     )
     assert findings["reinstate-chain-allows-challenger-promotion"]["title"] == (
         "Transition chains permit challenger-to-champion promotion"
@@ -733,15 +735,15 @@ def test_learn_feedback_records_exact_run_evidence_through_61() -> None:
         "Evaluator fixture errors"
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["detail"] == (
-        "44-45/55-56/58-59/61 misuse constructors, defaults or thresholds. Use distinct "
-        "IDs/sentinels/cases; keep guards and precedence strict."
+        "44-45/55-56/58-59/61-62 misuse constructors/defaults/thresholds, __setstate__ "
+        "shape or helpers. Use distinct inputs; reach evaluator; keep strict guards/order."
     )
     assert findings["timezone-utc-fixture-not-in-immutable-allowlist"]["title"] == (
         "Fixture immutability conflict"
     )
     assert findings["timezone-utc-fixture-not-in-immutable-allowlist"]["detail"] == (
-        "44-45/49/56/61 misclassify mutable fixtures, registry classes or timezone.utc. "
-        "Exempt exact immutable metadata; reject mutable values."
+        "44-45/49/56/61-62 misclassify registry classes, timezone.utc or future "
+        "annotations. Exempt exact immutable metadata; reject mutable values."
     )
     assert findings["closure-fixture-rejects-benign-class-cell"]["title"] == (
         "Closure scan flags inert cells"
@@ -837,6 +839,14 @@ def test_learn_feedback_records_exact_run_evidence_through_61() -> None:
         "invalid-policy-fixture-raises-before-result-refusal",
         "learn-documentation-omits-model-role",
         "timezone-spelling-fixture-assumes-evidence-inequality",
+        "timezone-utc-fixture-not-in-immutable-allowlist",
+    }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_62_gate_source in finding["sources"]
+    } == {
+        "invalid-policy-fixture-raises-before-result-refusal",
         "timezone-utc-fixture-not-in-immutable-allowlist",
     }
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (

@@ -157,7 +157,7 @@
       "id": "evidence-failure-precedence-permutation-dependent",
       "severity": "P1",
       "title": "Evidence failure precedence depends on tuple order",
-      "detail": "_admit interleaves per-item consistency validation with duplicate-ID detection. The same evidence multiset containing duplicate IDs and an out-of-order timestamp returns DUPLICATE_EVIDENCE_ID in one permutation and EVIDENCE_TIMESTAMPS_OUT_OF_ORDER in another, producing different refusal checksums and violating permutation determinism.",
+      "detail": "Duplicate+out-of-order permutations differ in reason/checksum: _admit interleaves evidence and ID checks. Phase checks deterministically.",
       "location": {
         "path": "src/atp/brain/learn.py",
         "line": 734
@@ -175,7 +175,7 @@
       "id": "evaluator-closure-exposes-commitment-sealer",
       "severity": "P1",
       "title": "Internal commitment can be forged through the evaluator closure",
-      "detail": "The sealer is directly recoverable from evaluate_drift.__closure__. A caller can mutate evidence and all derived fields, invoke that sealer on the recomputed state, replace commitment, and make checksum() succeed; downstream comparison then trusts the tampered drift. The purported full-bypass test never checks this accessible path.",
+      "detail": "evaluate_drift.__closure__ exposes a sealer: recommit mutated evidence/derived fields, and checksum/comparison trust them. Hide it; test bypass.",
       "location": {
         "path": "src/atp/brain/learn.py",
         "line": 1081
@@ -319,10 +319,10 @@
       "id": "invalid-policy-fixture-raises-before-result-refusal",
       "severity": "P1",
       "title": "Evaluator fixture errors",
-      "detail": "44-45/55-56/58-59/61 misuse constructors, defaults or thresholds. Use distinct IDs/sentinels/cases; keep guards and precedence strict.",
+      "detail": "44-45/55-56/58-59/61-62 misuse constructors/defaults/thresholds, __setstate__ shape or helpers. Use distinct inputs; reach evaluator; keep strict guards/order.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 213
+        "line": 376
       },
       "sources": [
         {
@@ -366,6 +366,12 @@
           "job_id": 97067468408,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32589317435,
+          "job_id": 97073687658,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
     },
@@ -373,10 +379,10 @@
       "id": "timezone-utc-fixture-not-in-immutable-allowlist",
       "severity": "P1",
       "title": "Fixture immutability conflict",
-      "detail": "44-45/49/56/61 misclassify mutable fixtures, registry classes or timezone.utc. Exempt exact immutable metadata; reject mutable values.",
+      "detail": "44-45/49/56/61-62 misclassify registry classes, timezone.utc or future annotations. Exempt exact immutable metadata; reject mutable values.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 740
+        "line": 437
       },
       "sources": [
         {
@@ -406,6 +412,12 @@
         {
           "run_id": 32586981689,
           "job_id": 97067468408,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32589317435,
+          "job_id": 97073687658,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
