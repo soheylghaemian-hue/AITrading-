@@ -335,7 +335,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_60() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_61() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
@@ -393,9 +393,9 @@ def test_learn_feedback_records_exact_run_evidence_through_60() -> None:
         ),
         "invalid-policy-fixture-raises-before-result-refusal": (
             "tests/test_brain_learn.py",
-            450,
+            213,
         ),
-        "learn-documentation-omits-model-role": ("tests/test_brain_learn.py", 759),
+        "learn-documentation-omits-model-role": ("tests/test_brain_learn.py", 761),
         "local-proposal-tamper-invalidates-proof-first": (
             "tests/test_brain_learn.py",
             381,
@@ -407,11 +407,11 @@ def test_learn_feedback_records_exact_run_evidence_through_60() -> None:
         "tamper-fixture-leaks-champion-role": ("tests/test_brain_learn.py", 614),
         "timezone-spelling-fixture-assumes-evidence-inequality": (
             "tests/test_brain_learn.py",
-            283,
+            245,
         ),
         "timezone-utc-fixture-not-in-immutable-allowlist": (
             "tests/test_brain_learn.py",
-            731,
+            740,
         ),
         "transition-fixture-confounds-ordering": ("tests/test_brain_learn.py", 503),
     }
@@ -541,6 +541,12 @@ def test_learn_feedback_records_exact_run_evidence_through_60() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_61_gate_source = {
+        "run_id": 32586981689,
+        "job_id": 97067468408,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -586,8 +592,12 @@ def test_learn_feedback_records_exact_run_evidence_through_60() -> None:
             run_56_gate_source,
             run_58_gate_source,
             run_59_gate_source,
+            run_61_gate_source,
         ],
-        "learn-documentation-omits-model-role": [run_43_source],
+        "learn-documentation-omits-model-role": [
+            run_43_source,
+            run_61_gate_source,
+        ],
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
         "reinstate-chain-allows-challenger-promotion": [run_42_source],
         "tamper-fixture-leaks-champion-role": [run_36_source],
@@ -596,12 +606,14 @@ def test_learn_feedback_records_exact_run_evidence_through_60() -> None:
             run_49_gate_source,
             run_56_gate_source,
             run_59_gate_source,
+            run_61_gate_source,
         ],
         "timezone-utc-fixture-not-in-immutable-allowlist": [
             run_44_source,
             run_45_source,
             run_49_gate_source,
             run_56_gate_source,
+            run_61_gate_source,
         ],
         "transition-fixture-confounds-ordering": [
             run_38_source,
@@ -618,9 +630,10 @@ def test_learn_feedback_records_exact_run_evidence_through_60() -> None:
     assert findings["tamper-fixture-leaks-champion-role"]["title"] == (
         "Tamper fixture mutates the shared champion across tests"
     )
-    assert "aliases the module-level CHAMPION fixture and is not restored" in findings[
-        "tamper-fixture-leaks-champion-role"
-    ]["detail"]
+    assert findings["tamper-fixture-leaks-champion-role"]["detail"] == (
+        "Run 36 mutates aliased CHAMPION without restoring it, causing "
+        "ROLE_MISMATCH/order dependence. Build fresh models; keep fail-closed rejection."
+    )
     assert findings["comparison-fixture-confounds-proof-mismatch"]["title"] == (
         "Comparison fixtures still collapse into self-comparison"
     )
@@ -699,42 +712,36 @@ def test_learn_feedback_records_exact_run_evidence_through_60() -> None:
     assert findings["timezone-spelling-fixture-assumes-evidence-inequality"][
         "detail"
     ] == (
-        "43/49/56/59 misuse raw fold equality or stale evidence. Compare UTC instants, "
+        "43/49/56/59/61 use raw fold equality or stale evidence. Compare UTC instants, "
         "then canonical state."
     )
     assert findings["local-proposal-tamper-invalidates-proof-first"]["title"] == (
         "Local proposal tampering invalidates the proof before model matching"
     )
     assert findings["local-proposal-tamper-invalidates-proof-first"]["detail"] == (
-        "Run 43 mutates the same proposal object used inside the champion's proof. The "
-        "proof's own revalidation therefore fails first, so evaluate_comparison correctly "
-        "returns PROOF_NOT_PROVEN before it can consider PROOF_MODEL_MISMATCH. Keep the "
-        "proposal local and assert the deterministic earlier reason, then retain the later "
-        "clean-fixture check; do not weaken proof revalidation or failure ordering."
+        "Run 43 mutates proof-bound proposal, so PROOF_NOT_PROVEN rightly precedes "
+        "PROOF_MODEL_MISMATCH. Use clean data; keep strict revalidation/order."
     )
     assert findings["learn-documentation-omits-model-role"]["title"] == (
-        "LEARN documentation omits a public API symbol"
+        "LEARN docs incomplete"
     )
     assert findings["learn-documentation-omits-model-role"]["detail"] == (
-        "Run 43's LEARN documentation adds the feature narrative but omits the literal "
-        "public symbol ModelRole, so the API-documentation contract fails at "
-        "tests/test_brain_learn.py:759 before checking the remaining names. Add the "
-        "missing public API name and verify every LEARN_PUBLIC_NAMES entry is documented; "
-        "do not remove exports or relax the contract test."
+        "43/61 omit ModelRole or exact research-only wording. Pin every public "
+        "symbol/guard phrase; keep exports/docs checks strict."
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["title"] == (
         "Evaluator fixture errors"
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["detail"] == (
-        "44/45/55/56/58/59 misuse constructors, defaults or thresholds. Use sentinels and "
-        "explicit cases; keep guards strict."
+        "44-45/55-56/58-59/61 misuse constructors, defaults or thresholds. Use distinct "
+        "IDs/sentinels/cases; keep guards and precedence strict."
     )
     assert findings["timezone-utc-fixture-not-in-immutable-allowlist"]["title"] == (
-        "Fixture immutability contract remains self-inconsistent"
+        "Fixture immutability conflict"
     )
     assert findings["timezone-utc-fixture-not-in-immutable-allowlist"]["detail"] == (
-        "Runs 44/45/49/56 misclassify mutable fixtures, registry classes or timezone.utc. "
-        "Exempt only exact immutable metadata; keep mutable values rejected."
+        "44-45/49/56/61 misclassify mutable fixtures, registry classes or timezone.utc. "
+        "Exempt exact immutable metadata; reject mutable values."
     )
     assert findings["closure-fixture-rejects-benign-class-cell"]["title"] == (
         "Closure scan flags inert cells"
@@ -821,6 +828,16 @@ def test_learn_feedback_records_exact_run_evidence_through_60() -> None:
     } == {
         "authority-field-lexical-false-positive",
         "closure-fixture-rejects-benign-class-cell",
+    }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_61_gate_source in finding["sources"]
+    } == {
+        "invalid-policy-fixture-raises-before-result-refusal",
+        "learn-documentation-omits-model-role",
+        "timezone-spelling-fixture-assumes-evidence-inequality",
+        "timezone-utc-fixture-not-in-immutable-allowlist",
     }
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Comparison proof precedence remains role-dependent"
