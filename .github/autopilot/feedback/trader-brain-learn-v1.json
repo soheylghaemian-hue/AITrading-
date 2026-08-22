@@ -282,11 +282,11 @@
     {
       "id": "invalid-policy-fixture-raises-before-result-refusal",
       "severity": "P1",
-      "title": "Invalid-policy fixtures still miss evaluator refusal",
-      "detail": "Run 44 constructs a policy that fails validation before the evaluator can return a typed refusal. Run 45 asserts construction rejection, but its _drift(policy=None) helper replaces None with a valid default policy, so evaluate_drift accepts and the INVALID_POLICY Result path remains untested. Assert constructor rejection separately and call evaluate_drift with None or a tampered policy through the public boundary; do not relax the monotonic-confidence guard.",
+      "title": "None-boundary fixtures still inject defaults",
+      "detail": "Runs 44/45/55 miss public refusal paths: _drift(policy=None) and _transit(model=None) inject valid defaults. Use an omitted-value sentinel; pin direct INVALID_POLICY/INVALID_MODEL refusals without relaxing guards.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 297
+        "line": 63
       },
       "sources": [
         {
@@ -298,6 +298,12 @@
         {
           "run_id": 32542812818,
           "job_id": 96958966128,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32573632245,
+          "job_id": 97035359522,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
