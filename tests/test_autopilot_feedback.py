@@ -335,7 +335,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_62() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_63() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
@@ -376,16 +376,16 @@ def test_learn_feedback_records_exact_run_evidence_through_62() -> None:
             357,
         ),
         "coordinated-drift-tampering-bypasses-revalidation": (
-            "src/atp/brain/learn.py",
-            408,
+            "tests/test_brain_learn.py",
+            368,
         ),
         "evidence-failure-precedence-permutation-dependent": (
             "src/atp/brain/learn.py",
             734,
         ),
         "equivalent-permutations-produce-unequal-results": (
-            "src/atp/brain/learn.py",
-            391,
+            "tests/test_brain_learn.py",
+            268,
         ),
         "evaluator-closure-exposes-commitment-sealer": (
             "src/atp/brain/learn.py",
@@ -553,6 +553,12 @@ def test_learn_feedback_records_exact_run_evidence_through_62() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_63_gate_source = {
+        "run_id": 32591600980,
+        "job_id": 97079081660,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -584,11 +590,13 @@ def test_learn_feedback_records_exact_run_evidence_through_62() -> None:
             run_51_artifact_audit_source,
             run_54_gate_source,
             run_56_gate_source,
+            run_63_gate_source,
         ],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
         "equivalent-permutations-produce-unequal-results": [
             run_42_source,
             run_48_source,
+            run_63_gate_source,
         ],
         "evaluator-closure-exposes-commitment-sealer": [run_42_source],
         "invalid-policy-fixture-raises-before-result-refusal": [
@@ -646,11 +654,9 @@ def test_learn_feedback_records_exact_run_evidence_through_62() -> None:
         "Comparison fixtures still collapse into self-comparison"
     )
     assert findings["comparison-fixture-confounds-proof-mismatch"]["detail"] == (
-        "Runs 38/50 self-compare while aiming at other checks. Run 38 reuses the "
-        "challenger proposal; Run 50's champion has the correct role plus the default "
-        "challenger's model_id and proposal. SELF_COMPARISON is correct and "
-        "ROLE_MISMATCH cannot apply. Give proof and role fixtures distinct identities; "
-        "make the role fixture actually wrong; pin both refusals."
+        "38/50 self-compare: 38 reuses challenger proposal; 50's champion shares "
+        "challenger ID/proposal and correct role. SELF_COMPARISON is right; use distinct "
+        "IDs and wrong role; pin both."
     )
     assert findings["transition-fixture-confounds-ordering"]["title"] == (
         "Transition-order fixtures do not isolate chronology"
@@ -665,8 +671,8 @@ def test_learn_feedback_records_exact_run_evidence_through_62() -> None:
     )
     assert (
         findings["coordinated-drift-tampering-bypasses-revalidation"]["detail"]
-        == "Runs 40/47-49/51/54/56 expose minting through constructors, _Warrant or "
-        "__setstate__. Close non-evaluator paths; retain revalidation."
+        == "40/47-49/51/54/56/63 mint/restore accepted state via constructors, _Warrant "
+        "or __setstate__. Block non-evaluator paths; retain revalidation."
     )
     assert findings["evidence-failure-precedence-permutation-dependent"]["title"] == (
         "Evidence failure precedence depends on tuple order"
@@ -692,13 +698,12 @@ def test_learn_feedback_records_exact_run_evidence_through_62() -> None:
         "with final_role CHAMPION, violating the no-self-promotion criterion."
     )
     assert findings["equivalent-permutations-produce-unequal-results"]["title"] == (
-        "Equivalent inputs still produce unequal result objects"
+        "Equivalent inputs produce unequal results"
     )
     assert findings["equivalent-permutations-produce-unequal-results"]["detail"] == (
-        "Runs 42/48 leave stored tuples or datetimes noncanonical despite canonical "
-        "checksums, so permutations and DST-fold spellings yield unequal inputs/results. "
-        "Sort tuples, normalize every stored datetime to UTC, and pin permutation/fold "
-        "equality."
+        "42/48/63 store noncanonical tuples/datetimes despite canonical checksums, so "
+        "permutations/fold spellings yield unequal results. Sort tuples, normalize UTC, "
+        "pin equality."
     )
     assert {
         finding_id
@@ -849,16 +854,22 @@ def test_learn_feedback_records_exact_run_evidence_through_62() -> None:
         "invalid-policy-fixture-raises-before-result-refusal",
         "timezone-utc-fixture-not-in-immutable-allowlist",
     }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_63_gate_source in finding["sources"]
+    } == {
+        "coordinated-drift-tampering-bypasses-revalidation",
+        "equivalent-permutations-produce-unequal-results",
+    }
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Comparison proof precedence remains role-dependent"
     )
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["detail"] == (
-        "Runs 45/47 make proof precedence role-dependent: model binding consumes proof "
-        "shape, then champion proof is fully classified before challenger, so "
-        "wrong-proposal/unproven faults swap reasons with roles. Validate both model "
-        "shells, then both proofs phase-by-phase (INVALID_PROOF, PROOF_NOT_PROVEN, "
-        "PROOF_MODEL_MISMATCH, knowability); keep strict construction, checksum binding "
-        "and fail-closed order."
+        "45/47 bind proof shape, then classify champion before challenger, so role swaps "
+        "change wrong/unproven reasons. Validate model shells, then proofs phasewise: "
+        "INVALID_PROOF, PROOF_NOT_PROVEN, PROOF_MODEL_MISMATCH, knowability; keep strict "
+        "construction/checksum binding/fail-closed order."
     )
     assert len(normalized["findings"]) == MAX_FINDINGS
     assert {
