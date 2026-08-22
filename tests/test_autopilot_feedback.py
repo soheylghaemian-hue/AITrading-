@@ -335,7 +335,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_36_38_40_42_and_43_evidence() -> None:
+def test_learn_feedback_records_exact_run_36_38_40_42_43_and_44_evidence() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
@@ -346,11 +346,13 @@ def test_learn_feedback_records_exact_run_36_38_40_42_and_43_evidence() -> None:
         "evidence-failure-precedence-permutation-dependent",
         "equivalent-permutations-produce-unequal-results",
         "evaluator-closure-exposes-commitment-sealer",
+        "invalid-policy-fixture-raises-before-result-refusal",
         "learn-documentation-omits-model-role",
         "local-proposal-tamper-invalidates-proof-first",
         "reinstate-chain-allows-challenger-promotion",
         "tamper-fixture-leaks-champion-role",
         "timezone-spelling-fixture-assumes-evidence-inequality",
+        "timezone-utc-fixture-not-in-immutable-allowlist",
         "transition-fixture-confounds-ordering",
     }
     assert {finding["severity"] for finding in normalized["findings"]} == {"P1"}
@@ -379,6 +381,10 @@ def test_learn_feedback_records_exact_run_36_38_40_42_and_43_evidence() -> None:
             "src/atp/brain/learn.py",
             1081,
         ),
+        "invalid-policy-fixture-raises-before-result-refusal": (
+            "tests/test_brain_learn.py",
+            182,
+        ),
         "learn-documentation-omits-model-role": ("tests/test_brain_learn.py", 759),
         "local-proposal-tamper-invalidates-proof-first": (
             "tests/test_brain_learn.py",
@@ -392,6 +398,10 @@ def test_learn_feedback_records_exact_run_36_38_40_42_and_43_evidence() -> None:
         "timezone-spelling-fixture-assumes-evidence-inequality": (
             "tests/test_brain_learn.py",
             280,
+        ),
+        "timezone-utc-fixture-not-in-immutable-allowlist": (
+            "tests/test_brain_learn.py",
+            642,
         ),
         "transition-fixture-confounds-ordering": ("tests/test_brain_learn.py", 452),
     }
@@ -425,6 +435,12 @@ def test_learn_feedback_records_exact_run_36_38_40_42_and_43_evidence() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_44_source = {
+        "run_id": 32528444226,
+        "job_id": 96921311025,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -436,11 +452,13 @@ def test_learn_feedback_records_exact_run_36_38_40_42_and_43_evidence() -> None:
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
         "equivalent-permutations-produce-unequal-results": [run_42_source],
         "evaluator-closure-exposes-commitment-sealer": [run_42_source],
+        "invalid-policy-fixture-raises-before-result-refusal": [run_44_source],
         "learn-documentation-omits-model-role": [run_43_source],
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
         "reinstate-chain-allows-challenger-promotion": [run_42_source],
         "tamper-fixture-leaks-champion-role": [run_36_source],
         "timezone-spelling-fixture-assumes-evidence-inequality": [run_43_source],
+        "timezone-utc-fixture-not-in-immutable-allowlist": [run_44_source],
         "transition-fixture-confounds-ordering": [run_38_source],
     }
     assert findings["authority-field-lexical-false-positive"]["title"] == (
@@ -548,6 +566,29 @@ def test_learn_feedback_records_exact_run_36_38_40_42_and_43_evidence() -> None:
         "tests/test_brain_learn.py:759 before checking the remaining names. Add the "
         "missing public API name and verify every LEARN_PUBLIC_NAMES entry is documented; "
         "do not remove exports or relax the contract test."
+    )
+    assert findings["invalid-policy-fixture-raises-before-result-refusal"]["title"] == (
+        "Invalid-policy fixture fails before the Result path"
+    )
+    assert findings["invalid-policy-fixture-raises-before-result-refusal"]["detail"] == (
+        "Run 44 constructs DriftPolicy with mild_confidence_factor=0.25 and "
+        "severe_confidence_factor=0.75. DriftPolicy.__post_init__ immediately raises "
+        "INVALID_POLICY before _drift can return the typed fail-closed Result the "
+        "regression expects, so the intended evaluator refusal is never exercised. "
+        "Align the fixture and contract so the deterministic Result path is tested, or "
+        "explicitly assert construction rejection; do not relax the monotonic-confidence "
+        "guard."
+    )
+    assert findings["timezone-utc-fixture-not-in-immutable-allowlist"]["title"] == (
+        "Immutable-fixture guard rejects timezone.utc"
+    )
+    assert findings["timezone-utc-fixture-not-in-immutable-allowlist"]["detail"] == (
+        "Run 44 introduces an uppercase datetime.timezone.utc shared constant, but the "
+        "immutability guard admits only str, int, float, tuple, datetime and timedelta, "
+        "so it fails before behavioral checks despite timezone.utc being immutable. "
+        "Inline or remove the uppercase timezone fixture, or narrowly admit exact "
+        "timezone instances; do not allow mutable globals or weaken collection-order "
+        "isolation."
     )
     assert {
         finding["location"]["path"] for finding in normalized["findings"]

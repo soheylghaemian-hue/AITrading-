@@ -218,6 +218,42 @@
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
+    },
+    {
+      "id": "invalid-policy-fixture-raises-before-result-refusal",
+      "severity": "P1",
+      "title": "Invalid-policy fixture fails before the Result path",
+      "detail": "Run 44 constructs DriftPolicy with mild_confidence_factor=0.25 and severe_confidence_factor=0.75. DriftPolicy.__post_init__ immediately raises INVALID_POLICY before _drift can return the typed fail-closed Result the regression expects, so the intended evaluator refusal is never exercised. Align the fixture and contract so the deterministic Result path is tested, or explicitly assert construction rejection; do not relax the monotonic-confidence guard.",
+      "location": {
+        "path": "tests/test_brain_learn.py",
+        "line": 182
+      },
+      "sources": [
+        {
+          "run_id": 32528444226,
+          "job_id": 96921311025,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        }
+      ]
+    },
+    {
+      "id": "timezone-utc-fixture-not-in-immutable-allowlist",
+      "severity": "P1",
+      "title": "Immutable-fixture guard rejects timezone.utc",
+      "detail": "Run 44 introduces an uppercase datetime.timezone.utc shared constant, but the immutability guard admits only str, int, float, tuple, datetime and timedelta, so it fails before behavioral checks despite timezone.utc being immutable. Inline or remove the uppercase timezone fixture, or narrowly admit exact timezone instances; do not allow mutable globals or weaken collection-order isolation.",
+      "location": {
+        "path": "tests/test_brain_learn.py",
+        "line": 642
+      },
+      "sources": [
+        {
+          "run_id": 32528444226,
+          "job_id": 96921311025,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        }
+      ]
     }
   ]
 }
