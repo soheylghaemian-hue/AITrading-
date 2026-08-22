@@ -335,12 +335,13 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_36_38_40_42_43_and_44_evidence() -> None:
+def test_learn_feedback_records_exact_run_36_38_40_42_43_44_and_45_evidence() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
     assert normalized["goal_id"] == "trader-brain-learn-v1"
     assert {finding["id"] for finding in normalized["findings"]} == {
         "authority-field-lexical-false-positive",
+        "comparison-invalid-proof-shadowed-by-model-validation",
         "comparison-fixture-confounds-proof-mismatch",
         "coordinated-drift-tampering-bypasses-revalidation",
         "evidence-failure-precedence-permutation-dependent",
@@ -361,6 +362,10 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_and_44_evidence() -> No
         for finding in normalized["findings"]
     } == {
         "authority-field-lexical-false-positive": ("tests/test_brain_learn.py", 396),
+        "comparison-invalid-proof-shadowed-by-model-validation": (
+            "src/atp/brain/learn.py",
+            656,
+        ),
         "comparison-fixture-confounds-proof-mismatch": (
             "tests/test_brain_learn.py",
             360,
@@ -383,7 +388,7 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_and_44_evidence() -> No
         ),
         "invalid-policy-fixture-raises-before-result-refusal": (
             "tests/test_brain_learn.py",
-            182,
+            297,
         ),
         "learn-documentation-omits-model-role": ("tests/test_brain_learn.py", 759),
         "local-proposal-tamper-invalidates-proof-first": (
@@ -401,7 +406,7 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_and_44_evidence() -> No
         ),
         "timezone-utc-fixture-not-in-immutable-allowlist": (
             "tests/test_brain_learn.py",
-            642,
+            560,
         ),
         "transition-fixture-confounds-ordering": ("tests/test_brain_learn.py", 452),
     }
@@ -441,24 +446,37 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_and_44_evidence() -> No
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_45_source = {
+        "run_id": 32542812818,
+        "job_id": 96958966128,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
         for finding_id, finding in findings.items()
     } == {
         "authority-field-lexical-false-positive": [run_36_source],
+        "comparison-invalid-proof-shadowed-by-model-validation": [run_45_source],
         "comparison-fixture-confounds-proof-mismatch": [run_38_source],
         "coordinated-drift-tampering-bypasses-revalidation": [run_40_source],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
         "equivalent-permutations-produce-unequal-results": [run_42_source],
         "evaluator-closure-exposes-commitment-sealer": [run_42_source],
-        "invalid-policy-fixture-raises-before-result-refusal": [run_44_source],
+        "invalid-policy-fixture-raises-before-result-refusal": [
+            run_44_source,
+            run_45_source,
+        ],
         "learn-documentation-omits-model-role": [run_43_source],
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
         "reinstate-chain-allows-challenger-promotion": [run_42_source],
         "tamper-fixture-leaks-champion-role": [run_36_source],
         "timezone-spelling-fixture-assumes-evidence-inequality": [run_43_source],
-        "timezone-utc-fixture-not-in-immutable-allowlist": [run_44_source],
+        "timezone-utc-fixture-not-in-immutable-allowlist": [
+            run_44_source,
+            run_45_source,
+        ],
         "transition-fixture-confounds-ordering": [run_38_source],
     }
     assert findings["authority-field-lexical-false-positive"]["title"] == (
@@ -568,28 +586,42 @@ def test_learn_feedback_records_exact_run_36_38_40_42_43_and_44_evidence() -> No
         "do not remove exports or relax the contract test."
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["title"] == (
-        "Invalid-policy fixture fails before the Result path"
+        "Invalid-policy fixtures still miss evaluator refusal"
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["detail"] == (
-        "Run 44 constructs DriftPolicy with mild_confidence_factor=0.25 and "
-        "severe_confidence_factor=0.75. DriftPolicy.__post_init__ immediately raises "
-        "INVALID_POLICY before _drift can return the typed fail-closed Result the "
-        "regression expects, so the intended evaluator refusal is never exercised. "
-        "Align the fixture and contract so the deterministic Result path is tested, or "
-        "explicitly assert construction rejection; do not relax the monotonic-confidence "
-        "guard."
+        "Run 44 constructs a policy that fails validation before the evaluator can "
+        "return a typed refusal. Run 45 asserts construction rejection, but its "
+        "_drift(policy=None) helper replaces None with a valid default policy, so "
+        "evaluate_drift accepts and the INVALID_POLICY Result path remains untested. "
+        "Assert constructor rejection separately and call evaluate_drift with None or "
+        "a tampered policy through the public boundary; do not relax the "
+        "monotonic-confidence guard."
     )
     assert findings["timezone-utc-fixture-not-in-immutable-allowlist"]["title"] == (
-        "Immutable-fixture guard rejects timezone.utc"
+        "Fixture immutability contract remains inconsistent"
     )
     assert findings["timezone-utc-fixture-not-in-immutable-allowlist"]["detail"] == (
-        "Run 44 introduces an uppercase datetime.timezone.utc shared constant, but the "
-        "immutability guard admits only str, int, float, tuple, datetime and timedelta, "
-        "so it fails before behavioral checks despite timezone.utc being immutable. "
-        "Inline or remove the uppercase timezone fixture, or narrowly admit exact "
-        "timezone instances; do not allow mutable globals or weaken collection-order "
-        "isolation."
+        "Run 44's guard rejects uppercase datetime.timezone.utc even though it is "
+        "immutable. Run 45 admits timezone values, but declares ALLOWED_IMPORT_ROOTS, "
+        "RISKY_CALLS and FORBIDDEN_SYMBOLS as uppercase mutable sets; the same guard "
+        "correctly rejects the first and would reject the others next. Admit exact "
+        "immutable timezone instances and store all shared membership collections as "
+        "frozenset; do not admit set or weaken the global-state and collection-order "
+        "isolation guard."
     )
+    assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
+        "Model validation shadows invalid-proof classification"
+    )
+    assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["detail"] == (
+        "Run 45 mutates ModelRecord.proof to a string. _bind_comparison calls "
+        "_validate_model first, which classifies the record as INVALID_MODEL, so the "
+        "later documented INVALID_PROOF branch cannot be reached for a malformed proof. "
+        "Preserve strict ModelRecord construction, but validate the comparison model "
+        "shell without consuming the proof, then apply self/role precedence and classify "
+        "a non-ProveResult proof as INVALID_PROOF; do not weaken checksum, proof binding "
+        "or fail-closed ordering."
+    )
+    assert len(normalized["findings"]) == MAX_FINDINGS - 1
     assert {
         finding["location"]["path"] for finding in normalized["findings"]
     } == {"src/atp/brain/learn.py", "tests/test_brain_learn.py"}

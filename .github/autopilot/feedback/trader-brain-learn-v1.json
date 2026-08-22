@@ -222,16 +222,22 @@
     {
       "id": "invalid-policy-fixture-raises-before-result-refusal",
       "severity": "P1",
-      "title": "Invalid-policy fixture fails before the Result path",
-      "detail": "Run 44 constructs DriftPolicy with mild_confidence_factor=0.25 and severe_confidence_factor=0.75. DriftPolicy.__post_init__ immediately raises INVALID_POLICY before _drift can return the typed fail-closed Result the regression expects, so the intended evaluator refusal is never exercised. Align the fixture and contract so the deterministic Result path is tested, or explicitly assert construction rejection; do not relax the monotonic-confidence guard.",
+      "title": "Invalid-policy fixtures still miss evaluator refusal",
+      "detail": "Run 44 constructs a policy that fails validation before the evaluator can return a typed refusal. Run 45 asserts construction rejection, but its _drift(policy=None) helper replaces None with a valid default policy, so evaluate_drift accepts and the INVALID_POLICY Result path remains untested. Assert constructor rejection separately and call evaluate_drift with None or a tampered policy through the public boundary; do not relax the monotonic-confidence guard.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 182
+        "line": 297
       },
       "sources": [
         {
           "run_id": 32528444226,
           "job_id": 96921311025,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32542812818,
+          "job_id": 96958966128,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
@@ -240,16 +246,40 @@
     {
       "id": "timezone-utc-fixture-not-in-immutable-allowlist",
       "severity": "P1",
-      "title": "Immutable-fixture guard rejects timezone.utc",
-      "detail": "Run 44 introduces an uppercase datetime.timezone.utc shared constant, but the immutability guard admits only str, int, float, tuple, datetime and timedelta, so it fails before behavioral checks despite timezone.utc being immutable. Inline or remove the uppercase timezone fixture, or narrowly admit exact timezone instances; do not allow mutable globals or weaken collection-order isolation.",
+      "title": "Fixture immutability contract remains inconsistent",
+      "detail": "Run 44's guard rejects uppercase datetime.timezone.utc even though it is immutable. Run 45 admits timezone values, but declares ALLOWED_IMPORT_ROOTS, RISKY_CALLS and FORBIDDEN_SYMBOLS as uppercase mutable sets; the same guard correctly rejects the first and would reject the others next. Admit exact immutable timezone instances and store all shared membership collections as frozenset; do not admit set or weaken the global-state and collection-order isolation guard.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 642
+        "line": 560
       },
       "sources": [
         {
           "run_id": 32528444226,
           "job_id": 96921311025,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32542812818,
+          "job_id": 96958966128,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        }
+      ]
+    },
+    {
+      "id": "comparison-invalid-proof-shadowed-by-model-validation",
+      "severity": "P1",
+      "title": "Model validation shadows invalid-proof classification",
+      "detail": "Run 45 mutates ModelRecord.proof to a string. _bind_comparison calls _validate_model first, which classifies the record as INVALID_MODEL, so the later documented INVALID_PROOF branch cannot be reached for a malformed proof. Preserve strict ModelRecord construction, but validate the comparison model shell without consuming the proof, then apply self/role precedence and classify a non-ProveResult proof as INVALID_PROOF; do not weaken checksum, proof binding or fail-closed ordering.",
+      "location": {
+        "path": "src/atp/brain/learn.py",
+        "line": 656
+      },
+      "sources": [
+        {
+          "run_id": 32542812818,
+          "job_id": 96958966128,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
