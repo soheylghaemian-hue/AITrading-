@@ -27,6 +27,9 @@ from .queue import GoalViolation, load_goal
 MAX_FEEDBACK_BYTES = 16_384
 MAX_FINDINGS = 16
 MAX_SOURCES_PER_FINDING = 8
+LEARN_GOAL_ID = "trader-brain-learn-v1"
+LEARN_MAX_FEEDBACK_BYTES = 32_768
+LEARN_MAX_SOURCES_PER_FINDING = 16
 MAX_PATH_BYTES = 240
 ALLOWED_SEVERITIES = frozenset({"P0", "P1"})
 # ``artifact_audit`` means trusted independent reproduction against the immutable
@@ -139,6 +142,12 @@ def _source_identity(source: Mapping[str, Any]) -> tuple[int, int, str, str]:
     )
 
 
+def _feedback_bounds(goal: Goal) -> tuple[int, int]:
+    if goal.goal_id == LEARN_GOAL_ID:
+        return LEARN_MAX_FEEDBACK_BYTES, LEARN_MAX_SOURCES_PER_FINDING
+    return MAX_FEEDBACK_BYTES, MAX_SOURCES_PER_FINDING
+
+
 def validate_feedback(
     payload: Any,
     goal: Goal,
@@ -162,6 +171,7 @@ def validate_feedback(
         raise FeedbackViolation("findings count is outside the trusted bound")
 
     path_policy = policy or AutopilotPolicy()
+    _, max_sources = _feedback_bounds(goal)
     normalized: list[dict[str, Any]] = []
     finding_ids: set[str] = set()
     for finding in findings:
@@ -191,7 +201,7 @@ def validate_feedback(
             normalized_location["line"] = _positive_int(location["line"], "location.line")
 
         sources = finding["sources"]
-        if not isinstance(sources, list) or not 1 <= len(sources) <= MAX_SOURCES_PER_FINDING:
+        if not isinstance(sources, list) or not 1 <= len(sources) <= max_sources:
             raise FeedbackViolation("finding.sources count is outside the trusted bound")
         normalized_sources = [_validate_source(source) for source in sources]
         source_identities = [_source_identity(source) for source in normalized_sources]
@@ -225,7 +235,7 @@ def canonical_feedback_bytes(payload: Mapping[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
-def _read_feedback_file(path: Path) -> bytes:
+def _read_feedback_file(path: Path, *, max_bytes: int) -> bytes:
     try:
         initial = path.lstat()
     except OSError as exc:
@@ -241,17 +251,17 @@ def _read_feedback_file(path: Path) -> bytes:
         metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode):
             raise FeedbackViolation("feedback must be a regular file")
-        if metadata.st_size > MAX_FEEDBACK_BYTES:
+        if metadata.st_size > max_bytes:
             raise FeedbackViolation("feedback exceeds the size limit")
         chunks: list[bytes] = []
         total = 0
         while True:
-            chunk = os.read(descriptor, min(4096, MAX_FEEDBACK_BYTES + 1 - total))
+            chunk = os.read(descriptor, min(4096, max_bytes + 1 - total))
             if not chunk:
                 break
             chunks.append(chunk)
             total += len(chunk)
-            if total > MAX_FEEDBACK_BYTES:
+            if total > max_bytes:
                 raise FeedbackViolation("feedback exceeds the size limit")
         return b"".join(chunks)
     finally:
@@ -264,7 +274,8 @@ def load_feedback(
     policy: AutopilotPolicy | None = None,
 ) -> dict[str, Any]:
     """Load and validate one confined feedback file."""
-    raw = _read_feedback_file(path)
+    max_bytes, _ = _feedback_bounds(goal)
+    raw = _read_feedback_file(path, max_bytes=max_bytes)
     if raw.startswith(b"\xef\xbb\xbf") or b"\x00" in raw:
         raise FeedbackViolation("feedback must be plain UTF-8 JSON")
     try:
@@ -276,7 +287,10 @@ def load_feedback(
         )
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise FeedbackViolation("feedback is not valid UTF-8 JSON") from exc
-    return validate_feedback(payload, goal, policy)
+    normalized = validate_feedback(payload, goal, policy)
+    if len(canonical_feedback_bytes(normalized)) > max_bytes:
+        raise FeedbackViolation("canonical feedback exceeds the size limit")
+    return normalized
 
 
 def _safe_relative(value: str, field: str) -> Path:
