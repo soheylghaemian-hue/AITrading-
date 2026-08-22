@@ -37,6 +37,16 @@ no BOM, NUL or CR, and end in exactly one LF. Do not emit a patch, partial hunk,
 the trusted goal. If any required preimage or full repaired content is uncertain, fail closed instead of
 guessing.
 
+Canonical edit construction:
+
+- Before emitting `structured_output`, determine the complete exact set of touched paths. If a path would appear
+  twice or competing edits disagree for one path, fail closed; never choose first-wins or last-wins.
+- Freeze that unique path set, sort it by raw Python/Unicode string order, then construct `edits` exactly once in
+  that order. Move each whole edit object together with its path, preimage and content. Never use discovery, Read
+  or implementation order, and never append another edit after the ordered array is built.
+- After any correction, recheck the complete array. For every `i > 0`, require
+  `edits[i - 1].path < edits[i].path` before submitting.
+
 Final pre-submit preflight:
 
 - Walk every `edits[i]`, including the last edit, and verify paths are strictly increasing in lexicographic

@@ -315,6 +315,16 @@ def test_claude_prompts_require_a_final_per_edit_transport_preflight():
     for name in ("claude-author.md", "claude-repair.md"):
         prompt = (root / ".github/autopilot/prompts" / name).read_text()
         normalized = " ".join(prompt.split())
+        assert "Canonical edit construction" in normalized
+        assert "complete exact set of touched paths" in normalized
+        assert "never choose first-wins or last-wins" in normalized
+        assert "Freeze that unique path set" in normalized
+        assert "sort it by raw Python/Unicode string order" in normalized
+        assert "Move each whole edit object together" in normalized
+        assert "Never use discovery, Read or implementation order" in normalized
+        assert "never append another edit after the ordered array is built" in normalized
+        assert "After any correction, recheck the complete array" in normalized
+        assert "`edits[i - 1].path < edits[i].path`" in normalized
         assert "Final pre-submit preflight" in normalized
         assert "every `edits[i]`, including the last edit" in normalized
         assert "strictly increasing in lexicographic order with no duplicate path" in normalized
