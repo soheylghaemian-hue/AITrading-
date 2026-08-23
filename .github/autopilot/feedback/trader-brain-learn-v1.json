@@ -7,10 +7,10 @@
       "id": "authority-field-lexical-false-positive",
       "severity": "P1",
       "title": "Authority API mismatch",
-      "detail": "36/51/60/64 mix lexical/import/call with dotted/bare names. Match forms; keep no-order/no-execution.",
+      "detail": "36/51/60/64/70 mix lexical/import/call checks with dotted/bare or collapsed relative names. Run 70 allowlists every relative import as \".\" and does not inspect loaded transitive modules, so broker/runtime/service/live-trading siblings pass. Match exact forms/module paths and actual import graph; keep no-order/no-execution.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 878
+        "line": 792
       },
       "sources": [
         {
@@ -35,6 +35,12 @@
           "run_id": 32594040692,
           "job_id": 97086336473,
           "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32622788013,
+          "job_id": 97158669218,
+          "stage": "final_review",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
@@ -109,10 +115,10 @@
       "id": "coordinated-drift-tampering-bypasses-revalidation",
       "severity": "P1",
       "title": "Accepted-state minting persists",
-      "detail": "40/47-49/51/54/56/63 mint/restore accepted state via constructors, _Warrant or __setstate__. Block non-evaluator paths; retain revalidation.",
+      "detail": "40/47-49/51/54/56/63/70 mint, restore or rebind accepted state via constructors, _Warrant or __setstate__. Run 70 hand-builds DriftResult from accepted inputs; valid inputs.model_id/prior_confidence mutations remain accepted downstream. Block non-evaluator paths; bind immutable evaluator provenance/input identity; retain consumer revalidation.",
       "location": {
-        "path": "tests/test_brain_learn.py",
-        "line": 368
+        "path": "src/atp/brain/learn.py",
+        "line": 594
       },
       "sources": [
         {
@@ -162,6 +168,12 @@
           "job_id": 97079081660,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32622788013,
+          "job_id": 97158669218,
+          "stage": "final_review",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
     },
@@ -205,15 +217,21 @@
       "id": "reinstate-chain-allows-challenger-promotion",
       "severity": "P1",
       "title": "Challenger promotion",
-      "detail": "REINSTATE permits no reversal ID/any active next_role: CHALLENGER→RETIRED→CHAMPION. Bind reversal; forbid self-promotion.",
+      "detail": "42/70 permit CHALLENGER→RETIRED→CHAMPION: 42 lacks a reversal ID and allows any active next_role; 70 re-derives previous_role from mutable retirement.inputs.model.role. Bind the exact reversal and original role/provenance; reject tampering; forbid self-promotion.",
       "location": {
         "path": "src/atp/brain/learn.py",
-        "line": 891
+        "line": 1063
       },
       "sources": [
         {
           "run_id": 32481392244,
           "job_id": 96778775008,
+          "stage": "final_review",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32622788013,
+          "job_id": 97158669218,
           "stage": "final_review",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }

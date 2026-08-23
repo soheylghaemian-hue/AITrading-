@@ -338,7 +338,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_68() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_70() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -366,7 +366,7 @@ def test_learn_feedback_records_exact_run_evidence_through_68() -> None:
         finding["id"]: (finding["location"]["path"], finding["location"]["line"])
         for finding in normalized["findings"]
     } == {
-        "authority-field-lexical-false-positive": ("tests/test_brain_learn.py", 878),
+        "authority-field-lexical-false-positive": ("tests/test_brain_learn.py", 792),
         "closure-fixture-rejects-benign-class-cell": (
             "tests/test_brain_learn.py",
             463,
@@ -380,8 +380,8 @@ def test_learn_feedback_records_exact_run_evidence_through_68() -> None:
             357,
         ),
         "coordinated-drift-tampering-bypasses-revalidation": (
-            "tests/test_brain_learn.py",
-            368,
+            "src/atp/brain/learn.py",
+            594,
         ),
         "evidence-failure-precedence-permutation-dependent": (
             "src/atp/brain/learn.py",
@@ -406,7 +406,7 @@ def test_learn_feedback_records_exact_run_evidence_through_68() -> None:
         ),
         "reinstate-chain-allows-challenger-promotion": (
             "src/atp/brain/learn.py",
-            891,
+            1063,
         ),
         "tamper-fixture-leaks-champion-role": ("tests/test_brain_learn.py", 614),
         "timezone-spelling-fixture-assumes-evidence-inequality": (
@@ -593,6 +593,12 @@ def test_learn_feedback_records_exact_run_evidence_through_68() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_70_final_review_source = {
+        "run_id": 32622788013,
+        "job_id": 97158669218,
+        "stage": "final_review",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -603,6 +609,7 @@ def test_learn_feedback_records_exact_run_evidence_through_68() -> None:
             run_51_gate_source,
             run_60_gate_source,
             run_64_gate_source,
+            run_70_final_review_source,
         ],
         "closure-fixture-rejects-benign-class-cell": [
             run_49_gate_source,
@@ -626,6 +633,7 @@ def test_learn_feedback_records_exact_run_evidence_through_68() -> None:
             run_54_gate_source,
             run_56_gate_source,
             run_63_gate_source,
+            run_70_final_review_source,
         ],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
         "equivalent-permutations-produce-unequal-results": [
@@ -654,7 +662,10 @@ def test_learn_feedback_records_exact_run_evidence_through_68() -> None:
             run_66_gate_source,
         ],
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
-        "reinstate-chain-allows-challenger-promotion": [run_42_source],
+        "reinstate-chain-allows-challenger-promotion": [
+            run_42_source,
+            run_70_final_review_source,
+        ],
         "tamper-fixture-leaks-champion-role": [run_36_source],
         "timezone-spelling-fixture-assumes-evidence-inequality": [
             run_43_source,
@@ -680,7 +691,10 @@ def test_learn_feedback_records_exact_run_evidence_through_68() -> None:
         "Authority API mismatch"
     )
     assert findings["authority-field-lexical-false-positive"]["detail"] == (
-        "36/51/60/64 mix lexical/import/call with dotted/bare names. Match forms; keep "
+        "36/51/60/64/70 mix lexical/import/call checks with dotted/bare or collapsed "
+        "relative names. Run 70 allowlists every relative import as \".\" and does not "
+        "inspect loaded transitive modules, so broker/runtime/service/live-trading "
+        "siblings pass. Match exact forms/module paths and actual import graph; keep "
         "no-order/no-execution."
     )
     assert findings["tamper-fixture-leaks-champion-role"]["title"] == (
@@ -711,8 +725,11 @@ def test_learn_feedback_records_exact_run_evidence_through_68() -> None:
     )
     assert (
         findings["coordinated-drift-tampering-bypasses-revalidation"]["detail"]
-        == "40/47-49/51/54/56/63 mint/restore accepted state via constructors, _Warrant "
-        "or __setstate__. Block non-evaluator paths; retain revalidation."
+        == "40/47-49/51/54/56/63/70 mint, restore or rebind accepted state via "
+        "constructors, _Warrant or __setstate__. Run 70 hand-builds DriftResult from "
+        "accepted inputs; valid inputs.model_id/prior_confidence mutations remain accepted "
+        "downstream. Block non-evaluator paths; bind immutable evaluator "
+        "provenance/input identity; retain consumer revalidation."
     )
     assert findings["evidence-failure-precedence-permutation-dependent"]["title"] == (
         "Evidence failure precedence depends on tuple order"
@@ -733,8 +750,10 @@ def test_learn_feedback_records_exact_run_evidence_through_68() -> None:
         "Challenger promotion"
     )
     assert findings["reinstate-chain-allows-challenger-promotion"]["detail"] == (
-        "REINSTATE permits no reversal ID/any active next_role: "
-        "CHALLENGER→RETIRED→CHAMPION. Bind reversal; forbid self-promotion."
+        "42/70 permit CHALLENGER→RETIRED→CHAMPION: 42 lacks a reversal ID and allows "
+        "any active next_role; 70 re-derives previous_role from mutable "
+        "retirement.inputs.model.role. Bind the exact reversal and original "
+        "role/provenance; reject tampering; forbid self-promotion."
     )
     assert findings["equivalent-permutations-produce-unequal-results"]["title"] == (
         "Equivalent inputs produce unequal results"
@@ -934,6 +953,15 @@ def test_learn_feedback_records_exact_run_evidence_through_68() -> None:
         for finding_id, finding in findings.items()
         if run_68_gate_source in finding["sources"]
     } == {"invalid-policy-fixture-raises-before-result-refusal"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_70_final_review_source in finding["sources"]
+    } == {
+        "authority-field-lexical-false-positive",
+        "coordinated-drift-tampering-bypasses-revalidation",
+        "reinstate-chain-allows-challenger-promotion",
+    }
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Proof order"
     )
