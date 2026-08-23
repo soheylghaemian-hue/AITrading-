@@ -349,10 +349,10 @@
       "id": "invalid-policy-fixture-raises-before-result-refusal",
       "severity": "P1",
       "title": "Evaluator fixture errors",
-      "detail": "44-45/55-56/58-59/61-62/66 misuse constructors/defaults/thresholds, __setstate__ shape or helpers; 66 replaces explicit None. Use sentinels/distinct inputs; reach evaluator; keep guards/order strict.",
+      "detail": "44-45/55-56/58-59/61-62/66-67 misuse constructors/defaults/thresholds, __setstate__ shape or helpers; 66 replaces explicit None; 67 passes accepted output to _reason and accesses a raising property outside pytest.raises. Use sentinels/distinct inputs plus explicit cases/raises; reach intended evaluator assertions; keep guards/order strict.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 210
+        "line": 179
       },
       "sources": [
         {
@@ -406,6 +406,12 @@
         {
           "run_id": 32599754306,
           "job_id": 97099076876,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32602620926,
+          "job_id": 97106277328,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
