@@ -338,7 +338,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_70() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_71() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -399,7 +399,7 @@ def test_learn_feedback_records_exact_run_evidence_through_70() -> None:
             "tests/test_brain_learn.py",
             412,
         ),
-        "learn-documentation-omits-model-role": ("tests/test_brain_learn.py", 882),
+        "learn-documentation-omits-model-role": ("src/atp/brain/__init__.py", 36),
         "local-proposal-tamper-invalidates-proof-first": (
             "tests/test_brain_learn.py",
             381,
@@ -599,6 +599,12 @@ def test_learn_feedback_records_exact_run_evidence_through_70() -> None:
         "stage": "final_review",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_71_gate_source = {
+        "run_id": 32633659803,
+        "job_id": 97182598097,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -660,6 +666,7 @@ def test_learn_feedback_records_exact_run_evidence_through_70() -> None:
             run_61_gate_source,
             run_65_gate_source,
             run_66_gate_source,
+            run_71_gate_source,
         ],
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
         "reinstate-chain-allows-challenger-promotion": [
@@ -788,12 +795,13 @@ def test_learn_feedback_records_exact_run_evidence_through_70() -> None:
         "PROOF_MODEL_MISMATCH. Use clean data; keep revalidation/order strict."
     )
     assert findings["learn-documentation-omits-model-role"]["title"] == (
-        "LEARN doc"
+        "LEARN public API/docs drift"
     )
     assert findings["learn-documentation-omits-model-role"]["detail"] == (
         "43/61 omit ModelRole/exact research-only wording; 65/66 raw scans reject line "
-        "breaks or Markdown markup. Pin plain public/guard/equality phrases; keep "
-        "export/docs checks strict."
+        "breaks or Markdown markup; 71 makes __all__ unsorted by placing "
+        "RejectedEvidence before ReinstatementInputs. Pin plain public/guard/equality "
+        "phrases and sorted unique exports; keep export/docs checks strict."
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["title"] == (
         "Evaluator fixture errors"
@@ -962,6 +970,11 @@ def test_learn_feedback_records_exact_run_evidence_through_70() -> None:
         "coordinated-drift-tampering-bypasses-revalidation",
         "reinstate-chain-allows-challenger-promotion",
     }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_71_gate_source in finding["sources"]
+    } == {"learn-documentation-omits-model-role"}
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Proof order"
     )
@@ -974,7 +987,11 @@ def test_learn_feedback_records_exact_run_evidence_through_70() -> None:
     assert len(normalized["findings"]) == MAX_FINDINGS
     assert {
         finding["location"]["path"] for finding in normalized["findings"]
-    } == {"src/atp/brain/learn.py", "tests/test_brain_learn.py"}
+    } == {
+        "src/atp/brain/__init__.py",
+        "src/atp/brain/learn.py",
+        "tests/test_brain_learn.py",
+    }
 
 
 def test_schema_is_strict_and_matches_validator_bounds() -> None:
