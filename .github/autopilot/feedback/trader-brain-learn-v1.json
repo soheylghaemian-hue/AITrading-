@@ -337,10 +337,10 @@
       "id": "learn-documentation-omits-model-role",
       "severity": "P1",
       "title": "LEARN public API/docs drift",
-      "detail": "43/61 omit ModelRole/exact research-only wording; 65/66 raw scans reject line breaks or Markdown markup; 71 makes __all__ unsorted by placing RejectedEvidence before ReinstatementInputs; 72 ends the pinned comparison/PROVE model-binding sentence with a colon instead of the required period; 73 promises retirement is reversible exactly once although stateless evaluate_reinstatement repeatedly accepts the same retirement, identity, reversal ID, role and timestamp and records no consumption. Remove the unsupported exactly-once promise or explicitly represent replay/consumption; pin plain public/guard/equality phrases and sorted unique exports; keep export/docs checks strict.",
+      "detail": "43/61 omit ModelRole/exact research-only wording; 65/66/74 raw scans reject line breaks or Markdown markup; 71 makes __all__ unsorted by placing RejectedEvidence before ReinstatementInputs; 72 ends the pinned comparison/PROVE model-binding sentence with a colon instead of the required period; 73 promises retirement is reversible exactly once although stateless evaluate_reinstatement repeatedly accepts the same retirement, identity, reversal ID, role and timestamp and records no consumption. Remove the unsupported exactly-once promise or explicitly represent replay/consumption; pin plain public/guard/equality phrases and sorted unique exports; keep export/docs checks strict.",
       "location": {
         "path": "docs/TRADER_BRAIN.md",
-        "line": 333
+        "line": 314
       },
       "sources": [
         {
@@ -383,6 +383,12 @@
           "run_id": 32647948386,
           "job_id": 97221994851,
           "stage": "final_review",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32652854008,
+          "job_id": 97233419145,
+          "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]

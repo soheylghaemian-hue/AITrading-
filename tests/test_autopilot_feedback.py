@@ -338,7 +338,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_73() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_74() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -399,7 +399,7 @@ def test_learn_feedback_records_exact_run_evidence_through_73() -> None:
             "tests/test_brain_learn.py",
             412,
         ),
-        "learn-documentation-omits-model-role": ("docs/TRADER_BRAIN.md", 333),
+        "learn-documentation-omits-model-role": ("docs/TRADER_BRAIN.md", 314),
         "local-proposal-tamper-invalidates-proof-first": (
             "tests/test_brain_learn.py",
             381,
@@ -617,6 +617,12 @@ def test_learn_feedback_records_exact_run_evidence_through_73() -> None:
         "stage": "final_review",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_74_gate_source = {
+        "run_id": 32652854008,
+        "job_id": 97233419145,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -682,6 +688,7 @@ def test_learn_feedback_records_exact_run_evidence_through_73() -> None:
             run_71_gate_source,
             run_72_gate_source,
             run_73_final_review_source,
+            run_74_gate_source,
         ],
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
         "reinstate-chain-allows-challenger-promotion": [
@@ -818,7 +825,7 @@ def test_learn_feedback_records_exact_run_evidence_through_73() -> None:
         "LEARN public API/docs drift"
     )
     assert findings["learn-documentation-omits-model-role"]["detail"] == (
-        "43/61 omit ModelRole/exact research-only wording; 65/66 raw scans reject "
+        "43/61 omit ModelRole/exact research-only wording; 65/66/74 raw scans reject "
         "line breaks or Markdown markup; 71 makes __all__ unsorted by placing "
         "RejectedEvidence before ReinstatementInputs; 72 ends the pinned "
         "comparison/PROVE model-binding sentence with a colon instead of the required "
@@ -1014,6 +1021,11 @@ def test_learn_feedback_records_exact_run_evidence_through_73() -> None:
         "coordinated-drift-tampering-bypasses-revalidation",
         "learn-documentation-omits-model-role",
     }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_74_gate_source in finding["sources"]
+    } == {"learn-documentation-omits-model-role"}
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Proof order"
     )
