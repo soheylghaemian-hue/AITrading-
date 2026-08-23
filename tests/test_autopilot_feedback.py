@@ -338,7 +338,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_72() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_73() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -381,7 +381,7 @@ def test_learn_feedback_records_exact_run_evidence_through_72() -> None:
         ),
         "coordinated-drift-tampering-bypasses-revalidation": (
             "src/atp/brain/learn.py",
-            594,
+            146,
         ),
         "evidence-failure-precedence-permutation-dependent": (
             "src/atp/brain/learn.py",
@@ -399,7 +399,7 @@ def test_learn_feedback_records_exact_run_evidence_through_72() -> None:
             "tests/test_brain_learn.py",
             412,
         ),
-        "learn-documentation-omits-model-role": ("docs/TRADER_BRAIN.md", 366),
+        "learn-documentation-omits-model-role": ("docs/TRADER_BRAIN.md", 333),
         "local-proposal-tamper-invalidates-proof-first": (
             "tests/test_brain_learn.py",
             381,
@@ -611,6 +611,12 @@ def test_learn_feedback_records_exact_run_evidence_through_72() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_73_final_review_source = {
+        "run_id": 32647948386,
+        "job_id": 97221994851,
+        "stage": "final_review",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -646,6 +652,7 @@ def test_learn_feedback_records_exact_run_evidence_through_72() -> None:
             run_56_gate_source,
             run_63_gate_source,
             run_70_final_review_source,
+            run_73_final_review_source,
         ],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
         "equivalent-permutations-produce-unequal-results": [
@@ -674,6 +681,7 @@ def test_learn_feedback_records_exact_run_evidence_through_72() -> None:
             run_66_gate_source,
             run_71_gate_source,
             run_72_gate_source,
+            run_73_final_review_source,
         ],
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
         "reinstate-chain-allows-challenger-promotion": [
@@ -739,11 +747,16 @@ def test_learn_feedback_records_exact_run_evidence_through_72() -> None:
     )
     assert (
         findings["coordinated-drift-tampering-bypasses-revalidation"]["detail"]
-        == "40/47-49/51/54/56/63/70 mint, restore or rebind accepted state via "
-        "constructors, _Warrant or __setstate__. Run 70 hand-builds DriftResult from "
-        "accepted inputs; valid inputs.model_id/prior_confidence mutations remain accepted "
-        "downstream. Block non-evaluator paths; bind immutable evaluator "
-        "provenance/input identity; retain consumer revalidation."
+        == "40/47-49/51/54/56/63/70/73 mint, restore or rebind accepted state via "
+        "constructors, _Warrant, __setstate__ or caller-forgeable call sites. Run 70 "
+        "hand-builds DriftResult from accepted inputs; valid "
+        "inputs.model_id/prior_confidence mutations remain accepted downstream. Run "
+        "73's _issued_by trusts only frame globals/co_name: a caller-created "
+        "types.FunctionType named evaluate_comparison with learn.__dict__ mints "
+        "ComparisonResult from forged ModelRecords, fake proof checksums and "
+        "arbitrary returns, undermining retirement/reinstatement provenance. Block "
+        "non-evaluator paths; bind immutable evaluator provenance/input identity; "
+        "retain consumer revalidation."
     )
     assert findings["evidence-failure-precedence-permutation-dependent"]["title"] == (
         "Evidence failure precedence depends on tuple order"
@@ -805,11 +818,16 @@ def test_learn_feedback_records_exact_run_evidence_through_72() -> None:
         "LEARN public API/docs drift"
     )
     assert findings["learn-documentation-omits-model-role"]["detail"] == (
-        "43/61 omit ModelRole/exact research-only wording; 65/66 raw scans reject line "
-        "breaks or Markdown markup; 71 makes __all__ unsorted by placing "
-        "RejectedEvidence before ReinstatementInputs; 72 ends the pinned comparison/PROVE "
-        "model-binding sentence with a colon instead of the required period. Pin plain "
-        "public/guard/equality phrases and sorted unique exports; keep export/docs checks strict."
+        "43/61 omit ModelRole/exact research-only wording; 65/66 raw scans reject "
+        "line breaks or Markdown markup; 71 makes __all__ unsorted by placing "
+        "RejectedEvidence before ReinstatementInputs; 72 ends the pinned "
+        "comparison/PROVE model-binding sentence with a colon instead of the required "
+        "period; 73 promises retirement is reversible exactly once although stateless "
+        "evaluate_reinstatement repeatedly accepts the same retirement, identity, "
+        "reversal ID, role and timestamp and records no consumption. Remove the "
+        "unsupported exactly-once promise or explicitly represent replay/consumption; "
+        "pin plain public/guard/equality phrases and sorted unique exports; keep "
+        "export/docs checks strict."
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["title"] == (
         "Evaluator fixture errors"
@@ -988,6 +1006,14 @@ def test_learn_feedback_records_exact_run_evidence_through_72() -> None:
         for finding_id, finding in findings.items()
         if run_72_gate_source in finding["sources"]
     } == {"learn-documentation-omits-model-role"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_73_final_review_source in finding["sources"]
+    } == {
+        "coordinated-drift-tampering-bypasses-revalidation",
+        "learn-documentation-omits-model-role",
+    }
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Proof order"
     )
