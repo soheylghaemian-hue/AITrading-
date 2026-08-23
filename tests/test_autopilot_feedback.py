@@ -338,7 +338,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_66() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_67() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -397,7 +397,7 @@ def test_learn_feedback_records_exact_run_evidence_through_66() -> None:
         ),
         "invalid-policy-fixture-raises-before-result-refusal": (
             "tests/test_brain_learn.py",
-            210,
+            179,
         ),
         "learn-documentation-omits-model-role": ("tests/test_brain_learn.py", 882),
         "local-proposal-tamper-invalidates-proof-first": (
@@ -581,6 +581,12 @@ def test_learn_feedback_records_exact_run_evidence_through_66() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_67_gate_source = {
+        "run_id": 32602620926,
+        "job_id": 97106277328,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -632,6 +638,7 @@ def test_learn_feedback_records_exact_run_evidence_through_66() -> None:
             run_61_gate_source,
             run_62_gate_source,
             run_66_gate_source,
+            run_67_gate_source,
         ],
         "learn-documentation-omits-model-role": [
             run_43_source,
@@ -766,9 +773,11 @@ def test_learn_feedback_records_exact_run_evidence_through_66() -> None:
         "Evaluator fixture errors"
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["detail"] == (
-        "44-45/55-56/58-59/61-62/66 misuse constructors/defaults/thresholds, "
-        "__setstate__ shape or helpers; 66 replaces explicit None. Use sentinels/distinct "
-        "inputs; reach evaluator; keep guards/order strict."
+        "44-45/55-56/58-59/61-62/66-67 misuse constructors/defaults/thresholds, "
+        "__setstate__ shape or helpers; 66 replaces explicit None; 67 passes accepted "
+        "output to _reason and accesses a raising property outside pytest.raises. Use "
+        "sentinels/distinct inputs plus explicit cases/raises; reach intended evaluator "
+        "assertions; keep guards/order strict."
     )
     assert findings["timezone-utc-fixture-not-in-immutable-allowlist"]["title"] == (
         "Fixture immutability conflict"
@@ -907,6 +916,11 @@ def test_learn_feedback_records_exact_run_evidence_through_66() -> None:
         "invalid-policy-fixture-raises-before-result-refusal",
         "learn-documentation-omits-model-role",
     }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_67_gate_source in finding["sources"]
+    } == {"invalid-policy-fixture-raises-before-result-refusal"}
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Proof order"
     )
