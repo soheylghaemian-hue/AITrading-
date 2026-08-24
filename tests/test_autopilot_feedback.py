@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_81() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_83() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -399,7 +399,7 @@ def test_learn_feedback_records_exact_run_evidence_through_81() -> None:
         ),
         "invalid-policy-fixture-raises-before-result-refusal": (
             "tests/test_brain_learn.py",
-            577,
+            191,
         ),
         "learn-documentation-omits-model-role": (
             "tests/test_brain_learn.py",
@@ -665,6 +665,12 @@ def test_learn_feedback_records_exact_run_evidence_through_81() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_83_gate_source = {
+        "run_id": 32775112610,
+        "job_id": 97594147727,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -726,6 +732,7 @@ def test_learn_feedback_records_exact_run_evidence_through_81() -> None:
             run_67_gate_source,
             run_68_gate_source,
             run_75_gate_source,
+            run_83_gate_source,
         ],
         "learn-documentation-omits-model-role": [
             run_43_source,
@@ -915,14 +922,19 @@ def test_learn_feedback_records_exact_run_evidence_through_81() -> None:
         "Evaluator fixture errors"
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["detail"] == (
-        "44-45/55-56/58-59/61-62/66-68/75 misuse constructors/defaults/thresholds, "
-        "__setstate__ shape or helpers; 66 replaces explicit None; 67 passes accepted "
-        "output to _reason and accesses a raising property outside pytest.raises; 68 "
-        "expects derived 0.05-0.005 to equal literal 0.045 exactly; 75's forged-comparison "
-        "fixture calls undefined _forge. Use sentinels/distinct inputs, explicit "
-        "cases/raises, defined fixture builders and pytest.approx; reach intended "
-        "evaluator assertions; keep guards/order and lossless float/checksum semantics "
-        "strict."
+        "44-45/55-56/58-59/61-62/66-68/75/83 misuse "
+        "constructors/defaults/thresholds, __setstate__ shape or helpers; 66 replaces "
+        "explicit None; 67 passes accepted output to _reason and accesses a raising "
+        "property outside pytest.raises; 68 expects derived 0.05-0.005 to equal literal "
+        "0.045 exactly; the Run 75 forged-comparison fixture calls undefined _forge; "
+        "Run 83 starts with every March 1-2 item stale at March 10 under six days, so "
+        "reversing empty usable/clearing empty contradictions are literal no-ops and "
+        "zero-day freshness still yields a valid canonical all-rejected result; it also "
+        "compares INVALID_INPUT with INVALID_MODEL refusal checksums. Use "
+        "sentinels/distinct inputs, explicit cases/raises, defined fixture builders and "
+        "pytest.approx; make evidence initially usable/contradictory and compare matching "
+        "reasons; reach intended evaluator assertions; keep guards/order and lossless "
+        "float/reason/checksum semantics strict."
     )
     assert findings[
         "nested-result-failure-reason-leaks-across-transition-boundary"
@@ -1151,6 +1163,11 @@ def test_learn_feedback_records_exact_run_evidence_through_81() -> None:
         "coordinated-drift-tampering-bypasses-revalidation",
         "transition-fixture-confounds-ordering",
     }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_83_gate_source in finding["sources"]
+    } == {"invalid-policy-fixture-raises-before-result-refusal"}
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Proof order"
     )
