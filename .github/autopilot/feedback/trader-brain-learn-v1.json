@@ -115,10 +115,10 @@
       "id": "coordinated-drift-tampering-bypasses-revalidation",
       "severity": "P1",
       "title": "Accepted-state minting persists",
-      "detail": "40/47-49/51/54/56/63/70/73/77 mint, restore or rebind accepted state via constructors, _Warrant, __setstate__ or caller-forgeable call sites. Run 70 hand-builds DriftResult from accepted inputs; valid inputs.model_id/prior_confidence mutations remain accepted downstream. Run 73's _issued_by trusts only frame globals/co_name: a caller-created types.FunctionType named evaluate_comparison with learn.__dict__ mints ComparisonResult from forged ModelRecords, fake proof checksums and arbitrary returns, undermining retirement/reinstatement provenance. Run 77 re-derives input_identity from current mutable accepted.inputs, so a valid accepted.inputs.model.model_id mutation makes checksum() not raise. Block non-evaluator paths; bind immutable evaluator provenance/input identity; retain consumer revalidation.",
+      "detail": "40/47-49/51/54/56/63/70/73/77/79 mint, restore or rebind accepted state via constructors, _Warrant, __setstate__ or caller-forgeable call sites. Run 70 hand-builds DriftResult from accepted inputs; valid inputs.model_id/prior_confidence mutations remain accepted downstream. Run 73's _issued_by trusts only frame globals/co_name: a caller-created types.FunctionType named evaluate_comparison with learn.__dict__ mints ComparisonResult from forged ModelRecords, fake proof checksums and arbitrary returns, undermining retirement/reinstatement provenance. Run 77 re-derives input_identity from current mutable accepted.inputs, so a valid accepted.inputs.model.model_id mutation makes checksum() not raise. Run 79's public result constructors accept caller-supplied provenance and coherently recomputed fields; tests allow direct recreation of an accepted DriftResult with the same checksum and rebinding mutated inputs via exposed _bind_* helpers. Block non-evaluator construction/rebinding paths; bind immutable evaluator provenance/input identity; retain consumer revalidation.",
       "location": {
         "path": "src/atp/brain/learn.py",
-        "line": 634
+        "line": 416
       },
       "sources": [
         {
@@ -185,6 +185,12 @@
           "run_id": 32703179396,
           "job_id": 97364220767,
           "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32710835689,
+          "job_id": 97397112789,
+          "stage": "final_review",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
