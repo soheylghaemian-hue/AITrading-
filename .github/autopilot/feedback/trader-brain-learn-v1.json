@@ -337,10 +337,10 @@
       "id": "learn-documentation-omits-model-role",
       "severity": "P1",
       "title": "LEARN public API/docs drift",
-      "detail": "43/61 omit ModelRole/exact research-only wording; 65/66/74 raw scans reject line breaks or Markdown markup; 71 makes __all__ unsorted by placing RejectedEvidence before ReinstatementInputs; 72 ends the pinned comparison/PROVE model-binding sentence with a colon instead of the required period; 73 promises retirement is reversible exactly once although stateless evaluate_reinstatement repeatedly accepts the same retirement, identity, reversal ID, role and timestamp and records no consumption. Remove the unsupported exactly-once promise or explicitly represent replay/consumption; pin plain public/guard/equality phrases and sorted unique exports; keep export/docs checks strict.",
+      "detail": "43/61 omit ModelRole/exact research-only wording; 65/66/74 raw scans reject line breaks or Markdown markup; 71 makes __all__ unsorted by placing RejectedEvidence before ReinstatementInputs; 72 ends the pinned comparison/PROVE model-binding sentence with a colon instead of the required period; 73 promises retirement is reversible exactly once although stateless evaluate_reinstatement repeatedly accepts the same retirement, identity, reversal ID, role and timestamp and records no consumption; 75's normalizer deletes every underscore, so stable enum values such as INVALID_INPUT cannot match the documented text. Remove the unsupported exactly-once promise or explicitly represent replay/consumption; use markup-aware normalization; pin plain public/guard/equality/reason phrases and sorted unique exports; keep export/docs checks strict.",
       "location": {
-        "path": "docs/TRADER_BRAIN.md",
-        "line": 314
+        "path": "tests/test_brain_learn.py",
+        "line": 678
       },
       "sources": [
         {
@@ -390,6 +390,12 @@
           "job_id": 97233419145,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32659559724,
+          "job_id": 97246482381,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
     },
@@ -397,10 +403,10 @@
       "id": "invalid-policy-fixture-raises-before-result-refusal",
       "severity": "P1",
       "title": "Evaluator fixture errors",
-      "detail": "44-45/55-56/58-59/61-62/66-67 misuse constructors/defaults/thresholds, __setstate__ shape or helpers; 66 replaces explicit None; 67 passes accepted output to _reason and accesses a raising property outside pytest.raises; 68 expects derived 0.05-0.005 to equal literal 0.045 exactly. Use sentinels/distinct inputs, explicit cases/raises and pytest.approx; reach intended evaluator assertions; keep guards/order and lossless float/checksum semantics strict.",
+      "detail": "44-45/55-56/58-59/61-62/66-68/75 misuse constructors/defaults/thresholds, __setstate__ shape or helpers; 66 replaces explicit None; 67 passes accepted output to _reason and accesses a raising property outside pytest.raises; 68 expects derived 0.05-0.005 to equal literal 0.045 exactly; 75's forged-comparison fixture calls undefined _forge. Use sentinels/distinct inputs, explicit cases/raises, defined fixture builders and pytest.approx; reach intended evaluator assertions; keep guards/order and lossless float/checksum semantics strict.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 412
+        "line": 577
       },
       "sources": [
         {
@@ -466,6 +472,12 @@
         {
           "run_id": 32612737124,
           "job_id": 97130419906,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32659559724,
+          "job_id": 97246482381,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
@@ -568,6 +580,24 @@
         {
           "run_id": 32584681403,
           "job_id": 97062107703,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        }
+      ]
+    },
+    {
+      "id": "nested-result-failure-reason-leaks-across-transition-boundary",
+      "severity": "P1",
+      "title": "Nested failures break transition refusals",
+      "detail": "Run 75 _require_issued rethrows a prior result's _LearnError rather than translating it to its caller-supplied transition reason. Retirement then places ComparisonFailure/DriftFailure inside a TransitionFailure tuple and raises while constructing the refusal; reinstatement exposes INCONSISTENT_RESULT instead of INVALID_RETIREMENT. Map every failed nested result/checksum/reissue to INVALID_COMPARISON, INVALID_DRIFT or INVALID_RETIREMENT, return one typed authority-free refusal, and keep exact enum, checksum and consumer-revalidation guards.",
+      "location": {
+        "path": "src/atp/brain/learn.py",
+        "line": 665
+      },
+      "sources": [
+        {
+          "run_id": 32659559724,
+          "job_id": 97246482381,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }

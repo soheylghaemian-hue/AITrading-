@@ -29,6 +29,7 @@ MAX_FINDINGS = 16
 MAX_SOURCES_PER_FINDING = 8
 LEARN_GOAL_ID = "trader-brain-learn-v1"
 LEARN_MAX_FEEDBACK_BYTES = 32_768
+LEARN_MAX_FINDINGS = 17
 LEARN_MAX_SOURCES_PER_FINDING = 16
 MAX_PATH_BYTES = 240
 ALLOWED_SEVERITIES = frozenset({"P0", "P1"})
@@ -142,10 +143,14 @@ def _source_identity(source: Mapping[str, Any]) -> tuple[int, int, str, str]:
     )
 
 
-def _feedback_bounds(goal: Goal) -> tuple[int, int]:
+def _feedback_bounds(goal: Goal) -> tuple[int, int, int]:
     if goal.goal_id == LEARN_GOAL_ID:
-        return LEARN_MAX_FEEDBACK_BYTES, LEARN_MAX_SOURCES_PER_FINDING
-    return MAX_FEEDBACK_BYTES, MAX_SOURCES_PER_FINDING
+        return (
+            LEARN_MAX_FEEDBACK_BYTES,
+            LEARN_MAX_FINDINGS,
+            LEARN_MAX_SOURCES_PER_FINDING,
+        )
+    return MAX_FEEDBACK_BYTES, MAX_FINDINGS, MAX_SOURCES_PER_FINDING
 
 
 def validate_feedback(
@@ -167,11 +172,11 @@ def validate_feedback(
     if payload["goal_id"] != goal.goal_id:
         raise FeedbackViolation("feedback goal_id does not match the selected goal")
     findings = payload["findings"]
-    if not isinstance(findings, list) or not 1 <= len(findings) <= MAX_FINDINGS:
+    _, max_findings, max_sources = _feedback_bounds(goal)
+    if not isinstance(findings, list) or not 1 <= len(findings) <= max_findings:
         raise FeedbackViolation("findings count is outside the trusted bound")
 
     path_policy = policy or AutopilotPolicy()
-    _, max_sources = _feedback_bounds(goal)
     normalized: list[dict[str, Any]] = []
     finding_ids: set[str] = set()
     for finding in findings:
@@ -274,7 +279,7 @@ def load_feedback(
     policy: AutopilotPolicy | None = None,
 ) -> dict[str, Any]:
     """Load and validate one confined feedback file."""
-    max_bytes, _ = _feedback_bounds(goal)
+    max_bytes, _, _ = _feedback_bounds(goal)
     raw = _read_feedback_file(path, max_bytes=max_bytes)
     if raw.startswith(b"\xef\xbb\xbf") or b"\x00" in raw:
         raise FeedbackViolation("feedback must be plain UTF-8 JSON")
