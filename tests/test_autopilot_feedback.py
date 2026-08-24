@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_83() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_84() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -403,7 +403,7 @@ def test_learn_feedback_records_exact_run_evidence_through_83() -> None:
         ),
         "learn-documentation-omits-model-role": (
             "tests/test_brain_learn.py",
-            715,
+            512,
         ),
         "local-proposal-tamper-invalidates-proof-first": (
             "tests/test_brain_learn.py",
@@ -671,6 +671,12 @@ def test_learn_feedback_records_exact_run_evidence_through_83() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_84_gate_source = {
+        "run_id": 32780584056,
+        "job_id": 97607411133,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -745,6 +751,7 @@ def test_learn_feedback_records_exact_run_evidence_through_83() -> None:
             run_74_gate_source,
             run_75_gate_source,
             run_78_gate_source,
+            run_84_gate_source,
         ],
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
         "nested-result-failure-reason-leaks-across-transition-boundary": [
@@ -901,7 +908,7 @@ def test_learn_feedback_records_exact_run_evidence_through_83() -> None:
         "LEARN public API/docs drift"
     )
     assert findings["learn-documentation-omits-model-role"]["detail"] == (
-        "43/61 omit ModelRole/exact research-only wording; 65/66/74 raw scans "
+        "43/61 omit ModelRole/exact research-only wording; 65/66/74/84 raw scans "
         "reject line breaks or Markdown markup; 71 makes __all__ unsorted by placing "
         "RejectedEvidence before ReinstatementInputs; 72 ends the pinned "
         "comparison/PROVE model-binding sentence with a colon instead of the required "
@@ -1168,6 +1175,11 @@ def test_learn_feedback_records_exact_run_evidence_through_83() -> None:
         for finding_id, finding in findings.items()
         if run_83_gate_source in finding["sources"]
     } == {"invalid-policy-fixture-raises-before-result-refusal"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_84_gate_source in finding["sources"]
+    } == {"learn-documentation-omits-model-role"}
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Proof order"
     )
