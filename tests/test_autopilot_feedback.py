@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_75() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_77() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -383,7 +383,7 @@ def test_learn_feedback_records_exact_run_evidence_through_75() -> None:
         ),
         "coordinated-drift-tampering-bypasses-revalidation": (
             "src/atp/brain/learn.py",
-            146,
+            634,
         ),
         "evidence-failure-precedence-permutation-dependent": (
             "src/atp/brain/learn.py",
@@ -638,6 +638,12 @@ def test_learn_feedback_records_exact_run_evidence_through_75() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_77_gate_source = {
+        "run_id": 32703179396,
+        "job_id": 97364220767,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -674,6 +680,7 @@ def test_learn_feedback_records_exact_run_evidence_through_75() -> None:
             run_63_gate_source,
             run_70_final_review_source,
             run_73_final_review_source,
+            run_77_gate_source,
         ],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
         "equivalent-permutations-produce-unequal-results": [
@@ -774,14 +781,16 @@ def test_learn_feedback_records_exact_run_evidence_through_75() -> None:
     )
     assert (
         findings["coordinated-drift-tampering-bypasses-revalidation"]["detail"]
-        == "40/47-49/51/54/56/63/70/73 mint, restore or rebind accepted state via "
+        == "40/47-49/51/54/56/63/70/73/77 mint, restore or rebind accepted state via "
         "constructors, _Warrant, __setstate__ or caller-forgeable call sites. Run 70 "
         "hand-builds DriftResult from accepted inputs; valid "
         "inputs.model_id/prior_confidence mutations remain accepted downstream. Run "
         "73's _issued_by trusts only frame globals/co_name: a caller-created "
         "types.FunctionType named evaluate_comparison with learn.__dict__ mints "
         "ComparisonResult from forged ModelRecords, fake proof checksums and "
-        "arbitrary returns, undermining retirement/reinstatement provenance. Block "
+        "arbitrary returns, undermining retirement/reinstatement provenance. Run 77 "
+        "re-derives input_identity from current mutable accepted.inputs, so a valid "
+        "accepted.inputs.model.model_id mutation makes checksum() not raise. Block "
         "non-evaluator paths; bind immutable evaluator provenance/input identity; "
         "retain consumer revalidation."
     )
@@ -1074,6 +1083,11 @@ def test_learn_feedback_records_exact_run_evidence_through_75() -> None:
         "learn-documentation-omits-model-role",
         "nested-result-failure-reason-leaks-across-transition-boundary",
     }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_77_gate_source in finding["sources"]
+    } == {"coordinated-drift-tampering-bypasses-revalidation"}
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Proof order"
     )
