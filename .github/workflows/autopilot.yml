@@ -174,7 +174,7 @@ jobs:
           test ! -L "${CODEX_OUTPUT_SCHEMA_FILE}"
           test ! -e "${CODEX_OUTPUT_FILE}"
           test ! -L "${CODEX_OUTPUT_FILE}"
-          codex exec \
+          if codex exec \
             --skip-git-repo-check \
             --cd "${GITHUB_WORKSPACE}/candidate" \
             --output-last-message "${CODEX_OUTPUT_FILE}" \
@@ -184,6 +184,21 @@ jobs:
             --config 'default_permissions=":read-only"' \
             < "${CODEX_PROMPT_FILE}" \
             > "${private_log}" 2>&1
+          then
+            :
+          else
+            codex_status="$?"
+            output_state="missing"
+            if test -e "${CODEX_OUTPUT_FILE}"; then
+              output_state="empty-unbound"
+              if test -s "${CODEX_OUTPUT_FILE}"; then
+                output_state="nonempty-unbound"
+              fi
+            fi
+            printf '::error title=Private Codex execution failed::code=private_codex_exec_failed job=%s exit=%s output=%s\n' \
+              "${GITHUB_JOB}" "${codex_status}" "${output_state}"
+            exit "${codex_status}"
+          fi
           test -s "${CODEX_OUTPUT_FILE}"
       - name: Bind trusted planner output
         id: bind-plan
@@ -532,7 +547,7 @@ jobs:
           test ! -L "${CODEX_OUTPUT_SCHEMA_FILE}"
           test ! -e "${CODEX_OUTPUT_FILE}"
           test ! -L "${CODEX_OUTPUT_FILE}"
-          codex exec \
+          if codex exec \
             --skip-git-repo-check \
             --cd "${GITHUB_WORKSPACE}/candidate" \
             --output-last-message "${CODEX_OUTPUT_FILE}" \
@@ -542,6 +557,21 @@ jobs:
             --config 'default_permissions=":read-only"' \
             < "${CODEX_PROMPT_FILE}" \
             > "${private_log}" 2>&1
+          then
+            :
+          else
+            codex_status="$?"
+            output_state="missing"
+            if test -e "${CODEX_OUTPUT_FILE}"; then
+              output_state="empty-unbound"
+              if test -s "${CODEX_OUTPUT_FILE}"; then
+                output_state="nonempty-unbound"
+              fi
+            fi
+            printf '::error title=Private Codex execution failed::code=private_codex_exec_failed job=%s exit=%s output=%s\n' \
+              "${GITHUB_JOB}" "${codex_status}" "${output_state}"
+            exit "${codex_status}"
+          fi
           test -s "${CODEX_OUTPUT_FILE}"
       - name: Bind trusted initial review
         id: bind-review
@@ -917,7 +947,7 @@ jobs:
           test ! -L "${CODEX_OUTPUT_SCHEMA_FILE}"
           test ! -e "${CODEX_OUTPUT_FILE}"
           test ! -L "${CODEX_OUTPUT_FILE}"
-          codex exec \
+          if codex exec \
             --skip-git-repo-check \
             --cd "${GITHUB_WORKSPACE}/candidate" \
             --output-last-message "${CODEX_OUTPUT_FILE}" \
@@ -927,6 +957,21 @@ jobs:
             --config 'default_permissions=":read-only"' \
             < "${CODEX_PROMPT_FILE}" \
             > "${private_log}" 2>&1
+          then
+            :
+          else
+            codex_status="$?"
+            output_state="missing"
+            if test -e "${CODEX_OUTPUT_FILE}"; then
+              output_state="empty-unbound"
+              if test -s "${CODEX_OUTPUT_FILE}"; then
+                output_state="nonempty-unbound"
+              fi
+            fi
+            printf '::error title=Private Codex execution failed::code=private_codex_exec_failed job=%s exit=%s output=%s\n' \
+              "${GITHUB_JOB}" "${codex_status}" "${output_state}"
+            exit "${codex_status}"
+          fi
           test -s "${CODEX_OUTPUT_FILE}"
       - name: Bind trusted final review
         id: bind-final-review

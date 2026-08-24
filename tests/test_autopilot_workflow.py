@@ -162,6 +162,10 @@ def test_private_codex_exec_preserves_exact_read_only_contract_without_api_key()
         '< "${CODEX_PROMPT_FILE}" \\\n',
         '> "${private_log}" 2>&1\n',
     )
+    failure_annotation = (
+        "printf '::error title=Private Codex execution failed::"
+        "code=private_codex_exec_failed job=%s exit=%s output=%s\\n' \\\n"
+    )
     for step in private_steps:
         assert "working-directory: ${{ github.workspace }}/candidate" in step
         assert "CODEX_HOME: ${{ runner.temp }}/codex-home" in step
@@ -175,6 +179,14 @@ def test_private_codex_exec_preserves_exact_read_only_contract_without_api_key()
         assert 'test ! -e "${CODEX_OUTPUT_FILE}"' in step
         assert 'test ! -L "${CODEX_OUTPUT_FILE}"' in step
         assert 'test -s "${CODEX_OUTPUT_FILE}"' in step
+        assert step.count("if codex exec \\\n") == 1
+        assert step.count('codex_status="$?"') == 1
+        assert step.count('output_state="missing"') == 1
+        assert step.count('output_state="empty-unbound"') == 1
+        assert step.count('output_state="nonempty-unbound"') == 1
+        assert step.count(failure_annotation) == 1
+        assert step.count('"${GITHUB_JOB}" "${codex_status}" "${output_state}"') == 1
+        assert step.count('exit "${codex_status}"') == 1
         assert "secrets." not in step
         assert "OPENAI_API_KEY" not in step
         assert "openai-api-key" not in step
@@ -209,9 +221,17 @@ def test_private_codex_logs_are_0600_runner_temp_only_and_never_disclosed():
     assert WORKFLOW.count("trap 'exit 143' TERM") == 3
     assert WORKFLOW.count('rm -f -- "${private_log}"') == 3
     assert WORKFLOW.count('> "${private_log}" 2>&1') == 3
-    assert 'cat "${private_log}"' not in WORKFLOW
-    assert 'tee "${private_log}"' not in WORKFLOW
-    assert 'tee -a "${private_log}"' not in WORKFLOW
+    assert WORKFLOW.count("${private_log}") == 12
+    private_steps = re.findall(
+        r"      - name: Codex [^\n]*without log disclosure\n"
+        r"(?P<step>.*?)(?=      - (?:name:|uses:)|\n  [a-z_]+:)",
+        WORKFLOW,
+        re.DOTALL,
+    )
+    assert len(private_steps) == 3
+    for step in private_steps:
+        assert step.count("${private_log}") == 4
+        assert re.search(r"(?m)^\s*--json(?:\s|$)", step) is None
 
     upload_blocks = WORKFLOW.split(
         "      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
@@ -222,6 +242,135 @@ def test_private_codex_logs_are_0600_runner_temp_only_and_never_disclosed():
         assert "private_log" not in block
         assert "codex-${GITHUB_JOB}" not in block
         assert ".log" not in block
+
+
+def test_private_codex_failure_classification_preserves_status_and_privacy(tmp_path):
+    private_steps = re.findall(
+        r"      - name: Codex [^\n]*without log disclosure\n"
+        r"(?P<step>.*?)(?=      - (?:name:|uses:)|\n  [a-z_]+:)",
+        WORKFLOW,
+        re.DOTALL,
+    )
+    scripts = [
+        textwrap.dedent(step.split("        run: |\n", 1)[1]) for step in private_steps
+    ]
+    assert len(scripts) == 3
+    for script in scripts:
+        syntax = subprocess.run(
+            ["bash", "-n"],
+            input=script,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert syntax.returncode == 0, syntax.stderr
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_codex = fake_bin / "codex"
+    fake_codex.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf x >> "${FAKE_CODEX_COUNT_FILE}"
+output_file=""
+while (( $# )); do
+  case "$1" in
+    --output-last-message)
+      output_file="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+case "${FAKE_CODEX_MODE}" in
+  missing)
+    ;;
+  empty)
+    : > "${output_file}"
+    ;;
+  nonempty)
+    printf '%s' "${FAKE_PRIVATE_MARKER}" > "${output_file}"
+    ;;
+  success)
+    printf '%s\n' '{"approved":true}' > "${output_file}"
+    ;;
+esac
+printf '%s\n' "${FAKE_PRIVATE_MARKER}" >&2
+if test "${FAKE_CODEX_MODE}" = "success"; then
+  exit 0
+fi
+exit "${FAKE_CODEX_STATUS}"
+"""
+    )
+    fake_codex.chmod(0o755)
+    fake_stat = fake_bin / "stat"
+    fake_stat.write_text("#!/usr/bin/env bash\nprintf '%s\\n' '600'\n")
+    fake_stat.chmod(0o755)
+
+    marker = "private-model-output-must-not-appear"
+    for mode, expected_state in (
+        ("missing", "missing"),
+        ("empty", "empty-unbound"),
+        ("nonempty", "nonempty-unbound"),
+        ("success", None),
+    ):
+        case = tmp_path / mode
+        workspace = case / "workspace"
+        candidate = workspace / "candidate"
+        runner_temp = case / "runner-temp"
+        candidate.mkdir(parents=True)
+        runner_temp.mkdir(parents=True)
+        prompt = case / "prompt.md"
+        schema = case / "schema.json"
+        output = candidate / "output.json"
+        count = case / "count"
+        prompt.write_text("Review safely.\n")
+        schema.write_text("{}\n")
+        env = os.environ.copy()
+        env.update(
+            {
+                "PATH": f"{fake_bin}:{env['PATH']}",
+                "RUNNER_TEMP": str(runner_temp),
+                "GITHUB_WORKSPACE": str(workspace),
+                "GITHUB_JOB": "private-review",
+                "GITHUB_RUN_ID": "82",
+                "GITHUB_RUN_ATTEMPT": "1",
+                "CODEX_PROMPT_FILE": str(prompt),
+                "CODEX_OUTPUT_FILE": str(output),
+                "CODEX_OUTPUT_SCHEMA_FILE": str(schema),
+                "FAKE_CODEX_COUNT_FILE": str(count),
+                "FAKE_CODEX_MODE": mode,
+                "FAKE_CODEX_STATUS": "23",
+                "FAKE_PRIVATE_MARKER": marker,
+            }
+        )
+        completed = subprocess.run(
+            ["bash", "-c", scripts[0]],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+
+        assert count.read_text() == "x"
+        assert marker not in completed.stdout
+        assert marker not in completed.stderr
+        assert list(runner_temp.glob("codex-*")) == []
+        if expected_state is None:
+            assert completed.returncode == 0
+            assert "private_codex_exec_failed" not in completed.stdout
+            assert output.read_text() == '{"approved":true}\n'
+        else:
+            assert completed.returncode == 23
+            assert completed.stderr == ""
+            assert completed.stdout == (
+                "::error title=Private Codex execution failed::"
+                "code=private_codex_exec_failed job=private-review "
+                f"exit=23 output={expected_state}\n"
+            )
 
 
 def test_no_untrusted_event_or_automatic_merge():
