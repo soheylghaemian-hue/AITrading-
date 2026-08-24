@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_79() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_81() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -368,7 +368,7 @@ def test_learn_feedback_records_exact_run_evidence_through_79() -> None:
         finding["id"]: (finding["location"]["path"], finding["location"]["line"])
         for finding in normalized["findings"]
     } == {
-        "authority-field-lexical-false-positive": ("tests/test_brain_learn.py", 792),
+        "authority-field-lexical-false-positive": ("tests/test_brain_learn.py", 358),
         "closure-fixture-rejects-benign-class-cell": (
             "tests/test_brain_learn.py",
             463,
@@ -383,7 +383,7 @@ def test_learn_feedback_records_exact_run_evidence_through_79() -> None:
         ),
         "coordinated-drift-tampering-bypasses-revalidation": (
             "src/atp/brain/learn.py",
-            416,
+            965,
         ),
         "evidence-failure-precedence-permutation-dependent": (
             "src/atp/brain/learn.py",
@@ -426,7 +426,10 @@ def test_learn_feedback_records_exact_run_evidence_through_79() -> None:
             "tests/test_brain_learn.py",
             437,
         ),
-        "transition-fixture-confounds-ordering": ("tests/test_brain_learn.py", 503),
+        "transition-fixture-confounds-ordering": (
+            "src/atp/brain/learn.py",
+            808,
+        ),
     }
     run_36_source = {
         "run_id": 32438421194,
@@ -656,6 +659,12 @@ def test_learn_feedback_records_exact_run_evidence_through_79() -> None:
         "stage": "final_review",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_81_gate_source = {
+        "run_id": 32723366295,
+        "job_id": 97424477755,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -667,6 +676,7 @@ def test_learn_feedback_records_exact_run_evidence_through_79() -> None:
             run_60_gate_source,
             run_64_gate_source,
             run_70_final_review_source,
+            run_81_gate_source,
         ],
         "closure-fixture-rejects-benign-class-cell": [
             run_49_gate_source,
@@ -694,6 +704,7 @@ def test_learn_feedback_records_exact_run_evidence_through_79() -> None:
             run_73_final_review_source,
             run_77_gate_source,
             run_79_final_review_source,
+            run_81_gate_source,
         ],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
         "equivalent-permutations-produce-unequal-results": [
@@ -755,6 +766,7 @@ def test_learn_feedback_records_exact_run_evidence_through_79() -> None:
         "transition-fixture-confounds-ordering": [
             run_38_source,
             run_50_gate_source,
+            run_81_gate_source,
         ],
     }
     assert findings["authority-field-lexical-false-positive"]["title"] == (
@@ -764,8 +776,10 @@ def test_learn_feedback_records_exact_run_evidence_through_79() -> None:
         "36/51/60/64/70 mix lexical/import/call checks with dotted/bare or collapsed "
         "relative names. Run 70 allowlists every relative import as \".\" and does not "
         "inspect loaded transitive modules, so broker/runtime/service/live-trading "
-        "siblings pass. Match exact forms/module paths and actual import graph; keep "
-        "no-order/no-execution."
+        "siblings pass. Run 81 substring-scans dir(result); forbidden \"size\" matches "
+        "inherited __sizeof__, so a safe result fails. Inspect declared "
+        "public/dataclass names exactly; match exact forms/module paths and actual "
+        "import graph; keep no-order/no-execution."
     )
     assert findings["tamper-fixture-leaks-champion-role"]["title"] == (
         "Tamper fixture mutates the shared champion across tests"
@@ -787,15 +801,21 @@ def test_learn_feedback_records_exact_run_evidence_through_79() -> None:
     )
     assert findings["transition-fixture-confounds-ordering"]["detail"] == (
         "38/50 mix reversal order with unknowable evidence/CHALLENGER start, correctly "
-        "refusing. Start RETIRED to isolate TRANSITION_NOT_ORDERED; pin active result, "
-        "qualify docs; keep guard."
+        "refusing. Build coherent evidence/time fixtures for the intended order. Run "
+        "81 exposes an unreachable declared reason: accepted comparison evidence "
+        "requires CHAMPION/CHALLENGER records, exact ModelRecord equality includes "
+        "role, and _bind_retirement checks evidence equality before RETIRED, so every "
+        "RETIRED model yields EVIDENCE_MODEL_MISMATCH before MODEL_ALREADY_RETIRED. "
+        "Check MODEL_ALREADY_RETIRED before exact-role evidence membership (or remove "
+        "the dead reason), then pin every declared transition reason and deterministic "
+        "precedence; qualify docs; keep fail-closed evidence revalidation."
     )
     assert findings["coordinated-drift-tampering-bypasses-revalidation"]["title"] == (
         "Accepted-state minting persists"
     )
     assert (
         findings["coordinated-drift-tampering-bypasses-revalidation"]["detail"]
-        == "40/47-49/51/54/56/63/70/73/77/79 mint, restore or rebind accepted state "
+        == "40/47-49/51/54/56/63/70/73/77/79/81 mint, restore or rebind accepted state "
         "via constructors, _Warrant, __setstate__ or caller-forgeable call sites. Run "
         "70 hand-builds DriftResult from accepted inputs; valid "
         "inputs.model_id/prior_confidence mutations remain accepted downstream. Run "
@@ -808,8 +828,11 @@ def test_learn_feedback_records_exact_run_evidence_through_79() -> None:
         "public result constructors accept caller-supplied provenance and coherently "
         "recomputed fields; tests allow direct recreation of an accepted DriftResult "
         "with the same checksum and rebinding mutated inputs via exposed _bind_* "
-        "helpers. Block non-evaluator construction/rebinding paths; bind immutable "
-        "evaluator provenance/input identity; retain consumer revalidation."
+        "helpers. Run 81 directly reconstructs an accepted ReinstatementResult from "
+        "its exposed inputs/identity/model_id/restored_role; __post_init__ only "
+        "revalidates recomputable values, so evaluator provenance is absent. Block "
+        "non-evaluator construction/rebinding paths; bind immutable evaluator "
+        "provenance/input identity; retain consumer revalidation."
     )
     assert findings["evidence-failure-precedence-permutation-dependent"]["title"] == (
         "Evidence failure precedence depends on tuple order"
@@ -1119,6 +1142,15 @@ def test_learn_feedback_records_exact_run_evidence_through_79() -> None:
         for finding_id, finding in findings.items()
         if run_79_final_review_source in finding["sources"]
     } == {"coordinated-drift-tampering-bypasses-revalidation"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_81_gate_source in finding["sources"]
+    } == {
+        "authority-field-lexical-false-positive",
+        "coordinated-drift-tampering-bypasses-revalidation",
+        "transition-fixture-confounds-ordering",
+    }
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Proof order"
     )
