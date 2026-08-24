@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_84() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_85() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -399,11 +399,11 @@ def test_learn_feedback_records_exact_run_evidence_through_84() -> None:
         ),
         "invalid-policy-fixture-raises-before-result-refusal": (
             "tests/test_brain_learn.py",
-            191,
+            484,
         ),
         "learn-documentation-omits-model-role": (
             "tests/test_brain_learn.py",
-            512,
+            758,
         ),
         "local-proposal-tamper-invalidates-proof-first": (
             "tests/test_brain_learn.py",
@@ -677,6 +677,12 @@ def test_learn_feedback_records_exact_run_evidence_through_84() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_85_gate_source = {
+        "run_id": 32783772777,
+        "job_id": 97616893006,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -739,6 +745,7 @@ def test_learn_feedback_records_exact_run_evidence_through_84() -> None:
             run_68_gate_source,
             run_75_gate_source,
             run_83_gate_source,
+            run_85_gate_source,
         ],
         "learn-documentation-omits-model-role": [
             run_43_source,
@@ -752,6 +759,7 @@ def test_learn_feedback_records_exact_run_evidence_through_84() -> None:
             run_75_gate_source,
             run_78_gate_source,
             run_84_gate_source,
+            run_85_gate_source,
         ],
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
         "nested-result-failure-reason-leaks-across-transition-boundary": [
@@ -923,7 +931,11 @@ def test_learn_feedback_records_exact_run_evidence_through_84() -> None:
         "names\". Remove the unsupported exactly-once promise or explicitly represent "
         "replay/consumption; use markup-aware normalization; pin plain "
         "public/guard/equality/reason phrases and sorted unique exports; keep "
-        "export/docs checks strict."
+        "export/docs checks strict. Run 85 pins the stateless replay sentence with a "
+        "period, while the documentation joins it to the next clause with a "
+        "semicolon; markup-aware normalization correctly rejects that punctuation "
+        "mismatch. End the documented sentence with the exact period and move the "
+        "replay explanation into a separate sentence."
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["title"] == (
         "Evaluator fixture errors"
@@ -941,7 +953,12 @@ def test_learn_feedback_records_exact_run_evidence_through_84() -> None:
         "sentinels/distinct inputs, explicit cases/raises, defined fixture builders and "
         "pytest.approx; make evidence initially usable/contradictory and compare matching "
         "reasons; reach intended evaluator assertions; keep guards/order and lossless "
-        "float/reason/checksum semantics strict."
+        "float/reason/checksum semantics strict. Run 85 creates broken_drift from an "
+        "empty but canonical SenseResult with prior_confidence 1.0 and drift_score "
+        "0.0; evaluate_drift therefore accepts it with no abstention, and retirement "
+        "correctly reports INSUFFICIENT_EVIDENCE rather than INVALID_DRIFT. Build an "
+        "actually refused or tampered DriftResult to reach the nested-result "
+        "translation assertion."
     )
     assert findings[
         "nested-result-failure-reason-leaks-across-transition-boundary"
@@ -1180,6 +1197,14 @@ def test_learn_feedback_records_exact_run_evidence_through_84() -> None:
         for finding_id, finding in findings.items()
         if run_84_gate_source in finding["sources"]
     } == {"learn-documentation-omits-model-role"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_85_gate_source in finding["sources"]
+    } == {
+        "invalid-policy-fixture-raises-before-result-refusal",
+        "learn-documentation-omits-model-role",
+    }
     assert findings["comparison-invalid-proof-shadowed-by-model-validation"]["title"] == (
         "Proof order"
     )
