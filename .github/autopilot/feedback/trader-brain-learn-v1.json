@@ -7,10 +7,10 @@
       "id": "authority-field-lexical-false-positive",
       "severity": "P1",
       "title": "Authority API mismatch",
-      "detail": "36/51/60/64/70 mix lexical/import/call checks with dotted/bare or collapsed relative names. Run 70 allowlists every relative import as \".\" and does not inspect loaded transitive modules, so broker/runtime/service/live-trading siblings pass. Match exact forms/module paths and actual import graph; keep no-order/no-execution.",
+      "detail": "36/51/60/64/70 mix lexical/import/call checks with dotted/bare or collapsed relative names. Run 70 allowlists every relative import as \".\" and does not inspect loaded transitive modules, so broker/runtime/service/live-trading siblings pass. Run 81 substring-scans dir(result); forbidden \"size\" matches inherited __sizeof__, so a safe result fails. Inspect declared public/dataclass names exactly; match exact forms/module paths and actual import graph; keep no-order/no-execution.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 792
+        "line": 358
       },
       "sources": [
         {
@@ -41,6 +41,12 @@
           "run_id": 32622788013,
           "job_id": 97158669218,
           "stage": "final_review",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32723366295,
+          "job_id": 97424477755,
+          "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
@@ -91,10 +97,10 @@
       "id": "transition-fixture-confounds-ordering",
       "severity": "P1",
       "title": "Transition order",
-      "detail": "38/50 mix reversal order with unknowable evidence/CHALLENGER start, correctly refusing. Start RETIRED to isolate TRANSITION_NOT_ORDERED; pin active result, qualify docs; keep guard.",
+      "detail": "38/50 mix reversal order with unknowable evidence/CHALLENGER start, correctly refusing. Build coherent evidence/time fixtures for the intended order. Run 81 exposes an unreachable declared reason: accepted comparison evidence requires CHAMPION/CHALLENGER records, exact ModelRecord equality includes role, and _bind_retirement checks evidence equality before RETIRED, so every RETIRED model yields EVIDENCE_MODEL_MISMATCH before MODEL_ALREADY_RETIRED. Check MODEL_ALREADY_RETIRED before exact-role evidence membership (or remove the dead reason), then pin every declared transition reason and deterministic precedence; qualify docs; keep fail-closed evidence revalidation.",
       "location": {
-        "path": "tests/test_brain_learn.py",
-        "line": 503
+        "path": "src/atp/brain/learn.py",
+        "line": 808
       },
       "sources": [
         {
@@ -108,6 +114,12 @@
           "job_id": 97011712519,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32723366295,
+          "job_id": 97424477755,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
     },
@@ -115,10 +127,10 @@
       "id": "coordinated-drift-tampering-bypasses-revalidation",
       "severity": "P1",
       "title": "Accepted-state minting persists",
-      "detail": "40/47-49/51/54/56/63/70/73/77/79 mint, restore or rebind accepted state via constructors, _Warrant, __setstate__ or caller-forgeable call sites. Run 70 hand-builds DriftResult from accepted inputs; valid inputs.model_id/prior_confidence mutations remain accepted downstream. Run 73's _issued_by trusts only frame globals/co_name: a caller-created types.FunctionType named evaluate_comparison with learn.__dict__ mints ComparisonResult from forged ModelRecords, fake proof checksums and arbitrary returns, undermining retirement/reinstatement provenance. Run 77 re-derives input_identity from current mutable accepted.inputs, so a valid accepted.inputs.model.model_id mutation makes checksum() not raise. Run 79's public result constructors accept caller-supplied provenance and coherently recomputed fields; tests allow direct recreation of an accepted DriftResult with the same checksum and rebinding mutated inputs via exposed _bind_* helpers. Block non-evaluator construction/rebinding paths; bind immutable evaluator provenance/input identity; retain consumer revalidation.",
+      "detail": "40/47-49/51/54/56/63/70/73/77/79/81 mint, restore or rebind accepted state via constructors, _Warrant, __setstate__ or caller-forgeable call sites. Run 70 hand-builds DriftResult from accepted inputs; valid inputs.model_id/prior_confidence mutations remain accepted downstream. Run 73's _issued_by trusts only frame globals/co_name: a caller-created types.FunctionType named evaluate_comparison with learn.__dict__ mints ComparisonResult from forged ModelRecords, fake proof checksums and arbitrary returns, undermining retirement/reinstatement provenance. Run 77 re-derives input_identity from current mutable accepted.inputs, so a valid accepted.inputs.model.model_id mutation makes checksum() not raise. Run 79's public result constructors accept caller-supplied provenance and coherently recomputed fields; tests allow direct recreation of an accepted DriftResult with the same checksum and rebinding mutated inputs via exposed _bind_* helpers. Run 81 directly reconstructs an accepted ReinstatementResult from its exposed inputs/identity/model_id/restored_role; __post_init__ only revalidates recomputable values, so evaluator provenance is absent. Block non-evaluator construction/rebinding paths; bind immutable evaluator provenance/input identity; retain consumer revalidation.",
       "location": {
         "path": "src/atp/brain/learn.py",
-        "line": 416
+        "line": 965
       },
       "sources": [
         {
@@ -191,6 +203,12 @@
           "run_id": 32710835689,
           "job_id": 97397112789,
           "stage": "final_review",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32723366295,
+          "job_id": 97424477755,
+          "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
