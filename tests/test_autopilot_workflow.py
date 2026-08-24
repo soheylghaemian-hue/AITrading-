@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import subprocess
@@ -270,6 +271,42 @@ def test_claude_output_schema_is_strict_full_file_only_and_guard_remains_final()
     assert WORKFLOW.count('"enum":["full-file-edit/v1"]') == 2
     assert WORKFLOW.count('"enum":["create","modify"]') == 2
     assert '"delete"' not in WORKFLOW
+    schemas = [json.loads(value) for value in re.findall(r"--json-schema '([^']+)'", WORKFLOW)]
+    assert len(schemas) == 2
+    for schema in schemas:
+        content_schema = schema["properties"]["edits"]["items"]["properties"]["content"]
+        assert content_schema == {
+            "type": "string",
+            "pattern": r"^([\s\S]*[^\n])?\n$",
+        }
+        probes = [
+            "\n",
+            "complete\n",
+            "complete\nfile\n",
+            "complete\n\nfile\n",
+            "",
+            "incomplete",
+            "double\n\n",
+            "triple\n\n\n",
+            "line-feed\n\u2028",
+        ]
+        completed = subprocess.run(
+            [
+                "node",
+                "-e",
+                (
+                    "const pattern = new RegExp(process.argv[1], 'u'); "
+                    "const values = JSON.parse(process.argv[2]); "
+                    "process.stdout.write(JSON.stringify(values.map(value => pattern.test(value))));"
+                ),
+                content_schema["pattern"],
+                json.dumps(probes),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert json.loads(completed.stdout) == [True, True, True, True, False, False, False, False, False]
     for name, following, phase in (
         ("author", "gate", "author"),
         ("repair", "gate_repair", "repair"),
