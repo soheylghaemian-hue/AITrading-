@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_86() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_87() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -402,8 +402,8 @@ def test_learn_feedback_records_exact_run_evidence_through_86() -> None:
             484,
         ),
         "learn-documentation-omits-model-role": (
-            "tests/test_brain_learn.py",
-            758,
+            "docs/TRADER_BRAIN.md",
+            396,
         ),
         "local-proposal-tamper-invalidates-proof-first": (
             "tests/test_brain_learn.py",
@@ -420,7 +420,7 @@ def test_learn_feedback_records_exact_run_evidence_through_86() -> None:
         "tamper-fixture-leaks-champion-role": ("tests/test_brain_learn.py", 614),
         "timezone-spelling-fixture-assumes-evidence-inequality": (
             "tests/test_brain_learn.py",
-            245,
+            239,
         ),
         "timezone-utc-fixture-not-in-immutable-allowlist": (
             "tests/test_brain_learn.py",
@@ -689,6 +689,12 @@ def test_learn_feedback_records_exact_run_evidence_through_86() -> None:
         "stage": "final_review",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_87_gate_source = {
+        "run_id": 32792874063,
+        "job_id": 97643139981,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -769,6 +775,7 @@ def test_learn_feedback_records_exact_run_evidence_through_86() -> None:
             run_78_gate_source,
             run_84_gate_source,
             run_85_gate_source,
+            run_87_gate_source,
         ],
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
         "nested-result-failure-reason-leaks-across-transition-boundary": [
@@ -785,6 +792,7 @@ def test_learn_feedback_records_exact_run_evidence_through_86() -> None:
             run_56_gate_source,
             run_59_gate_source,
             run_61_gate_source,
+            run_87_gate_source,
         ],
         "timezone-utc-fixture-not-in-immutable-allowlist": [
             run_44_source,
@@ -925,7 +933,10 @@ def test_learn_feedback_records_exact_run_evidence_through_86() -> None:
         "detail"
     ] == (
         "43/49/56/59/61 use raw fold equality or stale evidence. Compare UTC instants, "
-        "then canonical state."
+        "then canonical state. Run 87's fixture expects aware datetimes expressed as "
+        "UTC and +05:30 to compare unequal, but Python datetime equality compares the "
+        "represented instants and they are equal. Assert that the UTC offsets or tzinfo "
+        "spellings differ, then retain UTC-normalized input, result and checksum equality."
     )
     assert findings["local-proposal-tamper-invalidates-proof-first"]["title"] == (
         "Proof-tamper"
@@ -957,7 +968,11 @@ def test_learn_feedback_records_exact_run_evidence_through_86() -> None:
         "period, while the documentation joins it to the next clause with a "
         "semicolon; markup-aware normalization correctly rejects that punctuation "
         "mismatch. End the documented sentence with the exact period and move the "
-        "replay explanation into a separate sentence."
+        "replay explanation into a separate sentence. Run 87's documentation writes "
+        "\"identical checksums, because\" where the pinned contract requires \"identical "
+        "checksums.\"; the markup-aware normalizer correctly preserves and rejects that "
+        "punctuation mismatch. End the documented equality/checksum sentence with the "
+        "exact period and move the canonicalization explanation into a separate sentence."
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["title"] == (
         "Evaluator fixture errors"
@@ -1146,6 +1161,14 @@ def test_learn_feedback_records_exact_run_evidence_through_86() -> None:
     assert {
         finding_id
         for finding_id, finding in findings.items()
+        if run_87_gate_source in finding["sources"]
+    } == {
+        "learn-documentation-omits-model-role",
+        "timezone-spelling-fixture-assumes-evidence-inequality",
+    }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
         if run_67_gate_source in finding["sources"]
     } == {"invalid-policy-fixture-raises-before-result-refusal"}
     assert {
@@ -1254,6 +1277,7 @@ def test_learn_feedback_records_exact_run_evidence_through_86() -> None:
     assert {
         finding["location"]["path"] for finding in normalized["findings"]
     } == {
+        "docs/TRADER_BRAIN.md",
         "src/atp/brain/learn.py",
         "tests/test_brain_learn.py",
     }
