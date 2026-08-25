@@ -127,10 +127,10 @@
       "id": "coordinated-drift-tampering-bypasses-revalidation",
       "severity": "P1",
       "title": "Accepted-state minting persists",
-      "detail": "40/47-49/51/54/56/63/70/73/77/79/81 mint, restore or rebind accepted state via constructors, _Warrant, __setstate__ or caller-forgeable call sites. Run 70 hand-builds DriftResult from accepted inputs; valid inputs.model_id/prior_confidence mutations remain accepted downstream. Run 73's _issued_by trusts only frame globals/co_name: a caller-created types.FunctionType named evaluate_comparison with learn.__dict__ mints ComparisonResult from forged ModelRecords, fake proof checksums and arbitrary returns, undermining retirement/reinstatement provenance. Run 77 re-derives input_identity from current mutable accepted.inputs, so a valid accepted.inputs.model.model_id mutation makes checksum() not raise. Run 79's public result constructors accept caller-supplied provenance and coherently recomputed fields; tests allow direct recreation of an accepted DriftResult with the same checksum and rebinding mutated inputs via exposed _bind_* helpers. Run 81 directly reconstructs an accepted ReinstatementResult from its exposed inputs/identity/model_id/restored_role; __post_init__ only revalidates recomputable values, so evaluator provenance is absent. Block non-evaluator construction/rebinding paths; bind immutable evaluator provenance/input identity; retain consumer revalidation.",
+      "detail": "40/47-49/51/54/56/63/70/73/77/79/81 mint, restore or rebind accepted state via constructors, _Warrant, __setstate__ or caller-forgeable call sites. Run 70 hand-builds DriftResult from accepted inputs; valid inputs.model_id/prior_confidence mutations remain accepted downstream. Run 73's _issued_by trusts only frame globals/co_name: a caller-created types.FunctionType named evaluate_comparison with learn.__dict__ mints ComparisonResult from forged ModelRecords, fake proof checksums and arbitrary returns, undermining retirement/reinstatement provenance. Run 77 re-derives input_identity from current mutable accepted.inputs, so a valid accepted.inputs.model.model_id mutation makes checksum() not raise. Run 79's public result constructors accept caller-supplied provenance and coherently recomputed fields; tests allow direct recreation of an accepted DriftResult with the same checksum and rebinding mutated inputs via exposed _bind_* helpers. Run 81 directly reconstructs an accepted ReinstatementResult from its exposed inputs/identity/model_id/restored_role; __post_init__ only revalidates recomputable values, so evaluator provenance is absent. Block non-evaluator construction/rebinding paths; bind immutable evaluator provenance/input identity; retain consumer revalidation. Run 86's _Seal trusts only the caller's code object: a types.FunctionType built from evaluate_comparison.__code__ with copied globals can substitute ComparisonInputs, reconstruct an accepted result from public fields, and receive a valid owner-bound seal and checksum. Require both the exact evaluator code object and exact module-globals identity before issuance; keep owner, identity and fingerprint revalidation; block copied or substituted globals.",
       "location": {
         "path": "src/atp/brain/learn.py",
-        "line": 965
+        "line": 245
       },
       "sources": [
         {
@@ -210,6 +210,12 @@
           "job_id": 97424477755,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32787386882,
+          "job_id": 97632504247,
+          "stage": "final_review",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
     },
@@ -277,10 +283,10 @@
       "id": "equivalent-permutations-produce-unequal-results",
       "severity": "P1",
       "title": "Equivalent inputs produce unequal results",
-      "detail": "42/48/63 store noncanonical tuples/datetimes despite canonical checksums, so permutations/fold spellings yield unequal results. Sort tuples, normalize UTC, pin equality.",
+      "detail": "42/48/63 store noncanonical tuples/datetimes despite canonical checksums, so permutations/fold spellings yield unequal results. Sort tuples, normalize UTC, pin equality. Run 86 stores caller-spelled ProveResults in ComparisonInputs: proven results with permuted-but-equivalent windows have identical proof checksums, while their comparisons are unequal despite sharing a comparison checksum. Store one fully canonical proof snapshot per side, including every proof field comparison later consumes; derive equality and checksum from that same canonical state without ignoring proof fields; retain strict proof revalidation.",
       "location": {
-        "path": "tests/test_brain_learn.py",
-        "line": 268
+        "path": "src/atp/brain/learn.py",
+        "line": 587
       },
       "sources": [
         {
@@ -299,6 +305,12 @@
           "run_id": 32591600980,
           "job_id": 97079081660,
           "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32787386882,
+          "job_id": 97632504247,
+          "stage": "final_review",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
@@ -595,10 +607,10 @@
       "id": "comparison-invalid-proof-shadowed-by-model-validation",
       "severity": "P1",
       "title": "Proof order",
-      "detail": "45/47 bind proofs; champion-first checks make role swaps change wrong/unproven reasons. Validate shells then proofs: INVALID_PROOF, PROOF_NOT_PROVEN, PROOF_MODEL_MISMATCH, knowability. Keep construction/checksum binding/fail-closed order.",
+      "detail": "45/47 bind proofs; champion-first checks make role swaps change wrong/unproven reasons. Validate shells then proofs: INVALID_PROOF, PROOF_NOT_PROVEN, PROOF_MODEL_MISMATCH, knowability. Keep construction/checksum binding/fail-closed order. Run 86 checks model knowability before proof-to-model binding, so a future-registered model with a wrong-proposal proof returns INVALID_MODEL instead of the pinned PROOF_MODEL_MISMATCH. Keep exact ModelRecord shape validation before field access; then bind each proof to its model before model and proof knowability, side-symmetrically; retain earlier proof-checksum and proven-status phases.",
       "location": {
         "path": "src/atp/brain/learn.py",
-        "line": 765
+        "line": 625
       },
       "sources": [
         {
@@ -610,6 +622,12 @@
         {
           "run_id": 32554139745,
           "job_id": 96991065888,
+          "stage": "final_review",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32787386882,
+          "job_id": 97632504247,
           "stage": "final_review",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
