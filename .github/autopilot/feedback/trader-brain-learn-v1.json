@@ -331,10 +331,10 @@
    "id": "timezone-spelling-fixture-assumes-evidence-inequality",
    "severity": "P1",
    "title": "Timezone fixture errors",
-   "detail": "43/49/56/59/61 use raw fold equality or stale evidence. Compare UTC instants, then canonical state. Run 87's fixture expects aware datetimes expressed as UTC and +05:30 to compare unequal, but Python datetime equality compares the represented instants and they are equal. Assert that the UTC offsets or tzinfo spellings differ, then retain UTC-normalized input, result and checksum equality.",
+   "detail": "43/49/56/59/61 use raw fold equality or stale evidence. Compare UTC instants, then canonical state. Run 87's fixture expects aware datetimes expressed as UTC and +05:30 to compare unequal, but Python datetime equality compares the represented instants and they are equal. Assert that the UTC offsets or tzinfo spellings differ, then retain UTC-normalized input, result and checksum equality. Run 95 checks offset inequality only after _drift has passed both timestamp spellings through SENSE, whose accepted SenseResult is UTC-normalized; both stored offsets are therefore zero. Assert differing raw fixture offsets before evaluation, then retain result and checksum equality on canonical outputs.",
    "location": {
     "path": "tests/test_brain_learn.py",
-    "line": 239
+    "line": 169
    },
    "sources": [
     {
@@ -372,6 +372,12 @@
      "job_id": 97643139981,
      "stage": "gate",
      "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+    },
+    {
+     "run_id": 32827723868,
+     "job_id": 97745862652,
+     "stage": "gate",
+     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
     }
    ]
   },
@@ -397,10 +403,10 @@
    "id": "learn-documentation-omits-model-role",
    "severity": "P1",
    "title": "LEARN public API/docs drift",
-   "detail": "43/61 omit ModelRole or exact research-only wording. 65/66/74/84 use raw scans that reject line wrapping or Markdown; 71 misorders __all__ by placing RejectedEvidence before ReinstatementInputs. Exact-sentence fixtures disagree with docs: 72 uses a colon instead of the required period after comparison/PROVE model binding; 85 joins the stateless-replay sentence with a semicolon; 87 writes \"identical checksums, because\" instead of ending \"identical checksums.\"; 88 joins challenger non-promotion to its explanation with a colon instead of ending \"promotion authority.\"; 90 continues after a colon with lowercase \"every\" instead of the separate \"Every proof must grade exactly the proposal_id its ModelRecord names.\". Run 73 promises exactly-once reversal although stateless evaluate_reinstatement records no consumption and reaccepts the same retirement, identity, reversal ID, role and timestamp. Run 75 strips underscores so INVALID_INPUT cannot match; 78 strips > from >= so the abstention boundary cannot match, and expects \"a proof...\" while docs say \"the proof...\". Run 93 exports ComparisonPreference (CHAMPION, CHALLENGER, INCONCLUSIVE; research evidence only) but docs omit it, so the strict public-API inventory correctly fails. Document every non-evaluator export, including ModelRole and ComparisonPreference, plus exact research-only, binding, equality, reason, replay and non-promotion phrases. Put each pinned sentence, case and punctuation boundary exactly; move explanations to separate sentences; use markup-aware normalization; keep sorted unique exports and strict docs/binding guards. Remove the exactly-once promise or represent replay consumption.",
+   "detail": "43/61 omit ModelRole or exact research-only wording. 65/66/74/84 use raw scans that reject line wrapping or Markdown; 71 misorders __all__ by placing RejectedEvidence before ReinstatementInputs. Exact-sentence fixtures disagree with docs: 72 uses a colon instead of the required period after comparison/PROVE model binding; 85 joins the stateless-replay sentence with a semicolon; 87 writes \"identical checksums, because\" instead of ending \"identical checksums.\"; 88 joins challenger non-promotion to its explanation with a colon instead of ending \"promotion authority.\"; 90 continues after a colon with lowercase \"every\" instead of the separate \"Every proof must grade exactly the proposal_id its ModelRecord names.\". Run 73 promises exactly-once reversal although stateless evaluate_reinstatement records no consumption and reaccepts the same retirement, identity, reversal ID, role and timestamp. Run 75 strips underscores so INVALID_INPUT cannot match; 78 strips > from >= so the abstention boundary cannot match, and expects \"a proof...\" while docs say \"the proof...\". Run 93 exports ComparisonPreference (CHAMPION, CHALLENGER, INCONCLUSIVE; research evidence only) but docs omit it, so the strict public-API inventory correctly fails. Document every non-evaluator export, including ModelRole and ComparisonPreference, plus exact research-only, binding, equality, reason, replay and non-promotion phrases. Put each pinned sentence, case and punctuation boundary exactly; move explanations to separate sentences; use markup-aware normalization; keep sorted unique exports and strict docs/binding guards. Remove the exactly-once promise or represent replay consumption. Run 95 joins `Equivalent inputs produce equal results and identical checksums` to its explanation with an em dash instead of ending the pinned sentence with a period. End that exact sentence, then put the explanation in a separate sentence; keep markup-aware normalization and strict documentation guards.",
    "location": {
     "path": "docs/TRADER_BRAIN.md",
-    "line": 357
+    "line": 344
    },
    "sources": [
     {
@@ -498,6 +504,12 @@
      "job_id": 97689719271,
      "stage": "gate",
      "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+    },
+    {
+     "run_id": 32827723868,
+     "job_id": 97745862652,
+     "stage": "gate",
+     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
     }
    ]
   },
@@ -505,10 +517,10 @@
    "id": "invalid-policy-fixture-raises-before-result-refusal",
    "severity": "P1",
    "title": "Evaluator fixture errors",
-   "detail": "44-45/55-56/58-59/61-62/66-68/75/83 misuse constructors, defaults, thresholds, __setstate__ shapes or helpers. Run 66 replaces explicit None; 67 passes accepted output to _reason and reads a raising property outside pytest.raises; 68 compares 0.05-0.005 with literal 0.045 exactly; 75 calls undefined _forge. Run 83 makes every Mar 1-2 item stale at Mar 10 under six days, so reversing empty usable/clearing empty contradictions are no-ops and zero-day freshness remains a valid canonical all-rejected result; it compares INVALID_INPUT and INVALID_MODEL checksums. Run 85's empty canonical SenseResult with prior 1.0/drift 0.0 is accepted without abstention, so retirement correctly yields INSUFFICIENT_EVIDENCE, not INVALID_DRIFT. Run 89 binds accepted drift to the default CHAMPION while retirement targets a CHALLENGER, so EVIDENCE_MODEL_MISMATCH precedes drift refusal. Run 91's _comparison(champion=None) substitutes a valid CHAMPION; the comparison is accepted, so retirement cannot exercise INVALID_COMPARISON. Run 92 expects EVIDENCE_MODEL_MISMATCH although its superior comparison is favorable to the target challenger, hence correctly insufficient; its mutation table captures the original accepted graph, resets accepted, then mutates stale targets while checking the fresh result. Run 93 uses distinct IDs e-dup/e-other, so forward is canonical/accepted and only reversed order is invalid, not two duplicate permutations; a later local def evaluate_drift shadows the imported evaluator and raises UnboundLocalError before the closure probe. Use sentinels; distinct, adverse and correctly bound inputs; true duplicate IDs; per-case fresh mutation targets; module-qualified genuine evaluators; defined builders, explicit raises and pytest.approx. Build actually refused/tampered nested results and compare like reasons. Preserve canonicalization, binding, precedence, guards and lossless float/reason/checksum semantics. Run 94 mutates an accepted retirement's previous_role, correctly makes checksum() raise, then wrongly expects evaluate_reinstatement to raise; that public evaluator catches the nested failure and returns an INVALID_RETIREMENT refusal. Assert that stable refusal; keep nested revalidation and fail-closed translation strict.",
+   "detail": "44-45/55-56/58-59/61-62/66-68/75/83 misuse constructors, defaults, thresholds, __setstate__ shapes or helpers. Run 66 replaces explicit None; 67 passes accepted output to _reason and reads a raising property outside pytest.raises; 68 compares 0.05-0.005 with literal 0.045 exactly; 75 calls undefined _forge. Run 83 makes every Mar 1-2 item stale at Mar 10 under six days, so reversing empty usable/clearing empty contradictions are no-ops and zero-day freshness remains a valid canonical all-rejected result; it compares INVALID_INPUT and INVALID_MODEL checksums. Run 85's empty canonical SenseResult with prior 1.0/drift 0.0 is accepted without abstention, so retirement correctly yields INSUFFICIENT_EVIDENCE, not INVALID_DRIFT. Run 89 binds accepted drift to the default CHAMPION while retirement targets a CHALLENGER, so EVIDENCE_MODEL_MISMATCH precedes drift refusal. Run 91's _comparison(champion=None) substitutes a valid CHAMPION; the comparison is accepted, so retirement cannot exercise INVALID_COMPARISON. Run 92 expects EVIDENCE_MODEL_MISMATCH although its superior comparison is favorable to the target challenger, hence correctly insufficient; its mutation table captures the original accepted graph, resets accepted, then mutates stale targets while checking the fresh result. Run 93 uses distinct IDs e-dup/e-other, so forward is canonical/accepted and only reversed order is invalid, not two duplicate permutations; a later local def evaluate_drift shadows the imported evaluator and raises UnboundLocalError before the closure probe. Use sentinels; distinct, adverse and correctly bound inputs; true duplicate IDs; per-case fresh mutation targets; module-qualified genuine evaluators; defined builders, explicit raises and pytest.approx. Build actually refused/tampered nested results and compare like reasons. Preserve canonicalization, binding, precedence, guards and lossless float/reason/checksum semantics. Run 94 mutates an accepted retirement's previous_role, correctly makes checksum() raise, then wrongly expects evaluate_reinstatement to raise; that public evaluator catches the nested failure and returns an INVALID_RETIREMENT refusal. Assert that stable refusal; keep nested revalidation and fail-closed translation strict. Run 95 passes a naive as_of to _comparison, whose .astimezone(tz) call interprets it in the runner's local zone and turns it into a valid aware instant before evaluate_comparison, so the INVALID_INPUT case is accepted. Pass the naive value directly to the evaluator or use a helper that preserves invalid inputs; assert the stable refusal and keep validation precedence strict.",
    "location": {
     "path": "tests/test_brain_learn.py",
-    "line": 585
+    "line": 118
    },
    "sources": [
     {
@@ -622,6 +634,12 @@
     {
      "run_id": 32818046185,
      "job_id": 97717028235,
+     "stage": "gate",
+     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+    },
+    {
+     "run_id": 32827723868,
+     "job_id": 97745862652,
      "stage": "gate",
      "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
     }

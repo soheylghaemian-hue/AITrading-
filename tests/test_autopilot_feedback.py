@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_94() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_95() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -399,11 +399,11 @@ def test_learn_feedback_records_exact_run_evidence_through_94() -> None:
         ),
         "invalid-policy-fixture-raises-before-result-refusal": (
             "tests/test_brain_learn.py",
-            585,
+            118,
         ),
         "learn-documentation-omits-model-role": (
             "docs/TRADER_BRAIN.md",
-            357,
+            344,
         ),
         "local-proposal-tamper-invalidates-proof-first": (
             "tests/test_brain_learn.py",
@@ -420,7 +420,7 @@ def test_learn_feedback_records_exact_run_evidence_through_94() -> None:
         "tamper-fixture-leaks-champion-role": ("tests/test_brain_learn.py", 593),
         "timezone-spelling-fixture-assumes-evidence-inequality": (
             "tests/test_brain_learn.py",
-            239,
+            169,
         ),
         "timezone-utc-fixture-not-in-immutable-allowlist": (
             "tests/test_brain_learn.py",
@@ -737,6 +737,12 @@ def test_learn_feedback_records_exact_run_evidence_through_94() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_95_gate_source = {
+        "run_id": 32827723868,
+        "job_id": 97745862652,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -809,6 +815,7 @@ def test_learn_feedback_records_exact_run_evidence_through_94() -> None:
             run_92_gate_source,
             run_93_gate_source,
             run_94_gate_source,
+            run_95_gate_source,
         ],
         "learn-documentation-omits-model-role": [
             run_43_source,
@@ -827,6 +834,7 @@ def test_learn_feedback_records_exact_run_evidence_through_94() -> None:
             run_88_gate_source,
             run_90_gate_source,
             run_93_gate_source,
+            run_95_gate_source,
         ],
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
         "nested-result-failure-reason-leaks-across-transition-boundary": [
@@ -844,6 +852,7 @@ def test_learn_feedback_records_exact_run_evidence_through_94() -> None:
             run_59_gate_source,
             run_61_gate_source,
             run_87_gate_source,
+            run_95_gate_source,
         ],
         "timezone-utc-fixture-not-in-immutable-allowlist": [
             run_44_source,
@@ -997,7 +1006,11 @@ def test_learn_feedback_records_exact_run_evidence_through_94() -> None:
         "then canonical state. Run 87's fixture expects aware datetimes expressed as "
         "UTC and +05:30 to compare unequal, but Python datetime equality compares the "
         "represented instants and they are equal. Assert that the UTC offsets or tzinfo "
-        "spellings differ, then retain UTC-normalized input, result and checksum equality."
+        "spellings differ, then retain UTC-normalized input, result and checksum equality. "
+        "Run 95 checks offset inequality only after _drift has passed both timestamp "
+        "spellings through SENSE, whose accepted SenseResult is UTC-normalized; both "
+        "stored offsets are therefore zero. Assert differing raw fixture offsets before "
+        "evaluation, then retain result and checksum equality on canonical outputs."
     )
     assert findings["local-proposal-tamper-invalidates-proof-first"]["title"] == (
         "Proof-tamper"
@@ -1032,7 +1045,11 @@ def test_learn_feedback_records_exact_run_evidence_through_94() -> None:
         "sentence, case and punctuation boundary exactly; move explanations to "
         "separate sentences; use markup-aware normalization; keep sorted unique "
         "exports and strict docs/binding guards. Remove the exactly-once promise or "
-        "represent replay consumption."
+        "represent replay consumption. Run 95 joins `Equivalent inputs produce equal "
+        "results and identical checksums` to its explanation with an em dash instead of "
+        "ending the pinned sentence with a period. End that exact sentence, then put the "
+        "explanation in a separate sentence; keep markup-aware normalization and strict "
+        "documentation guards."
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["title"] == (
         "Evaluator fixture errors"
@@ -1068,7 +1085,12 @@ def test_learn_feedback_records_exact_run_evidence_through_94() -> None:
         "raise, then wrongly expects evaluate_reinstatement to raise; that public "
         "evaluator catches the nested failure and returns an INVALID_RETIREMENT "
         "refusal. Assert that stable refusal; keep nested revalidation and fail-closed "
-        "translation strict."
+        "translation strict. Run 95 passes a naive as_of to _comparison, whose "
+        ".astimezone(tz) call interprets it in the runner's local zone and turns it into "
+        "a valid aware instant before evaluate_comparison, so the INVALID_INPUT case is "
+        "accepted. Pass the naive value directly to the evaluator or use a helper that "
+        "preserves invalid inputs; assert the stable refusal and keep validation "
+        "precedence strict."
     )
     assert findings[
         "nested-result-failure-reason-leaks-across-transition-boundary"
@@ -1284,6 +1306,15 @@ def test_learn_feedback_records_exact_run_evidence_through_94() -> None:
     assert {
         finding_id
         for finding_id, finding in findings.items()
+        if run_95_gate_source in finding["sources"]
+    } == {
+        "invalid-policy-fixture-raises-before-result-refusal",
+        "learn-documentation-omits-model-role",
+        "timezone-spelling-fixture-assumes-evidence-inequality",
+    }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
         if run_67_gate_source in finding["sources"]
     } == {"invalid-policy-fixture-raises-before-result-refusal"}
     assert {
@@ -1405,7 +1436,7 @@ def test_schema_is_strict_and_matches_validator_bounds() -> None:
     assert MAX_SOURCES_PER_FINDING == 8
     assert LEARN_MAX_FEEDBACK_BYTES == 32_768
     assert LEARN_MAX_FINDINGS == 17
-    assert LEARN_MAX_SOURCES_PER_FINDING == 19
+    assert LEARN_MAX_SOURCES_PER_FINDING == 20
     assert schema["additionalProperties"] is False
     assert schema["properties"]["schema_version"]["const"] == 1
     assert schema["properties"]["kind"]["const"] == FEEDBACK_KIND
