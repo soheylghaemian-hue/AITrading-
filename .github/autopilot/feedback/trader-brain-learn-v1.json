@@ -319,10 +319,10 @@
       "id": "timezone-spelling-fixture-assumes-evidence-inequality",
       "severity": "P1",
       "title": "Timezone fixture errors",
-      "detail": "43/49/56/59/61 use raw fold equality or stale evidence. Compare UTC instants, then canonical state.",
+      "detail": "43/49/56/59/61 use raw fold equality or stale evidence. Compare UTC instants, then canonical state. Run 87's fixture expects aware datetimes expressed as UTC and +05:30 to compare unequal, but Python datetime equality compares the represented instants and they are equal. Assert that the UTC offsets or tzinfo spellings differ, then retain UTC-normalized input, result and checksum equality.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 245
+        "line": 239
       },
       "sources": [
         {
@@ -354,6 +354,12 @@
           "job_id": 97067468408,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32792874063,
+          "job_id": 97643139981,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
       ]
     },
@@ -379,10 +385,10 @@
       "id": "learn-documentation-omits-model-role",
       "severity": "P1",
       "title": "LEARN public API/docs drift",
-      "detail": "43/61 omit ModelRole/exact research-only wording; 65/66/74/84 raw scans reject line breaks or Markdown markup; 71 makes __all__ unsorted by placing RejectedEvidence before ReinstatementInputs; 72 ends the pinned comparison/PROVE model-binding sentence with a colon instead of the required period; 73 promises retirement is reversible exactly once although stateless evaluate_reinstatement repeatedly accepts the same retirement, identity, reversal ID, role and timestamp and records no consumption; 75's normalizer deletes every underscore, so stable enum values such as INVALID_INPUT cannot match the documented text; 78's normalizer deletes > from >=, so the documented abstention-boundary phrase cannot match; its other guard expects \"a proof must grade exactly the proposal_id its ModelRecord names\" while the docs say \"the proof must grade exactly the proposal_id its ModelRecord names\". Remove the unsupported exactly-once promise or explicitly represent replay/consumption; use markup-aware normalization; pin plain public/guard/equality/reason phrases and sorted unique exports; keep export/docs checks strict. Run 85 pins the stateless replay sentence with a period, while the documentation joins it to the next clause with a semicolon; markup-aware normalization correctly rejects that punctuation mismatch. End the documented sentence with the exact period and move the replay explanation into a separate sentence.",
+      "detail": "43/61 omit ModelRole/exact research-only wording; 65/66/74/84 raw scans reject line breaks or Markdown markup; 71 makes __all__ unsorted by placing RejectedEvidence before ReinstatementInputs; 72 ends the pinned comparison/PROVE model-binding sentence with a colon instead of the required period; 73 promises retirement is reversible exactly once although stateless evaluate_reinstatement repeatedly accepts the same retirement, identity, reversal ID, role and timestamp and records no consumption; 75's normalizer deletes every underscore, so stable enum values such as INVALID_INPUT cannot match the documented text; 78's normalizer deletes > from >=, so the documented abstention-boundary phrase cannot match; its other guard expects \"a proof must grade exactly the proposal_id its ModelRecord names\" while the docs say \"the proof must grade exactly the proposal_id its ModelRecord names\". Remove the unsupported exactly-once promise or explicitly represent replay/consumption; use markup-aware normalization; pin plain public/guard/equality/reason phrases and sorted unique exports; keep export/docs checks strict. Run 85 pins the stateless replay sentence with a period, while the documentation joins it to the next clause with a semicolon; markup-aware normalization correctly rejects that punctuation mismatch. End the documented sentence with the exact period and move the replay explanation into a separate sentence. Run 87's documentation writes \"identical checksums, because\" where the pinned contract requires \"identical checksums.\"; the markup-aware normalizer correctly preserves and rejects that punctuation mismatch. End the documented equality/checksum sentence with the exact period and move the canonicalization explanation into a separate sentence.",
       "location": {
-        "path": "tests/test_brain_learn.py",
-        "line": 758
+        "path": "docs/TRADER_BRAIN.md",
+        "line": 396
       },
       "sources": [
         {
@@ -454,6 +460,12 @@
         {
           "run_id": 32783772777,
           "job_id": 97616893006,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32792874063,
+          "job_id": 97643139981,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
