@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_85() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_86() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -375,7 +375,7 @@ def test_learn_feedback_records_exact_run_evidence_through_85() -> None:
         ),
         "comparison-invalid-proof-shadowed-by-model-validation": (
             "src/atp/brain/learn.py",
-            765,
+            625,
         ),
         "comparison-fixture-confounds-proof-mismatch": (
             "tests/test_brain_learn.py",
@@ -383,15 +383,15 @@ def test_learn_feedback_records_exact_run_evidence_through_85() -> None:
         ),
         "coordinated-drift-tampering-bypasses-revalidation": (
             "src/atp/brain/learn.py",
-            965,
+            245,
         ),
         "evidence-failure-precedence-permutation-dependent": (
             "src/atp/brain/learn.py",
             734,
         ),
         "equivalent-permutations-produce-unequal-results": (
-            "tests/test_brain_learn.py",
-            268,
+            "src/atp/brain/learn.py",
+            587,
         ),
         "evaluator-closure-exposes-commitment-sealer": (
             "src/atp/brain/learn.py",
@@ -683,6 +683,12 @@ def test_learn_feedback_records_exact_run_evidence_through_85() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_86_final_review_source = {
+        "run_id": 32787386882,
+        "job_id": 97632504247,
+        "stage": "final_review",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -704,6 +710,7 @@ def test_learn_feedback_records_exact_run_evidence_through_85() -> None:
         "comparison-invalid-proof-shadowed-by-model-validation": [
             run_45_source,
             run_47_source,
+            run_86_final_review_source,
         ],
         "comparison-fixture-confounds-proof-mismatch": [
             run_38_source,
@@ -723,12 +730,14 @@ def test_learn_feedback_records_exact_run_evidence_through_85() -> None:
             run_77_gate_source,
             run_79_final_review_source,
             run_81_gate_source,
+            run_86_final_review_source,
         ],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
         "equivalent-permutations-produce-unequal-results": [
             run_42_source,
             run_48_source,
             run_63_gate_source,
+            run_86_final_review_source,
         ],
         "evaluator-closure-exposes-commitment-sealer": [run_42_source],
         "invalid-policy-fixture-raises-before-result-refusal": [
@@ -854,7 +863,14 @@ def test_learn_feedback_records_exact_run_evidence_through_85() -> None:
         "its exposed inputs/identity/model_id/restored_role; __post_init__ only "
         "revalidates recomputable values, so evaluator provenance is absent. Block "
         "non-evaluator construction/rebinding paths; bind immutable evaluator "
-        "provenance/input identity; retain consumer revalidation."
+        "provenance/input identity; retain consumer revalidation. Run 86's _Seal "
+        "trusts only the caller's code object: a types.FunctionType built from "
+        "evaluate_comparison.__code__ with copied globals can substitute "
+        "ComparisonInputs, reconstruct an accepted result from public fields, and "
+        "receive a valid owner-bound seal and checksum. Require both the exact "
+        "evaluator code object and exact module-globals identity before issuance; keep "
+        "owner, identity and fingerprint revalidation; block copied or substituted "
+        "globals."
     )
     assert findings["evidence-failure-precedence-permutation-dependent"]["title"] == (
         "Evidence failure precedence depends on tuple order"
@@ -886,7 +902,13 @@ def test_learn_feedback_records_exact_run_evidence_through_85() -> None:
     assert findings["equivalent-permutations-produce-unequal-results"]["detail"] == (
         "42/48/63 store noncanonical tuples/datetimes despite canonical checksums, so "
         "permutations/fold spellings yield unequal results. Sort tuples, normalize UTC, "
-        "pin equality."
+        "pin equality. Run 86 stores caller-spelled ProveResults in ComparisonInputs: "
+        "proven results with permuted-but-equivalent windows have identical proof "
+        "checksums, while their comparisons are unequal despite sharing a comparison "
+        "checksum. Store one fully canonical proof snapshot per side, including every "
+        "proof field comparison later consumes; derive equality and checksum from that "
+        "same canonical state without ignoring proof fields; retain strict proof "
+        "revalidation."
     )
     assert {
         finding_id
@@ -1115,6 +1137,15 @@ def test_learn_feedback_records_exact_run_evidence_through_85() -> None:
     assert {
         finding_id
         for finding_id, finding in findings.items()
+        if run_86_final_review_source in finding["sources"]
+    } == {
+        "comparison-invalid-proof-shadowed-by-model-validation",
+        "coordinated-drift-tampering-bypasses-revalidation",
+        "equivalent-permutations-produce-unequal-results",
+    }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
         if run_67_gate_source in finding["sources"]
     } == {"invalid-policy-fixture-raises-before-result-refusal"}
     assert {
@@ -1212,7 +1243,12 @@ def test_learn_feedback_records_exact_run_evidence_through_85() -> None:
         "45/47 bind proofs; champion-first checks make role swaps change wrong/unproven "
         "reasons. Validate shells then proofs: INVALID_PROOF, PROOF_NOT_PROVEN, "
         "PROOF_MODEL_MISMATCH, knowability. Keep construction/checksum "
-        "binding/fail-closed order."
+        "binding/fail-closed order. Run 86 checks model knowability before "
+        "proof-to-model binding, so a future-registered model with a wrong-proposal "
+        "proof returns INVALID_MODEL instead of the pinned PROOF_MODEL_MISMATCH. Keep "
+        "exact ModelRecord shape validation before field access; then bind each proof "
+        "to its model before model and proof knowability, side-symmetrically; retain "
+        "earlier proof-checksum and proven-status phases."
     )
     assert len(normalized["findings"]) == LEARN_MAX_FINDINGS
     assert {
