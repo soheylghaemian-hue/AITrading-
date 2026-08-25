@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_87() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_88() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -379,7 +379,7 @@ def test_learn_feedback_records_exact_run_evidence_through_87() -> None:
         ),
         "comparison-fixture-confounds-proof-mismatch": (
             "tests/test_brain_learn.py",
-            357,
+            286,
         ),
         "coordinated-drift-tampering-bypasses-revalidation": (
             "src/atp/brain/learn.py",
@@ -403,7 +403,7 @@ def test_learn_feedback_records_exact_run_evidence_through_87() -> None:
         ),
         "learn-documentation-omits-model-role": (
             "docs/TRADER_BRAIN.md",
-            396,
+            322,
         ),
         "local-proposal-tamper-invalidates-proof-first": (
             "tests/test_brain_learn.py",
@@ -417,7 +417,7 @@ def test_learn_feedback_records_exact_run_evidence_through_87() -> None:
             "src/atp/brain/learn.py",
             1063,
         ),
-        "tamper-fixture-leaks-champion-role": ("tests/test_brain_learn.py", 614),
+        "tamper-fixture-leaks-champion-role": ("tests/test_brain_learn.py", 593),
         "timezone-spelling-fixture-assumes-evidence-inequality": (
             "tests/test_brain_learn.py",
             239,
@@ -695,6 +695,12 @@ def test_learn_feedback_records_exact_run_evidence_through_87() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_88_gate_source = {
+        "run_id": 32796627477,
+        "job_id": 97654873093,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -721,6 +727,7 @@ def test_learn_feedback_records_exact_run_evidence_through_87() -> None:
         "comparison-fixture-confounds-proof-mismatch": [
             run_38_source,
             run_50_gate_source,
+            run_88_gate_source,
         ],
         "coordinated-drift-tampering-bypasses-revalidation": [
             run_40_source,
@@ -776,6 +783,7 @@ def test_learn_feedback_records_exact_run_evidence_through_87() -> None:
             run_84_gate_source,
             run_85_gate_source,
             run_87_gate_source,
+            run_88_gate_source,
         ],
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
         "nested-result-failure-reason-leaks-across-transition-boundary": [
@@ -785,7 +793,7 @@ def test_learn_feedback_records_exact_run_evidence_through_87() -> None:
             run_42_source,
             run_70_final_review_source,
         ],
-        "tamper-fixture-leaks-champion-role": [run_36_source],
+        "tamper-fixture-leaks-champion-role": [run_36_source, run_88_gate_source],
         "timezone-spelling-fixture-assumes-evidence-inequality": [
             run_43_source,
             run_49_gate_source,
@@ -821,11 +829,17 @@ def test_learn_feedback_records_exact_run_evidence_through_87() -> None:
         "import graph; keep no-order/no-execution."
     )
     assert findings["tamper-fixture-leaks-champion-role"]["title"] == (
-        "Tamper fixture mutates the shared champion across tests"
+        "Test fixtures leak shared state across tests"
     )
     assert findings["tamper-fixture-leaks-champion-role"]["detail"] == (
         "Run 36 mutates aliased CHAMPION without restoring it, causing "
-        "ROLE_MISMATCH/order dependence. Build fresh models; keep fail-closed rejection."
+        "ROLE_MISMATCH/order dependence. Build fresh models; keep fail-closed rejection. "
+        "Run 88's import-graph fixture deletes every loaded atp/atp.* module from "
+        "sys.modules without restoring it; already-collected governance tests retain "
+        "the old ModelStatus class while later imports create a second enum class, so "
+        "identity checks and ModelRegistry.by_status become order-dependent. Run the "
+        "import-graph check in a subprocess or restore the exact module cache; retain "
+        "real transitive-import rejection."
     )
     assert findings["comparison-fixture-confounds-proof-mismatch"]["title"] == (
         "Comparison fixtures still collapse into self-comparison"
@@ -833,7 +847,11 @@ def test_learn_feedback_records_exact_run_evidence_through_87() -> None:
     assert findings["comparison-fixture-confounds-proof-mismatch"]["detail"] == (
         "38/50 self-compare: 38 reuses challenger proposal; 50's champion shares "
         "challenger ID/proposal and correct role. SELF_COMPARISON is right; use distinct "
-        "IDs and wrong role; pin both."
+        "IDs and wrong role; pin both. Run 88 labels a CHALLENGER twin with the "
+        "champion's exact model_id/proposal_id as a genuine self-comparison but expects "
+        "ROLE_MISMATCH; both roles are correct, so SELF_COMPARISON is the pinned result. "
+        "Expect SELF_COMPARISON, or give the wrong-role case distinct identities; retain "
+        "role-before-identity precedence."
     )
     assert findings["transition-fixture-confounds-ordering"]["title"] == (
         "Transition order"
@@ -972,7 +990,12 @@ def test_learn_feedback_records_exact_run_evidence_through_87() -> None:
         "\"identical checksums, because\" where the pinned contract requires \"identical "
         "checksums.\"; the markup-aware normalizer correctly preserves and rejects that "
         "punctuation mismatch. End the documented equality/checksum sentence with the "
-        "exact period and move the canonicalization explanation into a separate sentence."
+        "exact period and move the canonicalization explanation into a separate sentence. "
+        "Run 88's documentation joins the pinned challenger non-promotion sentence to "
+        "its explanation with a colon, while the guard requires a period after "
+        "\"promotion authority.\"; markup-aware normalization correctly rejects that "
+        "punctuation mismatch. End the pinned sentence with the exact period and move "
+        "the explanation into a separate sentence."
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["title"] == (
         "Evaluator fixture errors"
@@ -1165,6 +1188,15 @@ def test_learn_feedback_records_exact_run_evidence_through_87() -> None:
     } == {
         "learn-documentation-omits-model-role",
         "timezone-spelling-fixture-assumes-evidence-inequality",
+    }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_88_gate_source in finding["sources"]
+    } == {
+        "comparison-fixture-confounds-proof-mismatch",
+        "learn-documentation-omits-model-role",
+        "tamper-fixture-leaks-champion-role",
     }
     assert {
         finding_id
