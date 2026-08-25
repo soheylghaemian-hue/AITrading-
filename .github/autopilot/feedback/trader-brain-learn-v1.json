@@ -13,42 +13,12 @@
     "line": 358
    },
    "sources": [
-    {
-     "run_id": 32438421194,
-     "job_id": 96648106153,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32566023747,
-     "job_id": 97016998982,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32584681403,
-     "job_id": 97062107703,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32594040692,
-     "job_id": 97086336473,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32622788013,
-     "job_id": 97158669218,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32723366295,
-     "job_id": 97424477755,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    }
+    {"run_id":32438421194,"job_id":96648106153,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32566023747,"job_id":97016998982,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32584681403,"job_id":97062107703,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32594040692,"job_id":97086336473,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32622788013,"job_id":97158669218,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32723366295,"job_id":97424477755,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
@@ -61,18 +31,8 @@
     "line": 593
    },
    "sources": [
-    {
-     "run_id": 32438421194,
-     "job_id": 96648106153,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32796627477,
-     "job_id": 97654873093,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    }
+    {"run_id":32438421194,"job_id":96648106153,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32796627477,"job_id":97654873093,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
@@ -85,24 +45,9 @@
     "line": 286
    },
    "sources": [
-    {
-     "run_id": 32452907320,
-     "job_id": 96689547045,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32563676193,
-     "job_id": 97011712519,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32796627477,
-     "job_id": 97654873093,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    }
+    {"run_id":32452907320,"job_id":96689547045,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32563676193,"job_id":97011712519,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32796627477,"job_id":97654873093,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
@@ -115,126 +60,37 @@
     "line": 808
    },
    "sources": [
-    {
-     "run_id": 32452907320,
-     "job_id": 96689547045,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32563676193,
-     "job_id": 97011712519,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32723366295,
-     "job_id": 97424477755,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    }
+    {"run_id":32452907320,"job_id":96689547045,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32563676193,"job_id":97011712519,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32723366295,"job_id":97424477755,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
    "id": "coordinated-drift-tampering-bypasses-revalidation",
    "severity": "P1",
    "title": "Accepted-state minting persists",
-   "detail": "40/47-49/51/54/56/63/70/73/77/79/81 mint, restore or rebind accepted state via constructors, _Warrant, __setstate__ or caller-forgeable call sites. Run 70 hand-builds DriftResult from accepted inputs; valid inputs.model_id/prior_confidence mutations remain accepted downstream. Run 73's _issued_by trusts only frame globals/co_name: a caller-created types.FunctionType named evaluate_comparison with learn.__dict__ mints ComparisonResult from forged ModelRecords, fake proof checksums and arbitrary returns, undermining retirement/reinstatement provenance. Run 77 re-derives input_identity from current mutable accepted.inputs, so a valid accepted.inputs.model.model_id mutation makes checksum() not raise. Run 79's public result constructors accept caller-supplied provenance and coherently recomputed fields; tests allow direct recreation of an accepted DriftResult with the same checksum and rebinding mutated inputs via exposed _bind_* helpers. Run 81 directly reconstructs an accepted ReinstatementResult from its exposed inputs/identity/model_id/restored_role; __post_init__ only revalidates recomputable values, so evaluator provenance is absent. Block non-evaluator construction/rebinding paths; bind immutable evaluator provenance/input identity; retain consumer revalidation. Run 86's _Seal trusts only the caller's code object: a types.FunctionType built from evaluate_comparison.__code__ with copied globals can substitute ComparisonInputs, reconstruct an accepted result from public fields, and receive a valid owner-bound seal and checksum. Require both the exact evaluator code object and exact module-globals identity before issuance; keep owner, identity and fingerprint revalidation; block copied or substituted globals. Run 96: A caller can allocate DriftResult with object.__new__, copy an accepted result's fields and provenance seal, and obtain a distinct object whose checksum passes and which retirement accepts. The seal binds only type-name and fingerprint, not its owning result. Replacing the exported evaluator with a FunctionType copy also lets copied evaluator code mint seals, contrary to the provenance contract.",
+   "detail": "40/47-49/51/54/56/63/70/73/77/79/81 mint, restore or rebind accepted state via constructors, _Warrant, __setstate__ or caller-forgeable call sites. Run 70 hand-builds DriftResult from accepted inputs; valid inputs.model_id/prior_confidence mutations remain accepted downstream. Run 73's _issued_by trusts only frame globals/co_name: a caller-created types.FunctionType named evaluate_comparison with learn.__dict__ mints ComparisonResult from forged ModelRecords, fake proof checksums and arbitrary returns, undermining retirement/reinstatement provenance. Run 77 re-derives input_identity from current mutable accepted.inputs, so a valid accepted.inputs.model.model_id mutation makes checksum() not raise. Run 79's public result constructors accept caller-supplied provenance and coherently recomputed fields; tests allow direct recreation of an accepted DriftResult with the same checksum and rebinding mutated inputs via exposed _bind_* helpers. Run 81 directly reconstructs an accepted ReinstatementResult from its exposed inputs/identity/model_id/restored_role; __post_init__ only revalidates recomputable values, so evaluator provenance is absent. Block non-evaluator construction/rebinding paths; bind immutable evaluator provenance/input identity; retain consumer revalidation. Run 86's _Seal trusts only the caller's code object: a types.FunctionType built from evaluate_comparison.__code__ with copied globals can substitute ComparisonInputs, reconstruct an accepted result from public fields, and receive a valid owner-bound seal and checksum. Require both the exact evaluator code object and exact module-globals identity before issuance; keep owner, identity and fingerprint revalidation; block copied or substituted globals. Run 96: A caller can allocate DriftResult with object.__new__, copy an accepted result's fields and provenance seal, and obtain a distinct object whose checksum passes and which retirement accepts. The seal binds only type-name and fingerprint, not its owning result. Replacing the exported evaluator with a FunctionType copy also lets copied evaluator code mint seals, contrary to the provenance contract. Run 97: frozen+slots dataclasses generate each concrete result's own __setstate__, shadowing _Issued.__setstate__; {} silently succeeds and crafted state can mutate issued fields. Define the raising restore/copy guard on each concrete result (or prevent dataclass generation) and pin all four.",
    "location": {
     "path": "src/atp/brain/learn.py",
-    "line": 349
+    "line": 477
    },
    "sources": [
-    {
-     "run_id": 32458581800,
-     "job_id": 96710258496,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32554139745,
-     "job_id": 96991065888,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32558489491,
-     "job_id": 97000836840,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32561133319,
-     "job_id": 97003088227,
-     "stage": "artifact_audit",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32566023747,
-     "job_id": 97014947094,
-     "stage": "artifact_audit",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32571575828,
-     "job_id": 97030214389,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32575669191,
-     "job_id": 97040696467,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32591600980,
-     "job_id": 97079081660,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32622788013,
-     "job_id": 97158669218,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32647948386,
-     "job_id": 97221994851,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32703179396,
-     "job_id": 97364220767,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32710835689,
-     "job_id": 97397112789,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32723366295,
-     "job_id": 97424477755,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32787386882,
-     "job_id": 97632504247,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32866240334,
-     "job_id": 97879171688,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    }
+    {"run_id":32458581800,"job_id":96710258496,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32554139745,"job_id":96991065888,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32558489491,"job_id":97000836840,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32561133319,"job_id":97003088227,"stage":"artifact_audit","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32566023747,"job_id":97014947094,"stage":"artifact_audit","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32571575828,"job_id":97030214389,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32575669191,"job_id":97040696467,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32591600980,"job_id":97079081660,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32622788013,"job_id":97158669218,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32647948386,"job_id":97221994851,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32703179396,"job_id":97364220767,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32710835689,"job_id":97397112789,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32723366295,"job_id":97424477755,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32787386882,"job_id":97632504247,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32866240334,"job_id":97879171688,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32893857889,"job_id":97959003873,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
@@ -247,12 +103,7 @@
     "line": 734
    },
    "sources": [
-    {
-     "run_id": 32458581800,
-     "job_id": 96710258496,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    }
+    {"run_id":32458581800,"job_id":96710258496,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
@@ -265,12 +116,7 @@
     "line": 1081
    },
    "sources": [
-    {
-     "run_id": 32481392244,
-     "job_id": 96778775008,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    }
+    {"run_id":32481392244,"job_id":96778775008,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
@@ -283,18 +129,8 @@
     "line": 1063
    },
    "sources": [
-    {
-     "run_id": 32481392244,
-     "job_id": 96778775008,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32622788013,
-     "job_id": 97158669218,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    }
+    {"run_id":32481392244,"job_id":96778775008,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32622788013,"job_id":97158669218,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
@@ -307,30 +143,10 @@
     "line": 587
    },
    "sources": [
-    {
-     "run_id": 32481392244,
-     "job_id": 96778775008,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32558489491,
-     "job_id": 97000836840,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32591600980,
-     "job_id": 97079081660,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32787386882,
-     "job_id": 97632504247,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    }
+    {"run_id":32481392244,"job_id":96778775008,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32558489491,"job_id":97000836840,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32591600980,"job_id":97079081660,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32787386882,"job_id":97632504247,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
@@ -343,48 +159,13 @@
     "line": 169
    },
    "sources": [
-    {
-     "run_id": 32491533881,
-     "job_id": 96806873114,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32561133319,
-     "job_id": 97005629148,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32575669191,
-     "job_id": 97040696467,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32582631576,
-     "job_id": 97056894378,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32586981689,
-     "job_id": 97067468408,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32792874063,
-     "job_id": 97643139981,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32827723868,
-     "job_id": 97745862652,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    }
+    {"run_id":32491533881,"job_id":96806873114,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32561133319,"job_id":97005629148,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32575669191,"job_id":97040696467,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32582631576,"job_id":97056894378,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32586981689,"job_id":97067468408,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32792874063,"job_id":97643139981,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32827723868,"job_id":97745862652,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
@@ -397,12 +178,7 @@
     "line": 381
    },
    "sources": [
-    {
-     "run_id": 32491533881,
-     "job_id": 96806873114,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    }
+    {"run_id":32491533881,"job_id":96806873114,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
@@ -415,108 +191,23 @@
     "line": 344
    },
    "sources": [
-    {
-     "run_id": 32491533881,
-     "job_id": 96806873114,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32586981689,
-     "job_id": 97067468408,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32597293666,
-     "job_id": 97092753578,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32599754306,
-     "job_id": 97099076876,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32633659803,
-     "job_id": 97182598097,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32645720123,
-     "job_id": 97212330684,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32647948386,
-     "job_id": 97221994851,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32652854008,
-     "job_id": 97233419145,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32659559724,
-     "job_id": 97246482381,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32706739347,
-     "job_id": 97375145112,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32780584056,
-     "job_id": 97607411133,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32783772777,
-     "job_id": 97616893006,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32792874063,
-     "job_id": 97643139981,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32796627477,
-     "job_id": 97654873093,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32803661401,
-     "job_id": 97674010884,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32809181955,
-     "job_id": 97689719271,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32827723868,
-     "job_id": 97745862652,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    }
+    {"run_id":32491533881,"job_id":96806873114,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32586981689,"job_id":97067468408,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32597293666,"job_id":97092753578,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32599754306,"job_id":97099076876,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32633659803,"job_id":97182598097,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32645720123,"job_id":97212330684,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32647948386,"job_id":97221994851,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32652854008,"job_id":97233419145,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32659559724,"job_id":97246482381,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32706739347,"job_id":97375145112,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32780584056,"job_id":97607411133,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32783772777,"job_id":97616893006,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32792874063,"job_id":97643139981,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32796627477,"job_id":97654873093,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32803661401,"job_id":97674010884,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32809181955,"job_id":97689719271,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32827723868,"job_id":97745862652,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
@@ -529,126 +220,26 @@
     "line": 118
    },
    "sources": [
-    {
-     "run_id": 32528444226,
-     "job_id": 96921311025,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32542812818,
-     "job_id": 96958966128,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32573632245,
-     "job_id": 97035359522,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32575669191,
-     "job_id": 97040696467,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32580176027,
-     "job_id": 97051417091,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32582631576,
-     "job_id": 97056894378,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32586981689,
-     "job_id": 97067468408,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32589317435,
-     "job_id": 97073687658,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32599754306,
-     "job_id": 97099076876,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32602620926,
-     "job_id": 97106277328,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32612737124,
-     "job_id": 97130419906,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32659559724,
-     "job_id": 97246482381,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32775112610,
-     "job_id": 97594147727,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32783772777,
-     "job_id": 97616893006,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32800959884,
-     "job_id": 97665592734,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32806323964,
-     "job_id": 97681832518,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32807336891,
-     "job_id": 97685853506,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32809181955,
-     "job_id": 97689719271,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32818046185,
-     "job_id": 97717028235,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32827723868,
-     "job_id": 97745862652,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    }
+    {"run_id":32528444226,"job_id":96921311025,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32542812818,"job_id":96958966128,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32573632245,"job_id":97035359522,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32575669191,"job_id":97040696467,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32580176027,"job_id":97051417091,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32582631576,"job_id":97056894378,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32586981689,"job_id":97067468408,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32589317435,"job_id":97073687658,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32599754306,"job_id":97099076876,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32602620926,"job_id":97106277328,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32612737124,"job_id":97130419906,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32659559724,"job_id":97246482381,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32775112610,"job_id":97594147727,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32783772777,"job_id":97616893006,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32800959884,"job_id":97665592734,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32806323964,"job_id":97681832518,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32807336891,"job_id":97685853506,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32809181955,"job_id":97689719271,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32818046185,"job_id":97717028235,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32827723868,"job_id":97745862652,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
@@ -661,42 +252,12 @@
     "line": 437
    },
    "sources": [
-    {
-     "run_id": 32528444226,
-     "job_id": 96921311025,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32542812818,
-     "job_id": 96958966128,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32561133319,
-     "job_id": 97005629148,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32575669191,
-     "job_id": 97040696467,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32586981689,
-     "job_id": 97067468408,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32589317435,
-     "job_id": 97073687658,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    }
+    {"run_id":32528444226,"job_id":96921311025,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32542812818,"job_id":96958966128,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32561133319,"job_id":97005629148,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32575669191,"job_id":97040696467,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32586981689,"job_id":97067468408,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32589317435,"job_id":97073687658,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
@@ -709,24 +270,9 @@
     "line": 625
    },
    "sources": [
-    {
-     "run_id": 32542812818,
-     "job_id": 96958966128,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32554139745,
-     "job_id": 96991065888,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32787386882,
-     "job_id": 97632504247,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    }
+    {"run_id":32542812818,"job_id":96958966128,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32554139745,"job_id":96991065888,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32787386882,"job_id":97632504247,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
@@ -739,24 +285,9 @@
     "line": 463
    },
    "sources": [
-    {
-     "run_id": 32561133319,
-     "job_id": 97005629148,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32567915055,
-     "job_id": 97021257732,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    },
-    {
-     "run_id": 32584681403,
-     "job_id": 97062107703,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    }
+    {"run_id":32561133319,"job_id":97005629148,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32567915055,"job_id":97021257732,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32584681403,"job_id":97062107703,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
@@ -769,12 +300,7 @@
     "line": 665
    },
    "sources": [
-    {
-     "run_id": 32659559724,
-     "job_id": 97246482381,
-     "stage": "gate",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    }
+    {"run_id":32659559724,"job_id":97246482381,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
@@ -787,12 +313,7 @@
     "line": 1085
    },
    "sources": [
-    {
-     "run_id": 32866240334,
-     "job_id": 97879171688,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    }
+    {"run_id":32866240334,"job_id":97879171688,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
@@ -805,12 +326,7 @@
     "line": 1212
    },
    "sources": [
-    {
-     "run_id": 32866240334,
-     "job_id": 97879171688,
-     "stage": "final_review",
-     "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
-    }
+    {"run_id":32866240334,"job_id":97879171688,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   }
  ]
