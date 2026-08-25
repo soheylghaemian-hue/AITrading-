@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_95() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_96() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -350,9 +350,11 @@ def test_learn_feedback_records_exact_run_evidence_through_95() -> None:
         "comparison-invalid-proof-shadowed-by-model-validation",
         "comparison-fixture-confounds-proof-mismatch",
         "coordinated-drift-tampering-bypasses-revalidation",
+        "empty-evidence-manufactures-retirement-grounds",
         "evidence-failure-precedence-permutation-dependent",
         "equivalent-permutations-produce-unequal-results",
         "evaluator-closure-exposes-commitment-sealer",
+        "future-registered-model-produces-actionable-drift",
         "invalid-policy-fixture-raises-before-result-refusal",
         "learn-documentation-omits-model-role",
         "local-proposal-tamper-invalidates-proof-first",
@@ -383,7 +385,11 @@ def test_learn_feedback_records_exact_run_evidence_through_95() -> None:
         ),
         "coordinated-drift-tampering-bypasses-revalidation": (
             "src/atp/brain/learn.py",
-            245,
+            349,
+        ),
+        "empty-evidence-manufactures-retirement-grounds": (
+            "src/atp/brain/learn.py",
+            1212,
         ),
         "evidence-failure-precedence-permutation-dependent": (
             "src/atp/brain/learn.py",
@@ -396,6 +402,10 @@ def test_learn_feedback_records_exact_run_evidence_through_95() -> None:
         "evaluator-closure-exposes-commitment-sealer": (
             "src/atp/brain/learn.py",
             1081,
+        ),
+        "future-registered-model-produces-actionable-drift": (
+            "src/atp/brain/learn.py",
+            1085,
         ),
         "invalid-policy-fixture-raises-before-result-refusal": (
             "tests/test_brain_learn.py",
@@ -743,6 +753,12 @@ def test_learn_feedback_records_exact_run_evidence_through_95() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_96_final_review_source = {
+        "run_id": 32866240334,
+        "job_id": 97879171688,
+        "stage": "final_review",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -786,7 +802,9 @@ def test_learn_feedback_records_exact_run_evidence_through_95() -> None:
             run_79_final_review_source,
             run_81_gate_source,
             run_86_final_review_source,
+            run_96_final_review_source,
         ],
+        "empty-evidence-manufactures-retirement-grounds": [run_96_final_review_source],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
         "equivalent-permutations-produce-unequal-results": [
             run_42_source,
@@ -795,6 +813,9 @@ def test_learn_feedback_records_exact_run_evidence_through_95() -> None:
             run_86_final_review_source,
         ],
         "evaluator-closure-exposes-commitment-sealer": [run_42_source],
+        "future-registered-model-produces-actionable-drift": [
+            run_96_final_review_source,
+        ],
         "invalid-policy-fixture-raises-before-result-refusal": [
             run_44_source,
             run_45_source,
@@ -948,7 +969,21 @@ def test_learn_feedback_records_exact_run_evidence_through_95() -> None:
         "receive a valid owner-bound seal and checksum. Require both the exact "
         "evaluator code object and exact module-globals identity before issuance; keep "
         "owner, identity and fingerprint revalidation; block copied or substituted "
-        "globals."
+        "globals. Run 96: A caller can allocate DriftResult with object.__new__, copy "
+        "an accepted result's fields and provenance seal, and obtain a distinct object "
+        "whose checksum passes and which retirement accepts. The seal binds only "
+        "type-name and fingerprint, not its owning result. Replacing the exported "
+        "evaluator with a FunctionType copy also lets copied evaluator code mint seals, "
+        "contrary to the provenance contract."
+    )
+    assert findings["empty-evidence-manufactures-retirement-grounds"]["title"] == (
+        "Empty evidence can manufacture retirement grounds"
+    )
+    assert findings["empty-evidence-manufactures-retirement-grounds"]["detail"] == (
+        "Run 96: With empty canonical evidence and prior_confidence <= 0.25, "
+        "drift_score is 0.0 but abstain is true; evaluate_retirement then accepts "
+        "DRIFT_ABSTENTION. This contradicts the required no-manufactured-evidence "
+        "invariant and the documentation."
     )
     assert findings["evidence-failure-precedence-permutation-dependent"]["title"] == (
         "Evidence failure precedence depends on tuple order"
@@ -964,6 +999,14 @@ def test_learn_feedback_records_exact_run_evidence_through_95() -> None:
     assert findings["evaluator-closure-exposes-commitment-sealer"]["detail"] == (
         "evaluate_drift.__closure__ exposes a sealer: recommit mutated evidence/derived "
         "fields, and checksum/comparison trust them. Hide it; test bypass."
+    )
+    assert findings["future-registered-model-produces-actionable-drift"]["title"] == (
+        "Future-registered models produce actionable drift"
+    )
+    assert findings["future-registered-model-produces-actionable-drift"]["detail"] == (
+        "Run 96: evaluate_drift accepts a model whose registered_at is after as_of. "
+        "That pre-registration drift can later retire the model once registration time "
+        "passes, allowing point-in-time leakage into a transition."
     )
     assert findings["reinstate-chain-allows-challenger-promotion"]["title"] == (
         "Challenger promotion"
@@ -1315,6 +1358,15 @@ def test_learn_feedback_records_exact_run_evidence_through_95() -> None:
     assert {
         finding_id
         for finding_id, finding in findings.items()
+        if run_96_final_review_source in finding["sources"]
+    } == {
+        "coordinated-drift-tampering-bypasses-revalidation",
+        "empty-evidence-manufactures-retirement-grounds",
+        "future-registered-model-produces-actionable-drift",
+    }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
         if run_67_gate_source in finding["sources"]
     } == {"invalid-policy-fixture-raises-before-result-refusal"}
     assert {
@@ -1435,7 +1487,7 @@ def test_schema_is_strict_and_matches_validator_bounds() -> None:
     assert MAX_FINDINGS == 16
     assert MAX_SOURCES_PER_FINDING == 8
     assert LEARN_MAX_FEEDBACK_BYTES == 32_768
-    assert LEARN_MAX_FINDINGS == 17
+    assert LEARN_MAX_FINDINGS == 19
     assert LEARN_MAX_SOURCES_PER_FINDING == 20
     assert schema["additionalProperties"] is False
     assert schema["properties"]["schema_version"]["const"] == 1
