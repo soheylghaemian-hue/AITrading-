@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_88() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_89() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -399,7 +399,7 @@ def test_learn_feedback_records_exact_run_evidence_through_88() -> None:
         ),
         "invalid-policy-fixture-raises-before-result-refusal": (
             "tests/test_brain_learn.py",
-            484,
+            469,
         ),
         "learn-documentation-omits-model-role": (
             "docs/TRADER_BRAIN.md",
@@ -701,6 +701,12 @@ def test_learn_feedback_records_exact_run_evidence_through_88() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_89_gate_source = {
+        "run_id": 32800959884,
+        "job_id": 97665592734,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -768,6 +774,7 @@ def test_learn_feedback_records_exact_run_evidence_through_88() -> None:
             run_75_gate_source,
             run_83_gate_source,
             run_85_gate_source,
+            run_89_gate_source,
         ],
         "learn-documentation-omits-model-role": [
             run_43_source,
@@ -1018,7 +1025,12 @@ def test_learn_feedback_records_exact_run_evidence_through_88() -> None:
         "0.0; evaluate_drift therefore accepts it with no abstention, and retirement "
         "correctly reports INSUFFICIENT_EVIDENCE rather than INVALID_DRIFT. Build an "
         "actually refused or tampered DriftResult to reach the nested-result "
-        "translation assertion."
+        "translation assertion. Run 89's INVALID_DRIFT case calls "
+        "retire(drift=_accepted_drift()), but _accepted_drift() keeps the default "
+        "CHAMPION model while retirement targets a CHALLENGER; model/evidence binding "
+        "therefore correctly returns EVIDENCE_MODEL_MISMATCH before the fixture reaches "
+        "the intended drift refusal. Bind the drift result to the retirement target and "
+        "make it actually refused or tampered; keep binding and failure precedence strict."
     )
     assert findings[
         "nested-result-failure-reason-leaks-across-transition-boundary"
@@ -1198,6 +1210,11 @@ def test_learn_feedback_records_exact_run_evidence_through_88() -> None:
         "learn-documentation-omits-model-role",
         "tamper-fixture-leaks-champion-role",
     }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_89_gate_source in finding["sources"]
+    } == {"invalid-policy-fixture-raises-before-result-refusal"}
     assert {
         finding_id
         for finding_id, finding in findings.items()
