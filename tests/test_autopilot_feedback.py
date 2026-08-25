@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_89() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_90() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -403,7 +403,7 @@ def test_learn_feedback_records_exact_run_evidence_through_89() -> None:
         ),
         "learn-documentation-omits-model-role": (
             "docs/TRADER_BRAIN.md",
-            322,
+            341,
         ),
         "local-proposal-tamper-invalidates-proof-first": (
             "tests/test_brain_learn.py",
@@ -707,6 +707,12 @@ def test_learn_feedback_records_exact_run_evidence_through_89() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_90_gate_source = {
+        "run_id": 32803661401,
+        "job_id": 97674010884,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -791,6 +797,7 @@ def test_learn_feedback_records_exact_run_evidence_through_89() -> None:
             run_85_gate_source,
             run_87_gate_source,
             run_88_gate_source,
+            run_90_gate_source,
         ],
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
         "nested-result-failure-reason-leaks-across-transition-boundary": [
@@ -1002,7 +1009,12 @@ def test_learn_feedback_records_exact_run_evidence_through_89() -> None:
         "its explanation with a colon, while the guard requires a period after "
         "\"promotion authority.\"; markup-aware normalization correctly rejects that "
         "punctuation mismatch. End the pinned sentence with the exact period and move "
-        "the explanation into a separate sentence."
+        "the explanation into a separate sentence. Run 90 pins \"Every proof must grade "
+        "exactly the proposal_id its ModelRecord names.\" while the documentation "
+        "continues the prior sentence after a colon with lowercase \"every proof must "
+        "grade ...\"; markup-aware normalization correctly preserves case and rejects "
+        "the mismatch. End the prior clause with a period and start the pinned sentence "
+        "with capitalized \"Every\"; keep binding/docs guards strict."
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["title"] == (
         "Evaluator fixture errors"
@@ -1215,6 +1227,11 @@ def test_learn_feedback_records_exact_run_evidence_through_89() -> None:
         for finding_id, finding in findings.items()
         if run_89_gate_source in finding["sources"]
     } == {"invalid-policy-fixture-raises-before-result-refusal"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_90_gate_source in finding["sources"]
+    } == {"learn-documentation-omits-model-role"}
     assert {
         finding_id
         for finding_id, finding in findings.items()
