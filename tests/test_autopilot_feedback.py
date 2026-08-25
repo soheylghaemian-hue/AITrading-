@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_90() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_91() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -399,7 +399,7 @@ def test_learn_feedback_records_exact_run_evidence_through_90() -> None:
         ),
         "invalid-policy-fixture-raises-before-result-refusal": (
             "tests/test_brain_learn.py",
-            469,
+            108,
         ),
         "learn-documentation-omits-model-role": (
             "docs/TRADER_BRAIN.md",
@@ -713,6 +713,12 @@ def test_learn_feedback_records_exact_run_evidence_through_90() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_91_gate_source = {
+        "run_id": 32806323964,
+        "job_id": 97681832518,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -781,6 +787,7 @@ def test_learn_feedback_records_exact_run_evidence_through_90() -> None:
             run_83_gate_source,
             run_85_gate_source,
             run_89_gate_source,
+            run_91_gate_source,
         ],
         "learn-documentation-omits-model-role": [
             run_43_source,
@@ -1042,7 +1049,12 @@ def test_learn_feedback_records_exact_run_evidence_through_90() -> None:
         "CHAMPION model while retirement targets a CHALLENGER; model/evidence binding "
         "therefore correctly returns EVIDENCE_MODEL_MISMATCH before the fixture reaches "
         "the intended drift refusal. Bind the drift result to the retirement target and "
-        "make it actually refused or tampered; keep binding and failure precedence strict."
+        "make it actually refused or tampered; keep binding and failure precedence strict. "
+        "Run 91 calls _comparison(champion=None) to test INVALID_MODEL, but the helper "
+        "treats None as an omitted argument and substitutes a valid CHAMPION. The "
+        "comparison is therefore accepted, so retirement cannot exercise "
+        "INVALID_COMPARISON. Use a private sentinel to distinguish omission from "
+        "explicit None; keep evaluator/refusal assertions and nested-result guards strict."
     )
     assert findings[
         "nested-result-failure-reason-leaks-across-transition-boundary"
@@ -1232,6 +1244,11 @@ def test_learn_feedback_records_exact_run_evidence_through_90() -> None:
         for finding_id, finding in findings.items()
         if run_90_gate_source in finding["sources"]
     } == {"learn-documentation-omits-model-role"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_91_gate_source in finding["sources"]
+    } == {"invalid-policy-fixture-raises-before-result-refusal"}
     assert {
         finding_id
         for finding_id, finding in findings.items()

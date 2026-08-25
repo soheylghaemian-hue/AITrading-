@@ -499,10 +499,10 @@
       "id": "invalid-policy-fixture-raises-before-result-refusal",
       "severity": "P1",
       "title": "Evaluator fixture errors",
-      "detail": "44-45/55-56/58-59/61-62/66-68/75/83 misuse constructors/defaults/thresholds, __setstate__ shape or helpers; 66 replaces explicit None; 67 passes accepted output to _reason and accesses a raising property outside pytest.raises; 68 expects derived 0.05-0.005 to equal literal 0.045 exactly; the Run 75 forged-comparison fixture calls undefined _forge; Run 83 starts with every March 1-2 item stale at March 10 under six days, so reversing empty usable/clearing empty contradictions are literal no-ops and zero-day freshness still yields a valid canonical all-rejected result; it also compares INVALID_INPUT with INVALID_MODEL refusal checksums. Use sentinels/distinct inputs, explicit cases/raises, defined fixture builders and pytest.approx; make evidence initially usable/contradictory and compare matching reasons; reach intended evaluator assertions; keep guards/order and lossless float/reason/checksum semantics strict. Run 85 creates broken_drift from an empty but canonical SenseResult with prior_confidence 1.0 and drift_score 0.0; evaluate_drift therefore accepts it with no abstention, and retirement correctly reports INSUFFICIENT_EVIDENCE rather than INVALID_DRIFT. Build an actually refused or tampered DriftResult to reach the nested-result translation assertion. Run 89's INVALID_DRIFT case calls retire(drift=_accepted_drift()), but _accepted_drift() keeps the default CHAMPION model while retirement targets a CHALLENGER; model/evidence binding therefore correctly returns EVIDENCE_MODEL_MISMATCH before the fixture reaches the intended drift refusal. Bind the drift result to the retirement target and make it actually refused or tampered; keep binding and failure precedence strict.",
+      "detail": "44-45/55-56/58-59/61-62/66-68/75/83 misuse constructors/defaults/thresholds, __setstate__ shape or helpers; 66 replaces explicit None; 67 passes accepted output to _reason and accesses a raising property outside pytest.raises; 68 expects derived 0.05-0.005 to equal literal 0.045 exactly; the Run 75 forged-comparison fixture calls undefined _forge; Run 83 starts with every March 1-2 item stale at March 10 under six days, so reversing empty usable/clearing empty contradictions are literal no-ops and zero-day freshness still yields a valid canonical all-rejected result; it also compares INVALID_INPUT with INVALID_MODEL refusal checksums. Use sentinels/distinct inputs, explicit cases/raises, defined fixture builders and pytest.approx; make evidence initially usable/contradictory and compare matching reasons; reach intended evaluator assertions; keep guards/order and lossless float/reason/checksum semantics strict. Run 85 creates broken_drift from an empty but canonical SenseResult with prior_confidence 1.0 and drift_score 0.0; evaluate_drift therefore accepts it with no abstention, and retirement correctly reports INSUFFICIENT_EVIDENCE rather than INVALID_DRIFT. Build an actually refused or tampered DriftResult to reach the nested-result translation assertion. Run 89's INVALID_DRIFT case calls retire(drift=_accepted_drift()), but _accepted_drift() keeps the default CHAMPION model while retirement targets a CHALLENGER; model/evidence binding therefore correctly returns EVIDENCE_MODEL_MISMATCH before the fixture reaches the intended drift refusal. Bind the drift result to the retirement target and make it actually refused or tampered; keep binding and failure precedence strict. Run 91 calls _comparison(champion=None) to test INVALID_MODEL, but the helper treats None as an omitted argument and substitutes a valid CHAMPION. The comparison is therefore accepted, so retirement cannot exercise INVALID_COMPARISON. Use a private sentinel to distinguish omission from explicit None; keep evaluator/refusal assertions and nested-result guards strict.",
       "location": {
         "path": "tests/test_brain_learn.py",
-        "line": 469
+        "line": 108
       },
       "sources": [
         {
@@ -592,6 +592,12 @@
         {
           "run_id": 32800959884,
           "job_id": 97665592734,
+          "stage": "gate",
+          "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
+        },
+        {
+          "run_id": 32806323964,
+          "job_id": 97681832518,
           "stage": "gate",
           "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be"
         }
