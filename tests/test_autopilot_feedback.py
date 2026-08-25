@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_96() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_97() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -385,7 +385,7 @@ def test_learn_feedback_records_exact_run_evidence_through_96() -> None:
         ),
         "coordinated-drift-tampering-bypasses-revalidation": (
             "src/atp/brain/learn.py",
-            349,
+            477,
         ),
         "empty-evidence-manufactures-retirement-grounds": (
             "src/atp/brain/learn.py",
@@ -759,6 +759,12 @@ def test_learn_feedback_records_exact_run_evidence_through_96() -> None:
         "stage": "final_review",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_97_gate_source = {
+        "run_id": 32893857889,
+        "job_id": 97959003873,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -803,6 +809,7 @@ def test_learn_feedback_records_exact_run_evidence_through_96() -> None:
             run_81_gate_source,
             run_86_final_review_source,
             run_96_final_review_source,
+            run_97_gate_source,
         ],
         "empty-evidence-manufactures-retirement-grounds": [run_96_final_review_source],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
@@ -974,7 +981,11 @@ def test_learn_feedback_records_exact_run_evidence_through_96() -> None:
         "whose checksum passes and which retirement accepts. The seal binds only "
         "type-name and fingerprint, not its owning result. Replacing the exported "
         "evaluator with a FunctionType copy also lets copied evaluator code mint seals, "
-        "contrary to the provenance contract."
+        "contrary to the provenance contract. Run 97: frozen+slots dataclasses generate "
+        "each concrete result's own __setstate__, shadowing _Issued.__setstate__; {} "
+        "silently succeeds and crafted state can mutate issued fields. Define the "
+        "raising restore/copy guard on each concrete result (or prevent dataclass "
+        "generation) and pin all four."
     )
     assert findings["empty-evidence-manufactures-retirement-grounds"]["title"] == (
         "Empty evidence can manufacture retirement grounds"
@@ -1364,6 +1375,11 @@ def test_learn_feedback_records_exact_run_evidence_through_96() -> None:
         "empty-evidence-manufactures-retirement-grounds",
         "future-registered-model-produces-actionable-drift",
     }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_97_gate_source in finding["sources"]
+    } == {"coordinated-drift-tampering-bypasses-revalidation"}
     assert {
         finding_id
         for finding_id, finding in findings.items()
