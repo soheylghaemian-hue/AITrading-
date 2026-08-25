@@ -30,7 +30,7 @@ MAX_SOURCES_PER_FINDING = 8
 LEARN_GOAL_ID = "trader-brain-learn-v1"
 LEARN_MAX_FEEDBACK_BYTES = 32_768
 LEARN_MAX_FINDINGS = 17
-LEARN_MAX_SOURCES_PER_FINDING = 16
+LEARN_MAX_SOURCES_PER_FINDING = 18
 MAX_PATH_BYTES = 240
 ALLOWED_SEVERITIES = frozenset({"P0", "P1"})
 # ``artifact_audit`` means trusted independent reproduction against the immutable

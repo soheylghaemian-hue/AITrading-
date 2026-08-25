@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_91() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_93() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -399,11 +399,11 @@ def test_learn_feedback_records_exact_run_evidence_through_91() -> None:
         ),
         "invalid-policy-fixture-raises-before-result-refusal": (
             "tests/test_brain_learn.py",
-            108,
+            233,
         ),
         "learn-documentation-omits-model-role": (
             "docs/TRADER_BRAIN.md",
-            341,
+            357,
         ),
         "local-proposal-tamper-invalidates-proof-first": (
             "tests/test_brain_learn.py",
@@ -719,6 +719,18 @@ def test_learn_feedback_records_exact_run_evidence_through_91() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_92_gate_source = {
+        "run_id": 32807336891,
+        "job_id": 97685853506,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
+    run_93_gate_source = {
+        "run_id": 32809181955,
+        "job_id": 97689719271,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -788,6 +800,8 @@ def test_learn_feedback_records_exact_run_evidence_through_91() -> None:
             run_85_gate_source,
             run_89_gate_source,
             run_91_gate_source,
+            run_92_gate_source,
+            run_93_gate_source,
         ],
         "learn-documentation-omits-model-role": [
             run_43_source,
@@ -805,6 +819,7 @@ def test_learn_feedback_records_exact_run_evidence_through_91() -> None:
             run_87_gate_source,
             run_88_gate_source,
             run_90_gate_source,
+            run_93_gate_source,
         ],
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
         "nested-result-failure-reason-leaks-across-transition-boundary": [
@@ -988,73 +1003,60 @@ def test_learn_feedback_records_exact_run_evidence_through_91() -> None:
         "LEARN public API/docs drift"
     )
     assert findings["learn-documentation-omits-model-role"]["detail"] == (
-        "43/61 omit ModelRole/exact research-only wording; 65/66/74/84 raw scans "
-        "reject line breaks or Markdown markup; 71 makes __all__ unsorted by placing "
-        "RejectedEvidence before ReinstatementInputs; 72 ends the pinned "
-        "comparison/PROVE model-binding sentence with a colon instead of the required "
-        "period; 73 promises retirement is reversible exactly once although stateless "
-        "evaluate_reinstatement repeatedly accepts the same retirement, identity, "
-        "reversal ID, role and timestamp and records no consumption; 75's normalizer "
-        "deletes every underscore, so stable enum values such as INVALID_INPUT cannot "
-        "match the documented text; 78's normalizer deletes > from >=, so the "
-        "documented abstention-boundary phrase cannot match; its other guard expects "
-        "\"a proof must grade exactly the proposal_id its ModelRecord names\" while "
-        "the docs say \"the proof must grade exactly the proposal_id its ModelRecord "
-        "names\". Remove the unsupported exactly-once promise or explicitly represent "
-        "replay/consumption; use markup-aware normalization; pin plain "
-        "public/guard/equality/reason phrases and sorted unique exports; keep "
-        "export/docs checks strict. Run 85 pins the stateless replay sentence with a "
-        "period, while the documentation joins it to the next clause with a "
-        "semicolon; markup-aware normalization correctly rejects that punctuation "
-        "mismatch. End the documented sentence with the exact period and move the "
-        "replay explanation into a separate sentence. Run 87's documentation writes "
-        "\"identical checksums, because\" where the pinned contract requires \"identical "
-        "checksums.\"; the markup-aware normalizer correctly preserves and rejects that "
-        "punctuation mismatch. End the documented equality/checksum sentence with the "
-        "exact period and move the canonicalization explanation into a separate sentence. "
-        "Run 88's documentation joins the pinned challenger non-promotion sentence to "
-        "its explanation with a colon, while the guard requires a period after "
-        "\"promotion authority.\"; markup-aware normalization correctly rejects that "
-        "punctuation mismatch. End the pinned sentence with the exact period and move "
-        "the explanation into a separate sentence. Run 90 pins \"Every proof must grade "
-        "exactly the proposal_id its ModelRecord names.\" while the documentation "
-        "continues the prior sentence after a colon with lowercase \"every proof must "
-        "grade ...\"; markup-aware normalization correctly preserves case and rejects "
-        "the mismatch. End the prior clause with a period and start the pinned sentence "
-        "with capitalized \"Every\"; keep binding/docs guards strict."
+        "43/61 omit ModelRole or exact research-only wording. 65/66/74/84 use raw "
+        "scans that reject line wrapping or Markdown; 71 misorders __all__ by placing "
+        "RejectedEvidence before ReinstatementInputs. Exact-sentence fixtures disagree "
+        "with docs: 72 uses a colon instead of the required period after "
+        "comparison/PROVE model binding; 85 joins the stateless-replay sentence with a "
+        "semicolon; 87 writes \"identical checksums, because\" instead of ending "
+        "\"identical checksums.\"; 88 joins challenger non-promotion to its explanation "
+        "with a colon instead of ending \"promotion authority.\"; 90 continues after a "
+        "colon with lowercase \"every\" instead of the separate \"Every proof must grade "
+        "exactly the proposal_id its ModelRecord names.\". Run 73 promises exactly-once "
+        "reversal although stateless evaluate_reinstatement records no consumption and "
+        "reaccepts the same retirement, identity, reversal ID, role and timestamp. Run "
+        "75 strips underscores so INVALID_INPUT cannot match; 78 strips > from >= so "
+        "the abstention boundary cannot match, and expects \"a proof...\" while docs say "
+        "\"the proof...\". Run 93 exports ComparisonPreference (CHAMPION, CHALLENGER, "
+        "INCONCLUSIVE; research evidence only) but docs omit it, so the strict "
+        "public-API inventory correctly fails. Document every non-evaluator export, "
+        "including ModelRole and ComparisonPreference, plus exact research-only, "
+        "binding, equality, reason, replay and non-promotion phrases. Put each pinned "
+        "sentence, case and punctuation boundary exactly; move explanations to "
+        "separate sentences; use markup-aware normalization; keep sorted unique "
+        "exports and strict docs/binding guards. Remove the exactly-once promise or "
+        "represent replay consumption."
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["title"] == (
         "Evaluator fixture errors"
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["detail"] == (
-        "44-45/55-56/58-59/61-62/66-68/75/83 misuse "
-        "constructors/defaults/thresholds, __setstate__ shape or helpers; 66 replaces "
-        "explicit None; 67 passes accepted output to _reason and accesses a raising "
-        "property outside pytest.raises; 68 expects derived 0.05-0.005 to equal literal "
-        "0.045 exactly; the Run 75 forged-comparison fixture calls undefined _forge; "
-        "Run 83 starts with every March 1-2 item stale at March 10 under six days, so "
-        "reversing empty usable/clearing empty contradictions are literal no-ops and "
-        "zero-day freshness still yields a valid canonical all-rejected result; it also "
-        "compares INVALID_INPUT with INVALID_MODEL refusal checksums. Use "
-        "sentinels/distinct inputs, explicit cases/raises, defined fixture builders and "
-        "pytest.approx; make evidence initially usable/contradictory and compare matching "
-        "reasons; reach intended evaluator assertions; keep guards/order and lossless "
-        "float/reason/checksum semantics strict. Run 85 creates broken_drift from an "
-        "empty but canonical SenseResult with prior_confidence 1.0 and drift_score "
-        "0.0; evaluate_drift therefore accepts it with no abstention, and retirement "
-        "correctly reports INSUFFICIENT_EVIDENCE rather than INVALID_DRIFT. Build an "
-        "actually refused or tampered DriftResult to reach the nested-result "
-        "translation assertion. Run 89's INVALID_DRIFT case calls "
-        "retire(drift=_accepted_drift()), but _accepted_drift() keeps the default "
-        "CHAMPION model while retirement targets a CHALLENGER; model/evidence binding "
-        "therefore correctly returns EVIDENCE_MODEL_MISMATCH before the fixture reaches "
-        "the intended drift refusal. Bind the drift result to the retirement target and "
-        "make it actually refused or tampered; keep binding and failure precedence strict. "
-        "Run 91 calls _comparison(champion=None) to test INVALID_MODEL, but the helper "
-        "treats None as an omitted argument and substitutes a valid CHAMPION. The "
-        "comparison is therefore accepted, so retirement cannot exercise "
-        "INVALID_COMPARISON. Use a private sentinel to distinguish omission from "
-        "explicit None; keep evaluator/refusal assertions and nested-result guards strict."
+        "44-45/55-56/58-59/61-62/66-68/75/83 misuse constructors, defaults, "
+        "thresholds, __setstate__ shapes or helpers. Run 66 replaces explicit None; 67 "
+        "passes accepted output to _reason and reads a raising property outside "
+        "pytest.raises; 68 compares 0.05-0.005 with literal 0.045 exactly; 75 calls "
+        "undefined _forge. Run 83 makes every Mar 1-2 item stale at Mar 10 under six "
+        "days, so reversing empty usable/clearing empty contradictions are no-ops and "
+        "zero-day freshness remains a valid canonical all-rejected result; it compares "
+        "INVALID_INPUT and INVALID_MODEL checksums. Run 85's empty canonical "
+        "SenseResult with prior 1.0/drift 0.0 is accepted without abstention, so "
+        "retirement correctly yields INSUFFICIENT_EVIDENCE, not INVALID_DRIFT. Run 89 "
+        "binds accepted drift to the default CHAMPION while retirement targets a "
+        "CHALLENGER, so EVIDENCE_MODEL_MISMATCH precedes drift refusal. Run 91's "
+        "_comparison(champion=None) substitutes a valid CHAMPION; the comparison is "
+        "accepted, so retirement cannot exercise INVALID_COMPARISON. Run 92 expects "
+        "EVIDENCE_MODEL_MISMATCH although its superior comparison is favorable to the "
+        "target challenger, hence correctly insufficient; its mutation table captures "
+        "the original accepted graph, resets accepted, then mutates stale targets while "
+        "checking the fresh result. Run 93 uses distinct IDs e-dup/e-other, so forward "
+        "is canonical/accepted and only reversed order is invalid, not two duplicate "
+        "permutations; a later local def evaluate_drift shadows the imported evaluator "
+        "and raises UnboundLocalError before the closure probe. Use sentinels; distinct, "
+        "adverse and correctly bound inputs; true duplicate IDs; per-case fresh "
+        "mutation targets; module-qualified genuine evaluators; defined builders, "
+        "explicit raises and pytest.approx. Build actually refused/tampered nested "
+        "results and compare like reasons. Preserve canonicalization, binding, "
+        "precedence, guards and lossless float/reason/checksum semantics."
     )
     assert findings[
         "nested-result-failure-reason-leaks-across-transition-boundary"
@@ -1252,6 +1254,19 @@ def test_learn_feedback_records_exact_run_evidence_through_91() -> None:
     assert {
         finding_id
         for finding_id, finding in findings.items()
+        if run_92_gate_source in finding["sources"]
+    } == {"invalid-policy-fixture-raises-before-result-refusal"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_93_gate_source in finding["sources"]
+    } == {
+        "invalid-policy-fixture-raises-before-result-refusal",
+        "learn-documentation-omits-model-role",
+    }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
         if run_67_gate_source in finding["sources"]
     } == {"invalid-policy-fixture-raises-before-result-refusal"}
     assert {
@@ -1373,7 +1388,7 @@ def test_schema_is_strict_and_matches_validator_bounds() -> None:
     assert MAX_SOURCES_PER_FINDING == 8
     assert LEARN_MAX_FEEDBACK_BYTES == 32_768
     assert LEARN_MAX_FINDINGS == 17
-    assert LEARN_MAX_SOURCES_PER_FINDING == 16
+    assert LEARN_MAX_SOURCES_PER_FINDING == 18
     assert schema["additionalProperties"] is False
     assert schema["properties"]["schema_version"]["const"] == 1
     assert schema["properties"]["kind"]["const"] == FEEDBACK_KIND
