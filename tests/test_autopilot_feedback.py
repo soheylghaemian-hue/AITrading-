@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_93() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_94() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -399,7 +399,7 @@ def test_learn_feedback_records_exact_run_evidence_through_93() -> None:
         ),
         "invalid-policy-fixture-raises-before-result-refusal": (
             "tests/test_brain_learn.py",
-            233,
+            585,
         ),
         "learn-documentation-omits-model-role": (
             "docs/TRADER_BRAIN.md",
@@ -731,6 +731,12 @@ def test_learn_feedback_records_exact_run_evidence_through_93() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_94_gate_source = {
+        "run_id": 32818046185,
+        "job_id": 97717028235,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -802,6 +808,7 @@ def test_learn_feedback_records_exact_run_evidence_through_93() -> None:
             run_91_gate_source,
             run_92_gate_source,
             run_93_gate_source,
+            run_94_gate_source,
         ],
         "learn-documentation-omits-model-role": [
             run_43_source,
@@ -1056,7 +1063,12 @@ def test_learn_feedback_records_exact_run_evidence_through_93() -> None:
         "mutation targets; module-qualified genuine evaluators; defined builders, "
         "explicit raises and pytest.approx. Build actually refused/tampered nested "
         "results and compare like reasons. Preserve canonicalization, binding, "
-        "precedence, guards and lossless float/reason/checksum semantics."
+        "precedence, guards and lossless float/reason/checksum semantics. Run 94 "
+        "mutates an accepted retirement's previous_role, correctly makes checksum() "
+        "raise, then wrongly expects evaluate_reinstatement to raise; that public "
+        "evaluator catches the nested failure and returns an INVALID_RETIREMENT "
+        "refusal. Assert that stable refusal; keep nested revalidation and fail-closed "
+        "translation strict."
     )
     assert findings[
         "nested-result-failure-reason-leaks-across-transition-boundary"
@@ -1267,6 +1279,11 @@ def test_learn_feedback_records_exact_run_evidence_through_93() -> None:
     assert {
         finding_id
         for finding_id, finding in findings.items()
+        if run_94_gate_source in finding["sources"]
+    } == {"invalid-policy-fixture-raises-before-result-refusal"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
         if run_67_gate_source in finding["sources"]
     } == {"invalid-policy-fixture-raises-before-result-refusal"}
     assert {
@@ -1388,7 +1405,7 @@ def test_schema_is_strict_and_matches_validator_bounds() -> None:
     assert MAX_SOURCES_PER_FINDING == 8
     assert LEARN_MAX_FEEDBACK_BYTES == 32_768
     assert LEARN_MAX_FINDINGS == 17
-    assert LEARN_MAX_SOURCES_PER_FINDING == 18
+    assert LEARN_MAX_SOURCES_PER_FINDING == 19
     assert schema["additionalProperties"] is False
     assert schema["properties"]["schema_version"]["const"] == 1
     assert schema["properties"]["kind"]["const"] == FEEDBACK_KIND
