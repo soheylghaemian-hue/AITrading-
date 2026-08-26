@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_100() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_102() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -401,7 +401,7 @@ def test_learn_feedback_records_exact_run_evidence_through_100() -> None:
         ),
         "evaluator-closure-exposes-commitment-sealer": (
             "src/atp/brain/learn.py",
-            1081,
+            326,
         ),
         "future-registered-model-produces-actionable-drift": (
             "src/atp/brain/learn.py",
@@ -783,6 +783,12 @@ def test_learn_feedback_records_exact_run_evidence_through_100() -> None:
         "stage": "final_review",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_102_final_review_source = {
+        "run_id": 33012259990,
+        "job_id": 98335174166,
+        "stage": "final_review",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -832,6 +838,7 @@ def test_learn_feedback_records_exact_run_evidence_through_100() -> None:
             run_98_final_review_source,
             run_99_final_review_source,
             run_100_final_review_source,
+            run_102_final_review_source,
         ],
         "empty-evidence-manufactures-retirement-grounds": [run_96_final_review_source],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
@@ -842,7 +849,10 @@ def test_learn_feedback_records_exact_run_evidence_through_100() -> None:
             run_86_final_review_source,
             run_99_final_review_source,
         ],
-        "evaluator-closure-exposes-commitment-sealer": [run_42_source],
+        "evaluator-closure-exposes-commitment-sealer": [
+            run_42_source,
+            run_102_final_review_source,
+        ],
         "future-registered-model-produces-actionable-drift": [
             run_96_final_review_source,
         ],
@@ -1037,7 +1047,15 @@ def test_learn_feedback_records_exact_run_evidence_through_100() -> None:
     )
     assert findings["evaluator-closure-exposes-commitment-sealer"]["detail"] == (
         "evaluate_drift.__closure__ exposes a sealer: recommit mutated evidence/derived "
-        "fields, and checksum/comparison trust them. Hide it; test bypass."
+        "fields, and checksum/comparison trust them. Hide it; test bypass. Run 102 final "
+        "review, \"Closure-held issuance key permits fabricated retirement evidence\": "
+        "The keyed `_prime` is reachable through "
+        "`ComparisonResult.__mro__[1].__init__.__closure__`. A caller can create a result "
+        "with `object.__new__`, populate invented but internally consistent proof summaries, "
+        "obtain `_prime`, recompute `_stamp`, and pass both `checksum()` and "
+        "`evaluate_retirement`; this was reproduced with a fabricated superior-challenger "
+        "comparison. This violates the required closure secrecy and consumer rejection of "
+        "fabricated provenance."
     )
     assert findings["future-registered-model-produces-actionable-drift"]["title"] == (
         "Future-registered models produce actionable drift"
@@ -1433,6 +1451,14 @@ def test_learn_feedback_records_exact_run_evidence_through_100() -> None:
         for finding_id, finding in findings.items()
         if run_100_final_review_source in finding["sources"]
     } == {"coordinated-drift-tampering-bypasses-revalidation"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_102_final_review_source in finding["sources"]
+    } == {
+        "coordinated-drift-tampering-bypasses-revalidation",
+        "evaluator-closure-exposes-commitment-sealer",
+    }
     assert {
         finding_id
         for finding_id, finding in findings.items()

@@ -93,7 +93,8 @@
     {"run_id":32893857889,"job_id":97959003873,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
     {"run_id":32900924868,"job_id":97988300665,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
     {"run_id":32928828112,"job_id":98068464635,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
-    {"run_id":32946095269,"job_id":98123742802,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
+    {"run_id":32946095269,"job_id":98123742802,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":33012259990,"job_id":98335174166,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
@@ -113,13 +114,14 @@
    "id": "evaluator-closure-exposes-commitment-sealer",
    "severity": "P1",
    "title": "Internal commitment can be forged through the evaluator closure",
-   "detail": "evaluate_drift.__closure__ exposes a sealer: recommit mutated evidence/derived fields, and checksum/comparison trust them. Hide it; test bypass.",
+   "detail": "evaluate_drift.__closure__ exposes a sealer: recommit mutated evidence/derived fields, and checksum/comparison trust them. Hide it; test bypass. Run 102 final review, \"Closure-held issuance key permits fabricated retirement evidence\": The keyed `_prime` is reachable through `ComparisonResult.__mro__[1].__init__.__closure__`. A caller can create a result with `object.__new__`, populate invented but internally consistent proof summaries, obtain `_prime`, recompute `_stamp`, and pass both `checksum()` and `evaluate_retirement`; this was reproduced with a fabricated superior-challenger comparison. This violates the required closure secrecy and consumer rejection of fabricated provenance.",
    "location": {
     "path": "src/atp/brain/learn.py",
-    "line": 1081
+    "line": 326
    },
    "sources": [
-    {"run_id":32481392244,"job_id":96778775008,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
+    {"run_id":32481392244,"job_id":96778775008,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":33012259990,"job_id":98335174166,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
