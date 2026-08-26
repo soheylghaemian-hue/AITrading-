@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_102() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_103() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -377,7 +377,7 @@ def test_learn_feedback_records_exact_run_evidence_through_102() -> None:
         ),
         "comparison-invalid-proof-shadowed-by-model-validation": (
             "tests/test_brain_learn.py",
-            316,
+            304,
         ),
         "comparison-fixture-confounds-proof-mismatch": (
             "tests/test_brain_learn.py",
@@ -385,7 +385,7 @@ def test_learn_feedback_records_exact_run_evidence_through_102() -> None:
         ),
         "coordinated-drift-tampering-bypasses-revalidation": (
             "src/atp/brain/learn.py",
-            568,
+            273,
         ),
         "empty-evidence-manufactures-retirement-grounds": (
             "src/atp/brain/learn.py",
@@ -789,6 +789,12 @@ def test_learn_feedback_records_exact_run_evidence_through_102() -> None:
         "stage": "final_review",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_103_final_review_source = {
+        "run_id": 33017684407,
+        "job_id": 98351339516,
+        "stage": "final_review",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -812,6 +818,7 @@ def test_learn_feedback_records_exact_run_evidence_through_102() -> None:
             run_47_source,
             run_86_final_review_source,
             run_99_final_review_source,
+            run_103_final_review_source,
         ],
         "comparison-fixture-confounds-proof-mismatch": [
             run_38_source,
@@ -839,6 +846,7 @@ def test_learn_feedback_records_exact_run_evidence_through_102() -> None:
             run_99_final_review_source,
             run_100_final_review_source,
             run_102_final_review_source,
+            run_103_final_review_source,
         ],
         "empty-evidence-manufactures-retirement-grounds": [run_96_final_review_source],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
@@ -985,45 +993,49 @@ def test_learn_feedback_records_exact_run_evidence_through_102() -> None:
     )
     assert (
         findings["coordinated-drift-tampering-bypasses-revalidation"]["detail"]
-        == "40/47-49/51/54/56/63: caller-forgeable ctors/_Warrant/__setstate__ "
-        "mint/restore/rebind accepted state. 70 accepted-input hand-built DriftResult; valid "
-        "inputs.model_id/prior_confidence mutations stay downstream-accepted. 73 "
+        == "40/47-49/51/54/56/63 caller-forgeable ctors/_Warrant/__setstate__: "
+        "mint/restore/rebind accepted state. 70 hand-built accepted-input DriftResult; "
+        "valid inputs.model_id/prior_confidence edits stay consumer-accepted. 73 "
         "frame-globals/co_name-only _issued_by lets caller FunctionType named "
         "evaluate_comparison+learn.__dict__ mint ComparisonResult from forged "
-        "ModelRecords/fake proof checksums/arbitrary returns, breaks retirement/reinstatement "
-        "provenance. 77 mutable accepted.inputs rederive input_identity; valid "
-        "accepted.inputs.model.model_id mutation makes checksum() not raise. 79 public ctors "
-        "accept caller provenance/recomputed fields; tests allow direct accepted-DriftResult "
-        "recreation/same checksum and mutated-input rebinding via exposed _bind_*. 81 exposed "
-        "inputs/identity/model_id/restored_role directly recreate accepted "
-        "ReinstatementResult; recomputable-only __post_init__ omits evaluator provenance. 86 "
-        "code-only _Seal+FunctionType(evaluate_comparison.__code__,copied_globals) "
-        "substitutes ComparisonInputs, reconstructs an accepted result from public fields, "
-        "gets valid owner-bound seal/checksum. 96 seal binds type-name/fingerprint, not "
-        "its owning result; exported-evaluator FunctionType copy mints seals; object.__new__ "
-        "accepted-result copy passes checksum/retirement. 97 frozen+slots result __setstate__ "
-        "shadows _Issued.__setstate__; {} succeeds; crafted state mutates issued fields. 98 "
-        "_Provenance.verify trusts writable _owner/_fingerprint+module-visible "
-        "_digest/_result_payload; object.__new__ forged-owned provenance passes "
-        "checksum/evaluate_retirement; FunctionType(evaluate_drift.__code__,learn.__dict__) "
-        "passes _issue code/globals and mints accepted state; tests only unclaimed "
-        "provenance/copied globals. Block non-evaluator construction/copy/restore/rebind and "
-        "copied/substituted globals; retain checksum/consumer revalidation. Bind issuer-owned "
-        "provenance as applicable to exact "
-        "exported-evaluator/code-object/module-globals/owner/immutable-input identities/full "
-        "fingerprint. 4 results: raise on restore/copy or suppress generated methods. Pin "
-        "each constructor/FunctionType/state/consumer bypass. 99 \"Provenance seals remain "
-        "forgeable\": tuple.__new__(_Seal,(...,weakref.ref(forged))) bypasses _Seal.__new__; "
-        "owner-bound seal on object.__new__ accepted-result copy passes checksum/retirement; "
-        "direct _Seal/object.__new__ tests miss base-constructor bypass. Run100—Caller-forged "
-        "provenance accepts invented proof evidence: `_Provenance` can be created with "
-        "`object.__new__`, populated via `object.__setattr__`, and attached to a hand-built "
-        "result using the module-accessible fingerprint. A fabricated `ComparisonResult` "
-        "containing arbitrary `ProofSummary` values then passes `checksum()` and is accepted "
-        "by `evaluate_retirement` as `SUPERIOR_CHALLENGER`. Likewise, `types.FunctionType` "
-        "can clone an evaluator using its actual globals and closure and issue accepted "
-        "state. The tests only probe an underived forged reading and copied globals, missing "
-        "both successful attacks."
+        "ModelRecords/fake proof checksums/arbitrary returns; breaks "
+        "retirement/reinstatement provenance. 77 accepted.inputs.model.model_id edit "
+        "rederives input_identity; checksum() does not raise. 79 public ctors "
+        "accept caller provenance/recomputed fields: recreated accepted DriftResult "
+        "keeps checksum; exposed _bind_* rebind mutated inputs. 81 exposed "
+        "inputs/identity/model_id/restored_role rebuild accepted ReinstatementResult; "
+        "recomputable-only __post_init__ lacks evaluator provenance. 86 code-only "
+        "_Seal+FunctionType(evaluate_comparison.__code__,copied_globals) substitutes "
+        "ComparisonInputs; public fields rebuild accepted result with owner-bound "
+        "seal/checksum. 96 seal binds type-name/fingerprint, not its owning result; "
+        "exported-evaluator FunctionType clone mints "
+        "it; object.__new__ copy passes checksum/retirement. 97 frozen+slots generate "
+        "result __setstate__ shadowing _Issued.__setstate__; {} succeeds; crafted state "
+        "mutates issued fields. 98 _Provenance.verify trusts writable "
+        "_owner/_fingerprint+module-visible _digest/_result_payload: forged-owned "
+        "object.__new__ provenance passes checksum/retirement; "
+        "FunctionType(evaluate_drift.__code__,learn.__dict__) passes _issue code/globals, "
+        "mints accepted state; tests only unclaimed provenance/copied globals. 99 "
+        "tuple.__new__(_Seal,(...,weakref.ref(forged))) bypasses _Seal.__new__; "
+        "owner-bound seal on object.__new__ copy passes checksum/retirement; direct "
+        "_Seal/object.__new__ tests miss base-ctor bypass. 100 object.__new__/__setattr__ "
+        "make _Provenance on hand-built result via module-visible fingerprint; fabricated "
+        "ComparisonResult/arbitrary ProofSummary passes checksum/evaluate_retirement as "
+        "SUPERIOR_CHALLENGER. Actual-globals+closure FunctionType clone issues accepted "
+        "state; tests cover only underived forged reading/copied globals. 103 "
+        "\"Caller-forgeable provenance bypasses downstream validation\": "
+        "module-accessible/writable _Provenance.owner/state/_mint let reconstructed "
+        "DriftResult pass retirement; edit accepted retirement_id+recompute "
+        "result._provenance.state: reinstatement accepts tampered chain; exact-globals "
+        "FunctionType evaluator clone mints consumer-accepted drift; extra attrs ignored, "
+        "violating copied/rebound/mutated/cloned-evaluator rejection invariants/docs. "
+        "Block non-evaluator "
+        "ctor/copy/restore/rebind/mutation/extra-attr/FunctionType/state/consumer "
+        "paths, copied/substituted globals. Issuer-own provenance bound to exact "
+        "exported-evaluator/code-object/module-globals/owner/immutable-input "
+        "identities/full fingerprint; reject clones/unknown attrs. 4 results: raise copy/restore or "
+        "suppress generated methods. Keep checksum/consumer revalidation; pin all "
+        "forgeries."
     )
     assert findings["empty-evidence-manufactures-retirement-grounds"]["title"] == (
         "Empty evidence can manufacture retirement grounds"
@@ -1462,6 +1474,14 @@ def test_learn_feedback_records_exact_run_evidence_through_102() -> None:
     assert {
         finding_id
         for finding_id, finding in findings.items()
+        if run_103_final_review_source in finding["sources"]
+    } == {
+        "comparison-invalid-proof-shadowed-by-model-validation",
+        "coordinated-drift-tampering-bypasses-revalidation",
+    }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
         if run_67_gate_source in finding["sources"]
     } == {"invalid-policy-fixture-raises-before-result-refusal"}
     assert {
@@ -1569,7 +1589,12 @@ def test_learn_feedback_records_exact_run_evidence_through_102() -> None:
         "exercise `ComparisonFailure.INVALID_MODEL`, champion-side proof failures, or "
         "overlapping proof-binding/model-knowability defects. Thus not every declared "
         "public reason, side-symmetric phase, and documented precedence rule has "
-        "deterministic regression coverage as required."
+        "deterministic regression coverage as required. Run 103 final review, "
+        "\"Comparison tests omit required knowability symmetry\": "
+        "`UNKNOWABLE_EVIDENCE` is tested only with a future champion model. There is no "
+        "challenger-model case or champion/challenger proof-knowability coverage, so "
+        "both sides of the complete validation phase are not exercised as explicitly "
+        "required."
     )
     assert len(normalized["findings"]) == LEARN_MAX_FINDINGS
     assert {
@@ -1588,7 +1613,7 @@ def test_schema_is_strict_and_matches_validator_bounds() -> None:
     assert MAX_SOURCES_PER_FINDING == 8
     assert LEARN_MAX_FEEDBACK_BYTES == 32_768
     assert LEARN_MAX_FINDINGS == 19
-    assert LEARN_MAX_SOURCES_PER_FINDING == 20
+    assert LEARN_MAX_SOURCES_PER_FINDING == 21
     assert schema["additionalProperties"] is False
     assert schema["properties"]["schema_version"]["const"] == 1
     assert schema["properties"]["kind"]["const"] == FEEDBACK_KIND
