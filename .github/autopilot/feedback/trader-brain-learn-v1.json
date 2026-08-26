@@ -69,10 +69,10 @@
    "id": "coordinated-drift-tampering-bypasses-revalidation",
    "severity": "P1",
    "title": "Accepted-state minting persists",
-   "detail": "40/47-49/51/54/56/63/70/73/77/79/81 mint, restore or rebind accepted state via constructors, _Warrant, __setstate__ or caller-forgeable call sites. Run 70 hand-builds DriftResult from accepted inputs; valid inputs.model_id/prior_confidence mutations remain accepted downstream. Run 73's _issued_by trusts only frame globals/co_name: a caller-created types.FunctionType named evaluate_comparison with learn.__dict__ mints ComparisonResult from forged ModelRecords, fake proof checksums and arbitrary returns, undermining retirement/reinstatement provenance. Run 77 re-derives input_identity from current mutable accepted.inputs, so a valid accepted.inputs.model.model_id mutation makes checksum() not raise. Run 79's public result constructors accept caller-supplied provenance and coherently recomputed fields; tests allow direct recreation of an accepted DriftResult with the same checksum and rebinding mutated inputs via exposed _bind_* helpers. Run 81 directly reconstructs an accepted ReinstatementResult from its exposed inputs/identity/model_id/restored_role; __post_init__ only revalidates recomputable values, so evaluator provenance is absent. Block non-evaluator construction/rebinding paths; bind immutable evaluator provenance/input identity; retain consumer revalidation. Run 86's _Seal trusts only the caller's code object: a types.FunctionType built from evaluate_comparison.__code__ with copied globals can substitute ComparisonInputs, reconstruct an accepted result from public fields, and receive a valid owner-bound seal and checksum. Require both the exact evaluator code object and exact module-globals identity before issuance; keep owner, identity and fingerprint revalidation; block copied or substituted globals. Run 96: A caller can allocate DriftResult with object.__new__, copy an accepted result's fields and provenance seal, and obtain a distinct object whose checksum passes and which retirement accepts. The seal binds only type-name and fingerprint, not its owning result. Replacing the exported evaluator with a FunctionType copy also lets copied evaluator code mint seals, contrary to the provenance contract. Run 97: frozen+slots dataclasses generate each concrete result's own __setstate__, shadowing _Issued.__setstate__; {} silently succeeds and crafted state can mutate issued fields. Define the raising restore/copy guard on each concrete result (or prevent dataclass generation) and pin all four. Run 98: _Provenance.verify trusts caller-writable _owner/_fingerprint plus module-accessible _digest/_result_payload; an object.__new__ result with forged owned provenance passes checksum and evaluate_retirement. FunctionType(evaluate_drift.__code__, learn.__dict__) also passes _issue's code/globals check and mints accepted state; tests cover only unclaimed provenance and copied globals. Keep provenance in issuer-owned identity state, bind issuance to the exact exported evaluator, and pin both forgeries through checksum and consumers.",
+   "detail": "40/47-49/51/54/56/63/70/73/77/79/81: constructors, _Warrant, __setstate__ and caller-forgeable call sites mint, restore or rebind accepted state. 70 hand-builds DriftResult from accepted inputs; valid inputs.model_id/prior_confidence mutations stay accepted downstream. 73's _issued_by trusts only frame globals/co_name: a caller-created types.FunctionType named evaluate_comparison with learn.__dict__ mints ComparisonResult from forged ModelRecords, fake proof checksums and arbitrary returns, breaking retirement/reinstatement provenance. 77 re-derives input_identity from mutable accepted.inputs, so a valid accepted.inputs.model.model_id mutation makes checksum() not raise. 79's public result constructors accept caller provenance and coherently recomputed fields; tests allow direct recreation of an accepted DriftResult with the same checksum and rebinding mutated inputs via exposed _bind_* helpers. 81 directly reconstructs accepted ReinstatementResult from exposed inputs/identity/model_id/restored_role; __post_init__ revalidates only recomputable values, leaving no evaluator provenance. 86's _Seal trusts only caller code: types.FunctionType(evaluate_comparison.__code__, copied_globals) substitutes ComparisonInputs, reconstructs an accepted result from public fields and obtains a valid owner-bound seal/checksum. 96 copies accepted DriftResult fields and its seal onto object.__new__; that distinct object passes checksum/retirement because the seal binds type-name/fingerprint, not its owning result. A copy of the exported evaluator as FunctionType also mints seals. 97's frozen+slots dataclasses generate per-result __setstate__ shadowing _Issued.__setstate__; {} succeeds and crafted state mutates issued fields. 98's _Provenance.verify trusts caller-writable _owner/_fingerprint plus module-accessible _digest/_result_payload: object.__new__ with forged owned provenance passes checksum/evaluate_retirement; FunctionType(evaluate_drift.__code__, learn.__dict__) passes _issue's code/globals check and mints accepted state; tests cover only unclaimed provenance/copied globals. Block all non-evaluator construction/copy/restore/rebind. Keep issuer-owned provenance bound, as applicable, to the exact exported evaluator and exact code object, exact module-globals identity, owner, immutable input identity and full fingerprint; block copied/substituted globals and retain checksum/consumer revalidation. Give all four concrete results raising restore/copy guards (or prevent generated methods); pin every constructor, FunctionType, state and consumer bypass. Run 99 final review, \"Provenance seals remain forgeable\": `tuple.__new__(_Seal, (..., weakref.ref(forged)))` bypasses `_Seal.__new__`. After copying an accepted result with `object.__new__`, a caller can attach an owner-bound seal; `checksum()` succeeds and retirement accepts the forged result. The test probes direct `_Seal` and `object.__new__` construction but misses this base-class constructor bypass.",
    "location": {
     "path": "src/atp/brain/learn.py",
-    "line": 354
+    "line": 316
    },
    "sources": [
     {"run_id":32458581800,"job_id":96710258496,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
@@ -91,7 +91,8 @@
     {"run_id":32787386882,"job_id":97632504247,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
     {"run_id":32866240334,"job_id":97879171688,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
     {"run_id":32893857889,"job_id":97959003873,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
-    {"run_id":32900924868,"job_id":97988300665,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
+    {"run_id":32900924868,"job_id":97988300665,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32928828112,"job_id":98068464635,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
@@ -138,16 +139,17 @@
    "id": "equivalent-permutations-produce-unequal-results",
    "severity": "P1",
    "title": "Equivalent inputs produce unequal results",
-   "detail": "42/48/63 store noncanonical tuples/datetimes despite canonical checksums, so permutations/fold spellings yield unequal results. Sort tuples, normalize UTC, pin equality. Run 86 stores caller-spelled ProveResults in ComparisonInputs: proven results with permuted-but-equivalent windows have identical proof checksums, while their comparisons are unequal despite sharing a comparison checksum. Store one fully canonical proof snapshot per side, including every proof field comparison later consumes; derive equality and checksum from that same canonical state without ignoring proof fields; retain strict proof revalidation.",
+   "detail": "42/48/63 store noncanonical tuples/datetimes despite canonical checksums, so permutations/fold spellings yield unequal results. Sort tuples, normalize UTC, pin equality. Run 86 stores caller-spelled ProveResults in ComparisonInputs: proven results with permuted-but-equivalent windows have identical proof checksums, while their comparisons are unequal despite sharing a comparison checksum. Store one fully canonical proof snapshot per side, including every proof field comparison later consumes; derive equality and checksum from that same canonical state without ignoring proof fields; retain strict proof revalidation. Run 99 final review, \"Canonical equality and checksums diverge\": Drift stores canonical SENSE output containing raw `Evidence.assertions`. Reversing an otherwise equivalent assertion tuple produces unequal DriftResults but identical checksums because serialization sorts assertions. Conversely, prior confidences `0.0` and `-0.0` produce equal results with different checksums. Nested evidence timestamps also retain caller timezone spellings instead of being stored in UTC.",
    "location": {
     "path": "src/atp/brain/learn.py",
-    "line": 587
+    "line": 969
    },
    "sources": [
     {"run_id":32481392244,"job_id":96778775008,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
     {"run_id":32558489491,"job_id":97000836840,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
     {"run_id":32591600980,"job_id":97079081660,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
-    {"run_id":32787386882,"job_id":97632504247,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
+    {"run_id":32787386882,"job_id":97632504247,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32928828112,"job_id":98068464635,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
@@ -265,15 +267,16 @@
    "id": "comparison-invalid-proof-shadowed-by-model-validation",
    "severity": "P1",
    "title": "Proof order",
-   "detail": "45/47 bind proofs; champion-first checks make role swaps change wrong/unproven reasons. Validate shells then proofs: INVALID_PROOF, PROOF_NOT_PROVEN, PROOF_MODEL_MISMATCH, knowability. Keep construction/checksum binding/fail-closed order. Run 86 checks model knowability before proof-to-model binding, so a future-registered model with a wrong-proposal proof returns INVALID_MODEL instead of the pinned PROOF_MODEL_MISMATCH. Keep exact ModelRecord shape validation before field access; then bind each proof to its model before model and proof knowability, side-symmetrically; retain earlier proof-checksum and proven-status phases.",
+   "detail": "45/47 bind proofs; champion-first checks make role swaps change wrong/unproven reasons. Validate shells then proofs: INVALID_PROOF, PROOF_NOT_PROVEN, PROOF_MODEL_MISMATCH, knowability. Keep construction/checksum binding/fail-closed order. Run 86 checks model knowability before proof-to-model binding, so a future-registered model with a wrong-proposal proof returns INVALID_MODEL instead of the pinned PROOF_MODEL_MISMATCH. Keep exact ModelRecord shape validation before field access; then bind each proof to its model before model and proof knowability, side-symmetrically; retain earlier proof-checksum and proven-status phases. Run 99 final review, \"Required failure and precedence coverage is incomplete\": The tests never exercise `ComparisonFailure.INVALID_MODEL`, champion-side proof failures, or overlapping proof-binding/model-knowability defects. Thus not every declared public reason, side-symmetric phase, and documented precedence rule has deterministic regression coverage as required.",
    "location": {
-    "path": "src/atp/brain/learn.py",
-    "line": 625
+    "path": "tests/test_brain_learn.py",
+    "line": 316
    },
    "sources": [
     {"run_id":32542812818,"job_id":96958966128,"stage":"gate","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
     {"run_id":32554139745,"job_id":96991065888,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
-    {"run_id":32787386882,"job_id":97632504247,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
+    {"run_id":32787386882,"job_id":97632504247,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"},
+    {"run_id":32928828112,"job_id":98068464635,"stage":"final_review","base_sha":"8b45683d7cee8e1c5e794d83a15e4d4e973596be"}
    ]
   },
   {
