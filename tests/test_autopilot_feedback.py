@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_103() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_104() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -376,8 +376,8 @@ def test_learn_feedback_records_exact_run_evidence_through_103() -> None:
             463,
         ),
         "comparison-invalid-proof-shadowed-by-model-validation": (
-            "tests/test_brain_learn.py",
-            304,
+            "src/atp/brain/learn.py",
+            236,
         ),
         "comparison-fixture-confounds-proof-mismatch": (
             "tests/test_brain_learn.py",
@@ -409,11 +409,11 @@ def test_learn_feedback_records_exact_run_evidence_through_103() -> None:
         ),
         "invalid-policy-fixture-raises-before-result-refusal": (
             "tests/test_brain_learn.py",
-            118,
+            98,
         ),
         "learn-documentation-omits-model-role": (
             "docs/TRADER_BRAIN.md",
-            344,
+            379,
         ),
         "local-proposal-tamper-invalidates-proof-first": (
             "tests/test_brain_learn.py",
@@ -795,6 +795,12 @@ def test_learn_feedback_records_exact_run_evidence_through_103() -> None:
         "stage": "final_review",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_104_gate_source = {
+        "run_id": 33023684128,
+        "job_id": 98368496484,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -819,6 +825,7 @@ def test_learn_feedback_records_exact_run_evidence_through_103() -> None:
             run_86_final_review_source,
             run_99_final_review_source,
             run_103_final_review_source,
+            run_104_gate_source,
         ],
         "comparison-fixture-confounds-proof-mismatch": [
             run_38_source,
@@ -885,6 +892,7 @@ def test_learn_feedback_records_exact_run_evidence_through_103() -> None:
             run_93_gate_source,
             run_94_gate_source,
             run_95_gate_source,
+            run_104_gate_source,
         ],
         "learn-documentation-omits-model-role": [
             run_43_source,
@@ -904,6 +912,7 @@ def test_learn_feedback_records_exact_run_evidence_through_103() -> None:
             run_90_gate_source,
             run_93_gate_source,
             run_95_gate_source,
+            run_104_gate_source,
         ],
         "local-proposal-tamper-invalidates-proof-first": [run_43_source],
         "nested-result-failure-reason-leaks-across-transition-boundary": [
@@ -1167,7 +1176,9 @@ def test_learn_feedback_records_exact_run_evidence_through_103() -> None:
         "results and identical checksums` to its explanation with an em dash instead of "
         "ending the pinned sentence with a period. End that exact sentence, then put the "
         "explanation in a separate sentence; keep markup-aware normalization and strict "
-        "documentation guards."
+        "documentation guards. Run 104 gate: docs continue the pinned reinstatement-role "
+        "sentence with \", so\"; its required period is absent. End it, then explain "
+        "challenger restoration separately."
     )
     assert findings["invalid-policy-fixture-raises-before-result-refusal"]["title"] == (
         "Evaluator fixture errors"
@@ -1208,7 +1219,10 @@ def test_learn_feedback_records_exact_run_evidence_through_103() -> None:
         "a valid aware instant before evaluate_comparison, so the INVALID_INPUT case is "
         "accepted. Pass the naive value directly to the evaluator or use a helper that "
         "preserves invalid inputs; assert the stable refusal and keep validation "
-        "precedence strict."
+        "precedence strict. Run 104 gate: _comparison reads champion/challenger.proposal_id "
+        "for default proofs before the evaluator; invalid-shell/nested-invalid tests raise "
+        "AttributeError, never stable refusals. Pass explicit proofs or preserve invalid "
+        "shells in the helper."
     )
     assert findings[
         "nested-result-failure-reason-leaks-across-transition-boundary"
@@ -1482,6 +1496,15 @@ def test_learn_feedback_records_exact_run_evidence_through_103() -> None:
     assert {
         finding_id
         for finding_id, finding in findings.items()
+        if run_104_gate_source in finding["sources"]
+    } == {
+        "comparison-invalid-proof-shadowed-by-model-validation",
+        "invalid-policy-fixture-raises-before-result-refusal",
+        "learn-documentation-omits-model-role",
+    }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
         if run_67_gate_source in finding["sources"]
     } == {"invalid-policy-fixture-raises-before-result-refusal"}
     assert {
@@ -1594,7 +1617,9 @@ def test_learn_feedback_records_exact_run_evidence_through_103() -> None:
         "`UNKNOWABLE_EVIDENCE` is tested only with a future champion model. There is no "
         "challenger-model case or champion/challenger proof-knowability coverage, so "
         "both sides of the complete validation phase are not exercised as explicitly "
-        "required."
+        "required. Run 104 gate: _canonical_model accesses fields before _validate_model; "
+        "non-ModelRecord raises AttributeError, so drift returns INVALID_INPUT, not "
+        "INVALID_MODEL. Type-check first; retain reason precedence."
     )
     assert len(normalized["findings"]) == LEARN_MAX_FINDINGS
     assert {
