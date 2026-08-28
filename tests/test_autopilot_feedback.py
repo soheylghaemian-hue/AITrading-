@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_104() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_106() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -409,7 +409,7 @@ def test_learn_feedback_records_exact_run_evidence_through_104() -> None:
         ),
         "invalid-policy-fixture-raises-before-result-refusal": (
             "tests/test_brain_learn.py",
-            98,
+            269,
         ),
         "learn-documentation-omits-model-role": (
             "docs/TRADER_BRAIN.md",
@@ -430,7 +430,7 @@ def test_learn_feedback_records_exact_run_evidence_through_104() -> None:
         "tamper-fixture-leaks-champion-role": ("tests/test_brain_learn.py", 593),
         "timezone-spelling-fixture-assumes-evidence-inequality": (
             "tests/test_brain_learn.py",
-            169,
+            208,
         ),
         "timezone-utc-fixture-not-in-immutable-allowlist": (
             "tests/test_brain_learn.py",
@@ -801,6 +801,18 @@ def test_learn_feedback_records_exact_run_evidence_through_104() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_105_gate_source = {
+        "run_id": 33056437991,
+        "job_id": 98470434882,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
+    run_106_gate_source = {
+        "run_id": 33081133985,
+        "job_id": 98556516262,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -854,6 +866,7 @@ def test_learn_feedback_records_exact_run_evidence_through_104() -> None:
             run_100_final_review_source,
             run_102_final_review_source,
             run_103_final_review_source,
+            run_105_gate_source,
         ],
         "empty-evidence-manufactures-retirement-grounds": [run_96_final_review_source],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
@@ -893,6 +906,7 @@ def test_learn_feedback_records_exact_run_evidence_through_104() -> None:
             run_94_gate_source,
             run_95_gate_source,
             run_104_gate_source,
+            run_106_gate_source,
         ],
         "learn-documentation-omits-model-role": [
             run_43_source,
@@ -931,6 +945,7 @@ def test_learn_feedback_records_exact_run_evidence_through_104() -> None:
             run_61_gate_source,
             run_87_gate_source,
             run_95_gate_source,
+            run_106_gate_source,
         ],
         "timezone-utc-fixture-not-in-immutable-allowlist": [
             run_44_source,
@@ -1002,49 +1017,42 @@ def test_learn_feedback_records_exact_run_evidence_through_104() -> None:
     )
     assert (
         findings["coordinated-drift-tampering-bypasses-revalidation"]["detail"]
-        == "40/47-49/51/54/56/63 caller-forgeable ctors/_Warrant/__setstate__: "
-        "mint/restore/rebind accepted state. 70 hand-built accepted-input DriftResult; "
-        "valid inputs.model_id/prior_confidence edits stay consumer-accepted. 73 "
-        "frame-globals/co_name-only _issued_by lets caller FunctionType named "
-        "evaluate_comparison+learn.__dict__ mint ComparisonResult from forged "
-        "ModelRecords/fake proof checksums/arbitrary returns; breaks "
-        "retirement/reinstatement provenance. 77 accepted.inputs.model.model_id edit "
-        "rederives input_identity; checksum() does not raise. 79 public ctors "
-        "accept caller provenance/recomputed fields: recreated accepted DriftResult "
-        "keeps checksum; exposed _bind_* rebind mutated inputs. 81 exposed "
-        "inputs/identity/model_id/restored_role rebuild accepted ReinstatementResult; "
-        "recomputable-only __post_init__ lacks evaluator provenance. 86 code-only "
-        "_Seal+FunctionType(evaluate_comparison.__code__,copied_globals) substitutes "
-        "ComparisonInputs; public fields rebuild accepted result with owner-bound "
-        "seal/checksum. 96 seal binds type-name/fingerprint, not its owning result; "
-        "exported-evaluator FunctionType clone mints "
-        "it; object.__new__ copy passes checksum/retirement. 97 frozen+slots generate "
-        "result __setstate__ shadowing _Issued.__setstate__; {} succeeds; crafted state "
-        "mutates issued fields. 98 _Provenance.verify trusts writable "
-        "_owner/_fingerprint+module-visible _digest/_result_payload: forged-owned "
-        "object.__new__ provenance passes checksum/retirement; "
-        "FunctionType(evaluate_drift.__code__,learn.__dict__) passes _issue code/globals, "
-        "mints accepted state; tests only unclaimed provenance/copied globals. 99 "
-        "tuple.__new__(_Seal,(...,weakref.ref(forged))) bypasses _Seal.__new__; "
-        "owner-bound seal on object.__new__ copy passes checksum/retirement; direct "
-        "_Seal/object.__new__ tests miss base-ctor bypass. 100 object.__new__/__setattr__ "
-        "make _Provenance on hand-built result via module-visible fingerprint; fabricated "
-        "ComparisonResult/arbitrary ProofSummary passes checksum/evaluate_retirement as "
-        "SUPERIOR_CHALLENGER. Actual-globals+closure FunctionType clone issues accepted "
-        "state; tests cover only underived forged reading/copied globals. 103 "
-        "\"Caller-forgeable provenance bypasses downstream validation\": "
-        "module-accessible/writable _Provenance.owner/state/_mint let reconstructed "
-        "DriftResult pass retirement; edit accepted retirement_id+recompute "
-        "result._provenance.state: reinstatement accepts tampered chain; exact-globals "
-        "FunctionType evaluator clone mints consumer-accepted drift; extra attrs ignored, "
-        "violating copied/rebound/mutated/cloned-evaluator rejection invariants/docs. "
-        "Block non-evaluator "
-        "ctor/copy/restore/rebind/mutation/extra-attr/FunctionType/state/consumer "
-        "paths, copied/substituted globals. Issuer-own provenance bound to exact "
-        "exported-evaluator/code-object/module-globals/owner/immutable-input "
-        "identities/full fingerprint; reject clones/unknown attrs. 4 results: raise copy/restore or "
-        "suppress generated methods. Keep checksum/consumer revalidation; pin all "
-        "forgeries."
+        == "40/47-49/51/54/56/63: caller-accessible ctors, _Warrant and __setstate__ "
+        "mint/restore/rebind accepted state. 70: hand-built accepted-input DriftResult "
+        "remains consumer-valid after inputs.model_id/prior_confidence edits. 73: _issued_by "
+        "checks only frame globals/co_name; FunctionType named evaluate_comparison with "
+        "learn.__dict__ mints ComparisonResult from forged ModelRecords/fake proof "
+        "checksums/arbitrary returns, compromising retirement/reinstatement. 77: editing "
+        "accepted.inputs.model.model_id re-derives input_identity; checksum() still succeeds."
+        " 79: public result ctors accept caller provenance/recomputed fields; recreated "
+        "accepted DriftResult retains checksum; exposed _bind_* rebind mutated inputs. 81: "
+        "exposed inputs/identity/model_id/restored_role rebuild accepted ReinstatementResult;"
+        " recomputation-only __post_init__ lacks evaluator issuance. 86: code-only _Seal plus"
+        " FunctionType(evaluate_comparison.__code__, copied_globals) substitutes "
+        "ComparisonInputs; public fields rebuild an accepted owner-bound sealed result. 96: "
+        "_Seal binds type/fingerprint, not exact owner; exported-evaluator FunctionType clone"
+        " mints it; object.__new__ copy passes checksum/retirement. 97: frozen+slots "
+        "generated __setstate__ shadows _Issued; {} succeeds and crafted state mutates "
+        "fields. 98: _Provenance.verify trusts writable owner/fingerprint and visible "
+        "_digest/_result_payload; forged object.__new__ provenance passes "
+        "checksum/retirement; FunctionType(evaluate_drift.__code__, learn.__dict__) passes "
+        "issuance; tests cover only unclaimed/copied-globals cases. 99: "
+        "tuple.__new__(_Seal,(...,weakref.ref(forged))) bypasses _Seal.__new__; owner-bound "
+        "seal on object.__new__ copy passes; direct tests miss base-ctor bypass. 100: "
+        "object.__new__/__setattr__ plus visible fingerprint fabricates provenance; "
+        "arbitrary-ProofSummary ComparisonResult passes checksum/evaluate_retirement; "
+        "exact-globals closure clone issues state; tests cover only underived/copied-globals "
+        "cases. 103: writable _Provenance.owner/state/_mint lets reconstructed DriftResult "
+        "pass retirement; editing retirement_id and recomputing state passes reinstatement; "
+        "exact-globals evaluator clone mints; extra attrs are ignored. Block non-evaluator "
+        "construction/copy/restore/rebind/mutation/extra attrs/FunctionType/state and "
+        "consumer paths. Bind immutable issuance to exact exported evaluator/code/module "
+        "globals/owner/original input identities/full fingerprint. Reject clones/unknown "
+        "attrs. Four result types must suppress generated restoration or raise. Preserve "
+        "checksum/consumer revalidation and pin every forgery. Run 105 gate: rebinding an "
+        "accepted SenseResult.as_of and evaluating drift at that forged instant passes "
+        "canonical reconstruction and remains accepted. Consumer revalidation must bind the "
+        "original SENSE issuance, not merely recompute self-consistent mutated fields."
     )
     assert findings["empty-evidence-manufactures-retirement-grounds"]["title"] == (
         "Empty evidence can manufacture retirement grounds"
@@ -1137,7 +1145,10 @@ def test_learn_feedback_records_exact_run_evidence_through_104() -> None:
         "Run 95 checks offset inequality only after _drift has passed both timestamp "
         "spellings through SENSE, whose accepted SenseResult is UTC-normalized; both "
         "stored offsets are therefore zero. Assert differing raw fixture offsets before "
-        "evaluation, then retain result and checksum equality on canonical outputs."
+        "evaluation, then retain result and checksum equality on canonical outputs. Run "
+        "106: the timezone fixture rebuilds 09:00 wall-clock under +05:30/-04:00, changing "
+        "UTC instants to 03:30Z/13:00Z; equality failure is correct. Preserve original "
+        "instants when only spelling zones, then retain canonical result/checksum equality."
     )
     assert findings["local-proposal-tamper-invalidates-proof-first"]["title"] == (
         "Proof-tamper"
@@ -1222,7 +1233,8 @@ def test_learn_feedback_records_exact_run_evidence_through_104() -> None:
         "precedence strict. Run 104 gate: _comparison reads champion/challenger.proposal_id "
         "for default proofs before the evaluator; invalid-shell/nested-invalid tests raise "
         "AttributeError, never stable refusals. Pass explicit proofs or preserve invalid "
-        "shells in the helper."
+        "shells in the helper. Run 106: Feb-20 comparison keeps default Mar-1 proofs; "
+        "UNKNOWABLE_EVIDENCE is correct. Align proof/as_of."
     )
     assert findings[
         "nested-result-failure-reason-leaks-across-transition-boundary"
@@ -1505,6 +1517,19 @@ def test_learn_feedback_records_exact_run_evidence_through_104() -> None:
     assert {
         finding_id
         for finding_id, finding in findings.items()
+        if run_105_gate_source in finding["sources"]
+    } == {"coordinated-drift-tampering-bypasses-revalidation"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_106_gate_source in finding["sources"]
+    } == {
+        "invalid-policy-fixture-raises-before-result-refusal",
+        "timezone-spelling-fixture-assumes-evidence-inequality",
+    }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
         if run_67_gate_source in finding["sources"]
     } == {"invalid-policy-fixture-raises-before-result-refusal"}
     assert {
@@ -1636,9 +1661,9 @@ def test_schema_is_strict_and_matches_validator_bounds() -> None:
     assert MAX_FEEDBACK_BYTES == 16_384
     assert MAX_FINDINGS == 16
     assert MAX_SOURCES_PER_FINDING == 8
-    assert LEARN_MAX_FEEDBACK_BYTES == 32_768
+    assert LEARN_MAX_FEEDBACK_BYTES == 33_792
     assert LEARN_MAX_FINDINGS == 19
-    assert LEARN_MAX_SOURCES_PER_FINDING == 21
+    assert LEARN_MAX_SOURCES_PER_FINDING == 22
     assert schema["additionalProperties"] is False
     assert schema["properties"]["schema_version"]["const"] == 1
     assert schema["properties"]["kind"]["const"] == FEEDBACK_KIND
