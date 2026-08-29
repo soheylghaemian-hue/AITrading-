@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_108() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_109() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -385,7 +385,7 @@ def test_learn_feedback_records_exact_run_evidence_through_108() -> None:
         ),
         "coordinated-drift-tampering-bypasses-revalidation": (
             "src/atp/brain/learn.py",
-            589,
+            648,
         ),
         "empty-evidence-manufactures-retirement-grounds": (
             "src/atp/brain/learn.py",
@@ -825,6 +825,12 @@ def test_learn_feedback_records_exact_run_evidence_through_108() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_109_gate_source = {
+        "run_id": 33247076204,
+        "job_id": 99088517810,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -882,6 +888,7 @@ def test_learn_feedback_records_exact_run_evidence_through_108() -> None:
             run_105_gate_source,
             run_107_final_review_source,
             run_108_gate_source,
+            run_109_gate_source,
         ],
         "empty-evidence-manufactures-retirement-grounds": [run_96_final_review_source],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
@@ -1033,41 +1040,41 @@ def test_learn_feedback_records_exact_run_evidence_through_108() -> None:
     )
     assert (
         findings["coordinated-drift-tampering-bypasses-revalidation"]["detail"]
-        == "40/47-49/51/54/56/63: public ctors/_Warrant/__setstate__ mint/restore/rebind acceptance."
-        " 70: hand-built accepted-input DriftResult stays consumer-valid after inputs.model_id/pr"
-        "ior_confidence edits. 73/86 comparison FunctionTypes (learn.__dict__/copied globals), 98"
-        " drift FunctionType (learn.__dict__), 96/100/103 exact-global clones mint acceptance. 73"
-        ": frame-globals/co_name-only _issued_by admits forged ModelRecords/fake proof checksums/"
-        "arbitrary returns; retirement/reinstatement fail. 77: accepted.inputs.model.model_id edi"
-        "t re-derives input_identity; checksum succeeds. 79: ctors accept provenance/recomputed f"
-        "ields; rebuilt DriftResult checksum passes; public _bind_* rebind mutations. 81: exposed"
-        " inputs/identity/model_id/restored_role rebuild accepted ReinstatementResult; recomputat"
-        "ion-only __post_init__ lacks issuance. 86: code-only _Seal permits ComparisonInputs subs"
-        "titution; public fields rebuild owner-bound acceptance. 96: _Seal binds type/fingerprint"
-        ", not owner; object.__new__ copy passes checksum/retirement. 97: frozen+slots generated "
-        "__setstate__ shadows _Issued; {} succeeds; crafted state mutates fields. 98: _Provenance"
-        ".verify trusts writable owner/fingerprint, visible _digest/_result_payload; forged objec"
-        "t.__new__ passes checksum/retirement; tests only unclaimed/copied-globals. 99: tuple.__n"
-        "ew__(_Seal,(...,weakref.ref(forged))) bypasses __new__; owner-bound object.__new__ copy "
-        "passes; base ctor untested. 100: object.__new__/__setattr__ plus visible fingerprint fab"
-        "ricates provenance; arbitrary-ProofSummary ComparisonResult passes checksum/retirement; "
-        "tests only underived/copied-globals. 103: writable _Provenance.owner/state/_mint reconst"
-        "ructs DriftResult passing retirement; retirement_id edit+recomputed state passes reinsta"
-        "tement; extra attrs ignored. 105: accepted SenseResult.as_of rebound plus drift at forge"
-        "d instant reconstructs acceptance; bind original SENSE issuance, not self-consistency. 1"
-        "07 \"Accepted LEARN results remain forgeable and mutable\": _require_accepted checks deriv"
-        "ation only; direct coherent ComparisonResult passes checksum/evaluate_retirement; identi"
-        "ty edits rederive checksums; tests bless equivalent construction/evaluator clones/identi"
-        "ty rebinding. \"Mutated SENSE issuance can be recommitted\": _canonical_window replays as_"
-        "of/dynamic checksum; valid-partition as_of rebinding/coordinated nested-evidence edits b"
-        "ecome valid content, violating issuance. 108 gate: checksum accepts Drift.prior_confiden"
-        "ce 0.9->0.1, Retirement.retirement_id r-1->r-forged and Reinstatement.reversal_id rev-7-"
-        ">rev-forged because current revalidation/hashing fails to bind original evaluator issuan"
-        "ce. Block non-evaluator ctor/copy/restore/rebind/mutation/extra attrs/FunctionType/state"
-        ", including consumers; bind immutable issuance to exact exported evaluator/code/module g"
-        "lobals/owner/original input IDs/full fingerprint; reject clones/unknown attrs; all four "
-        "results suppress/raise restoration; keep checksum/consumer revalidation; pin every forge"
-        "ry."
+        == "D/C/R/I=Drift/Comparison/Retirement/Reinstatement+Result;CS=checksum. 40/47-49/51/54/56/"
+        "63 public ctors/_Warrant/__setstate__: mint/restore/rebind acceptance. 70 hand-built acc"
+        "epted-input D stays consumer-valid after inputs.model_id/prior_confidence edits. 73/86 c"
+        "omparison+98 drift FunctionTypes use learn.__dict__ (73/86+copied globals); 96/100/103 e"
+        "xact-global clones mint acceptance. 73 frame-globals/co_name-only _issued_by admits forg"
+        "ed ModelRecords/fake proof CS/arbitrary returns; retirement/reinstatement fail. 77 accep"
+        "ted.inputs.model.model_id edit rederives input_identity; CS passes. 79 caller-provenance"
+        "/recomputed-field ctors rebuild CS-passing D; public _bind_* rebinds. 81 exposed inputs/"
+        "identity/model_id/restored_role+recompute-only __post_init__ rebuild unissued accepted I"
+        ". 86 code-only _Seal/public fields allow ComparisonInputs substitution/owner-bound accep"
+        "tance. 96 _Seal binds type/fingerprint not owner; object.__new__ copy passes CS/retireme"
+        "nt. 97 frozen+slots __setstate__ shadows _Issued; {} succeeds; crafted state mutates fie"
+        "lds. 98 _Provenance.verify trusts writable owner/fingerprint+visible _digest/_result_pay"
+        "load; object.__new__ forgery passes CS/retirement. 99 tuple.__new__(_Seal,(...,weakref.r"
+        "ef(forged))) bypasses __new__; owner-bound object.__new__ copy passes; base ctor unteste"
+        "d. 100 object.__new__/__setattr__+visible fingerprint forges provenance; arbitrary-Proof"
+        "Summary C passes CS/retirement. 98/100 tests only unclaimed/underived provenance+copied "
+        "globals. 103 writable _Provenance.owner/state/_mint rebuilds D passing retirement; retir"
+        "ement_id edit+recomputed state passes reinstatement; extra attrs ignored. 105 accepted S"
+        "enseResult.as_of rebind+forged-time drift rebuilds acceptance; bind original SENSE issua"
+        "nce, not self-consistency. 107 \"Accepted LEARN results remain forgeable and mutable\": de"
+        "rivation-only _require_accepted admits coherent direct C through CS/evaluate_retirement;"
+        " identity edits rederive CS; tests bless equivalent ctor-state/evaluator clones/identity"
+        " rebinding. \"Mutated SENSE issuance can be recommitted\": _canonical_window replays as_of"
+        "/dynamic CS; valid-partition as_of-rebind/coordinated nested-evidence edits violate orig"
+        "inal issuance. 108 CS accepts D.prior_confidence 0.9->0.1, R.retirement_id r-1->r-forged"
+        ", I.reversal_id rev-7->rev-forged: original evaluator issuance unbound. 109 gate: 5 vali"
+        "d tests(3D/1C/1I): genuine/equal; CS raises \"may only be issued by this module's evaluat"
+        "ors\" post-return as _check_shell calls stack-only _minting before ledger _require_issued"
+        "; R too. Block non-evaluator ctor/copy/restore/rebind/mutation/extra-attrs/FunctionType/"
+        "state in CS+consumers; immutable issuance binds exact exported evaluator-code/module-glo"
+        "bals/owner/original-input-IDs/full fingerprint; reject clones/unknown attrs; all 4 rejec"
+        "t restore. _issue gates construction; then _ISSUED verifies exact identity+fingerprint. "
+        "Keep usable deterministic CS/consumer revalidation; pin every forgery+genuine-result reg"
+        "ression."
     )
     assert findings["empty-evidence-manufactures-retirement-grounds"]["title"] == (
         "Empty evidence can manufacture retirement grounds"
@@ -1556,6 +1563,11 @@ def test_learn_feedback_records_exact_run_evidence_through_108() -> None:
     assert {
         finding_id
         for finding_id, finding in findings.items()
+        if run_109_gate_source in finding["sources"]
+    } == {"coordinated-drift-tampering-bypasses-revalidation"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
         if run_67_gate_source in finding["sources"]
     } == {"invalid-policy-fixture-raises-before-result-refusal"}
     assert {
@@ -1693,7 +1705,7 @@ def test_schema_is_strict_and_matches_validator_bounds() -> None:
     assert MAX_SOURCES_PER_FINDING == 8
     assert LEARN_MAX_FEEDBACK_BYTES == 34_816
     assert LEARN_MAX_FINDINGS == 19
-    assert LEARN_MAX_SOURCES_PER_FINDING == 24
+    assert LEARN_MAX_SOURCES_PER_FINDING == 25
     assert schema["additionalProperties"] is False
     assert schema["properties"]["schema_version"]["const"] == 1
     assert schema["properties"]["kind"]["const"] == FEEDBACK_KIND
