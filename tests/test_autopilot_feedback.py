@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_109() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_110() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -370,7 +370,7 @@ def test_learn_feedback_records_exact_run_evidence_through_109() -> None:
         finding["id"]: (finding["location"]["path"], finding["location"]["line"])
         for finding in normalized["findings"]
     } == {
-        "authority-field-lexical-false-positive": ("tests/test_brain_learn.py", 358),
+        "authority-field-lexical-false-positive": ("tests/test_brain_learn.py", 538),
         "closure-fixture-rejects-benign-class-cell": (
             "tests/test_brain_learn.py",
             463,
@@ -409,7 +409,7 @@ def test_learn_feedback_records_exact_run_evidence_through_109() -> None:
         ),
         "invalid-policy-fixture-raises-before-result-refusal": (
             "tests/test_brain_learn.py",
-            223,
+            91,
         ),
         "learn-documentation-omits-model-role": (
             "docs/TRADER_BRAIN.md",
@@ -831,6 +831,12 @@ def test_learn_feedback_records_exact_run_evidence_through_109() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_110_gate_source = {
+        "run_id": 33267734642,
+        "job_id": 99143394411,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -843,6 +849,7 @@ def test_learn_feedback_records_exact_run_evidence_through_109() -> None:
             run_64_gate_source,
             run_70_final_review_source,
             run_81_gate_source,
+            run_110_gate_source,
         ],
         "closure-fixture-rejects-benign-class-cell": [
             run_49_gate_source,
@@ -930,6 +937,7 @@ def test_learn_feedback_records_exact_run_evidence_through_109() -> None:
             run_104_gate_source,
             run_106_gate_source,
             run_108_gate_source,
+            run_110_gate_source,
         ],
         "learn-documentation-omits-model-role": [
             run_43_source,
@@ -994,7 +1002,9 @@ def test_learn_feedback_records_exact_run_evidence_through_109() -> None:
         "siblings pass. Run 81 substring-scans dir(result); forbidden \"size\" matches "
         "inherited __sizeof__, so a safe result fails. Inspect declared "
         "public/dataclass names exactly; match exact forms/module paths and actual "
-        "import graph; keep no-order/no-execution."
+        "import graph; keep no-order/no-execution. 110 vars()+callable flags imported "
+        "dataclass as authority although closure checks pass; test issuance capability, "
+        "not callability."
     )
     assert findings["tamper-fixture-leaks-champion-role"]["title"] == (
         "Test fixtures leak shared state across tests"
@@ -1225,9 +1235,10 @@ def test_learn_feedback_records_exact_run_evidence_through_109() -> None:
         "al all-rejected; it compares INVALID_INPUT/INVALID_MODEL checksums. 85: empty canonical "
         "SenseResult with prior 1.0/drift 0.0 is accepted without abstention, so retirement yield"
         "s INSUFFICIENT_EVIDENCE, not INVALID_DRIFT. 89: accepted drift binds default CHAMPION wh"
-        "ile retirement targets CHALLENGER; EVIDENCE_MODEL_MISMATCH precedes drift refusal. 91: _"
-        "comparison(champion=None) substitutes valid CHAMPION; accepted comparison cannot exercis"
-        "e INVALID_COMPARISON. 92: expects EVIDENCE_MODEL_MISMATCH although superior comparison f"
+        "ile retirement targets CHALLENGER; EVIDENCE_MODEL_MISMATCH precedes drift "
+        "refusal. 91/110: _comparison(None) defaults sides; accepted output cannot "
+        "test INVALID_MODEL/INVALID_COMPARISON; proof wins. 92: expects "
+        "EVIDENCE_MODEL_MISMATCH although superior comparison f"
         "avors target challenger, correctly insufficient; its table captures the original accepte"
         "d graph, resets accepted, then mutates stale targets while checking fresh output. 93: e-"
         "dup/e-other are distinct, so forward is canonical and only reverse invalid, not duplicat"
@@ -1565,6 +1576,14 @@ def test_learn_feedback_records_exact_run_evidence_through_109() -> None:
         for finding_id, finding in findings.items()
         if run_109_gate_source in finding["sources"]
     } == {"coordinated-drift-tampering-bypasses-revalidation"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
+        if run_110_gate_source in finding["sources"]
+    } == {
+        "authority-field-lexical-false-positive",
+        "invalid-policy-fixture-raises-before-result-refusal",
+    }
     assert {
         finding_id
         for finding_id, finding in findings.items()
