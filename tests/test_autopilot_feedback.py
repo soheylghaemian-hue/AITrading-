@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_110() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_111() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -370,7 +370,10 @@ def test_learn_feedback_records_exact_run_evidence_through_110() -> None:
         finding["id"]: (finding["location"]["path"], finding["location"]["line"])
         for finding in normalized["findings"]
     } == {
-        "authority-field-lexical-false-positive": ("tests/test_brain_learn.py", 538),
+        "authority-field-lexical-false-positive": (
+            "tests/test_autopilot_import_graph.py",
+            66,
+        ),
         "closure-fixture-rejects-benign-class-cell": (
             "tests/test_brain_learn.py",
             463,
@@ -385,7 +388,7 @@ def test_learn_feedback_records_exact_run_evidence_through_110() -> None:
         ),
         "coordinated-drift-tampering-bypasses-revalidation": (
             "src/atp/brain/learn.py",
-            648,
+            450,
         ),
         "empty-evidence-manufactures-retirement-grounds": (
             "src/atp/brain/learn.py",
@@ -425,7 +428,7 @@ def test_learn_feedback_records_exact_run_evidence_through_110() -> None:
         ),
         "reinstate-chain-allows-challenger-promotion": (
             "src/atp/brain/learn.py",
-            1063,
+            815,
         ),
         "tamper-fixture-leaks-champion-role": ("tests/test_brain_learn.py", 593),
         "timezone-spelling-fixture-assumes-evidence-inequality": (
@@ -837,6 +840,12 @@ def test_learn_feedback_records_exact_run_evidence_through_110() -> None:
         "stage": "gate",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_111_final_review_source = {
+        "run_id": 33270781187,
+        "job_id": 99155887640,
+        "stage": "final_review",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -850,6 +859,7 @@ def test_learn_feedback_records_exact_run_evidence_through_110() -> None:
             run_70_final_review_source,
             run_81_gate_source,
             run_110_gate_source,
+            run_111_final_review_source,
         ],
         "closure-fixture-rejects-benign-class-cell": [
             run_49_gate_source,
@@ -896,6 +906,7 @@ def test_learn_feedback_records_exact_run_evidence_through_110() -> None:
             run_107_final_review_source,
             run_108_gate_source,
             run_109_gate_source,
+            run_111_final_review_source,
         ],
         "empty-evidence-manufactures-retirement-grounds": [run_96_final_review_source],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
@@ -966,6 +977,7 @@ def test_learn_feedback_records_exact_run_evidence_through_110() -> None:
         "reinstate-chain-allows-challenger-promotion": [
             run_42_source,
             run_70_final_review_source,
+            run_111_final_review_source,
         ],
         "tamper-fixture-leaks-champion-role": [run_36_source, run_88_gate_source],
         "timezone-spelling-fixture-assumes-evidence-inequality": [
@@ -996,15 +1008,21 @@ def test_learn_feedback_records_exact_run_evidence_through_110() -> None:
         "Authority API mismatch"
     )
     assert findings["authority-field-lexical-false-positive"]["detail"] == (
-        "36/51/60/64/70 mix lexical/import/call checks with dotted/bare or collapsed "
-        "relative names. Run 70 allowlists every relative import as \".\" and does not "
-        "inspect loaded transitive modules, so broker/runtime/service/live-trading "
-        "siblings pass. Run 81 substring-scans dir(result); forbidden \"size\" matches "
-        "inherited __sizeof__, so a safe result fails. Inspect declared "
-        "public/dataclass names exactly; match exact forms/module paths and actual "
-        "import graph; keep no-order/no-execution. 110 vars()+callable flags imported "
-        "dataclass as authority although closure checks pass; test issuance capability, "
-        "not callability."
+        "36/51/60/64/70 mix lexical/import/call checks with dotted/bare or collap"
+        "sed relative names. Run 70 allowlists every relative import as \".\" and d"
+        "oes not inspect loaded transitive modules, so broker/runtime/service/liv"
+        "e-trading siblings pass. Run 81 substring-scans dir(result); forbidden \""
+        "size\" matches inherited __sizeof__, so a safe result fails. Inspect decl"
+        "ared public/dataclass names exactly; match exact forms/module paths and "
+        "actual import graph; keep no-order/no-execution. 110 vars()+callable fla"
+        "gs imported dataclass as authority although closure checks pass; test is"
+        "suance capability, not callability. Run 111 final review, \"Authority imp"
+        "ort test ignores relative imports\": _imported_modules yields only absolu"
+        "te ImportFrom nodes (node.level == 0) and skips every relative import; d"
+        "eferred from ..runtime import ... evades both AST and import-time graph,"
+        " leaving the hidden-authority safety proof incomplete. Resolve relative "
+        "imports to absolute module paths; retain exact graph/no-authority covera"
+        "ge."
     )
     assert findings["tamper-fixture-leaks-champion-role"]["title"] == (
         "Test fixtures leak shared state across tests"
@@ -1050,41 +1068,48 @@ def test_learn_feedback_records_exact_run_evidence_through_110() -> None:
     )
     assert (
         findings["coordinated-drift-tampering-bypasses-revalidation"]["detail"]
-        == "D/C/R/I=Drift/Comparison/Retirement/Reinstatement+Result;CS=checksum. 40/47-49/51/54/56/"
-        "63 public ctors/_Warrant/__setstate__: mint/restore/rebind acceptance. 70 hand-built acc"
-        "epted-input D stays consumer-valid after inputs.model_id/prior_confidence edits. 73/86 c"
-        "omparison+98 drift FunctionTypes use learn.__dict__ (73/86+copied globals); 96/100/103 e"
-        "xact-global clones mint acceptance. 73 frame-globals/co_name-only _issued_by admits forg"
-        "ed ModelRecords/fake proof CS/arbitrary returns; retirement/reinstatement fail. 77 accep"
-        "ted.inputs.model.model_id edit rederives input_identity; CS passes. 79 caller-provenance"
-        "/recomputed-field ctors rebuild CS-passing D; public _bind_* rebinds. 81 exposed inputs/"
-        "identity/model_id/restored_role+recompute-only __post_init__ rebuild unissued accepted I"
-        ". 86 code-only _Seal/public fields allow ComparisonInputs substitution/owner-bound accep"
-        "tance. 96 _Seal binds type/fingerprint not owner; object.__new__ copy passes CS/retireme"
-        "nt. 97 frozen+slots __setstate__ shadows _Issued; {} succeeds; crafted state mutates fie"
-        "lds. 98 _Provenance.verify trusts writable owner/fingerprint+visible _digest/_result_pay"
-        "load; object.__new__ forgery passes CS/retirement. 99 tuple.__new__(_Seal,(...,weakref.r"
-        "ef(forged))) bypasses __new__; owner-bound object.__new__ copy passes; base ctor unteste"
-        "d. 100 object.__new__/__setattr__+visible fingerprint forges provenance; arbitrary-Proof"
-        "Summary C passes CS/retirement. 98/100 tests only unclaimed/underived provenance+copied "
-        "globals. 103 writable _Provenance.owner/state/_mint rebuilds D passing retirement; retir"
-        "ement_id edit+recomputed state passes reinstatement; extra attrs ignored. 105 accepted S"
-        "enseResult.as_of rebind+forged-time drift rebuilds acceptance; bind original SENSE issua"
-        "nce, not self-consistency. 107 \"Accepted LEARN results remain forgeable and mutable\": de"
-        "rivation-only _require_accepted admits coherent direct C through CS/evaluate_retirement;"
-        " identity edits rederive CS; tests bless equivalent ctor-state/evaluator clones/identity"
-        " rebinding. \"Mutated SENSE issuance can be recommitted\": _canonical_window replays as_of"
-        "/dynamic CS; valid-partition as_of-rebind/coordinated nested-evidence edits violate orig"
-        "inal issuance. 108 CS accepts D.prior_confidence 0.9->0.1, R.retirement_id r-1->r-forged"
-        ", I.reversal_id rev-7->rev-forged: original evaluator issuance unbound. 109 gate: 5 vali"
-        "d tests(3D/1C/1I): genuine/equal; CS raises \"may only be issued by this module's evaluat"
-        "ors\" post-return as _check_shell calls stack-only _minting before ledger _require_issued"
-        "; R too. Block non-evaluator ctor/copy/restore/rebind/mutation/extra-attrs/FunctionType/"
-        "state in CS+consumers; immutable issuance binds exact exported evaluator-code/module-glo"
-        "bals/owner/original-input-IDs/full fingerprint; reject clones/unknown attrs; all 4 rejec"
-        "t restore. _issue gates construction; then _ISSUED verifies exact identity+fingerprint. "
-        "Keep usable deterministic CS/consumer revalidation; pin every forgery+genuine-result reg"
-        "ression."
+        == "D/C/R/I=Drift/Comparison/Retirement/Reinstatement+Result;CS/FT/O/P=check"
+        "sum/FunctionType/object.__new__/_Provenance;ER/EI=retire/reinstate eval;"
+        "A/G/F/U/E=accepted/globals/fingerprint/issuance/evaluator;N/T=original/s"
+        "tate. 40/47-49/51/54/56/63 public ctors/_Warrant/__setstate__ mint/resto"
+        "re/rebind A T. 70 hand-built A D consumer-valid after inputs.model_id/pr"
+        "ior_confidence edits. 73/86 C+98 D FTs use learn.__dict__; 73/86 copy G;"
+        " exact-global96/100/103 mint. 73 frame-G/co_name-only _issued_by admits "
+        "forged ModelRecords/fake proof CS/arbitrary returns; breaks ER/EI. 77 ac"
+        "cepted.inputs.model.model_id edit rederives input_identity; CS passes. 7"
+        "9 caller-provenance/recomputed fields rebuild CS-valid D; public _bind_*"
+        " rebinds. 81 exposed inputs/identity/model_id/restored_role+recompute-on"
+        "ly __post_init__ rebuild unissued A I. 86 code-only _Seal/public fields "
+        "permit ComparisonInputs substitution/owner-bound A rebuild. 96 _Seal bin"
+        "ds type/F not owner; O-copy passes CS/ER. 97 frozen+slots __setstate__ s"
+        "hadows _Issued; {} succeeds; crafted T mutates fields. 98 P.verify trust"
+        "s writable owner/F+visible _digest/_result_payload; O-forgery passes CS/"
+        "ER. 99 tuple.__new__(_Seal,(...,weakref.ref(forged))) bypasses __new__; "
+        "owner-bound O-copy passes; base ctor untested. 100 O/__setattr__+visible"
+        " F forges P; arbitrary-ProofSummary C passes CS/ER. 98/100 tests only un"
+        "claimed/underived provenance+copied G. 103 writable P.owner/T/_mint rebu"
+        "ilds ER-valid D; retirement_id+recomputed T passes EI; extra attrs ignor"
+        "ed. 105 A SenseResult.as_of rebind+forged-time D remints acceptance; bin"
+        "d N SENSE U, not self-consistency. 107 \"Accepted LEARN results remain fo"
+        "rgeable and mutable\": derivation-only _require_accepted admits coherent "
+        "direct C via CS/ER; identity edits rederive CS; tests bless equivalent c"
+        "tor-T/E clones/identity rebinds. \"Mutated SENSE issuance can be recommit"
+        "ted\": _canonical_window replays as_of/dynamic CS; valid-partition as_of-"
+        "rebind+coordinated nested-evidence edits violate N U. 108 CS accepts D.p"
+        "rior_confidence 0.9->0.1,R.retirement_id r-1->r-forged,I.reversal_id rev"
+        "-7->rev-forged; N U unbound. 109 5 valid tests(3D/1C/1I) genuine/equal; "
+        "post-return CS error \"may only be issued by this module's evaluators\": _"
+        "check_shell calls stack-only _minting before ledger _require_issued; R t"
+        "oo. 111 \"Writable issuance ledger permits fabricated retirement evidence"
+        "\": exposed _LEDGER/_fingerprint let reflection set _LEDGER[id(forged)]=("
+        "forged,_fingerprint(forged)); invented D/DRIFT_ABSTENTION passes CS/ER. "
+        "\"FunctionType clone prohibition is explicitly weakened\": test blesses ex"
+        "act-globals E clone; shared-G/code-only _issue mints A T. Block non-E ct"
+        "or/copy/restore/rebind/mutation/attrs/FT/T/ledger-write via CS/consumers"
+        "; immutable U binds exact exported E-code/module-G/owner/N-input-IDs/ful"
+        "l-F; reject clones/unknown attrs/all4 restores. Construction-only _issue"
+        "; U checks identity+F later. Keep usable deterministic CS/consumer reval"
+        "idation; pin every forgery+genuine regression."
     )
     assert findings["empty-evidence-manufactures-retirement-grounds"]["title"] == (
         "Empty evidence can manufacture retirement grounds"
@@ -1130,10 +1155,16 @@ def test_learn_feedback_records_exact_run_evidence_through_110() -> None:
         "Challenger promotion"
     )
     assert findings["reinstate-chain-allows-challenger-promotion"]["detail"] == (
-        "42/70 permit CHALLENGER→RETIRED→CHAMPION: 42 lacks a reversal ID and allows "
-        "any active next_role; 70 re-derives previous_role from mutable "
-        "retirement.inputs.model.role. Bind the exact reversal and original "
-        "role/provenance; reject tampering; forbid self-promotion."
+        "42/70 permit CHALLENGER→RETIRED→CHAMPION: 42 lacks a reversal ID and all"
+        "ows any active next_role; 70 re-derives previous_role from mutable retir"
+        "ement.inputs.model.role. Bind the exact reversal and original role/prove"
+        "nance; reject tampering; forbid self-promotion. Run 111 final review, \"R"
+        "einstatement loses original retirement provenance\": two genuine retireme"
+        "nts with the same model_id, retirement_id, role and timestamp but differ"
+        "ent proposal IDs/evidence have distinct retirement checksums; using the "
+        "same reversal ID yields equal ReinstatementResults and identical checksu"
+        "ms. Bind output to the exact retirement/checksum and original model/evid"
+        "ence provenance."
     )
     assert findings["equivalent-permutations-produce-unequal-results"]["title"] == (
         "Equivalent inputs produce unequal results"
@@ -1587,6 +1618,15 @@ def test_learn_feedback_records_exact_run_evidence_through_110() -> None:
     assert {
         finding_id
         for finding_id, finding in findings.items()
+        if run_111_final_review_source in finding["sources"]
+    } == {
+        "authority-field-lexical-false-positive",
+        "coordinated-drift-tampering-bypasses-revalidation",
+        "reinstate-chain-allows-challenger-promotion",
+    }
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
         if run_67_gate_source in finding["sources"]
     } == {"invalid-policy-fixture-raises-before-result-refusal"}
     assert {
@@ -1713,6 +1753,7 @@ def test_learn_feedback_records_exact_run_evidence_through_110() -> None:
     } == {
         "docs/TRADER_BRAIN.md",
         "src/atp/brain/learn.py",
+        "tests/test_autopilot_import_graph.py",
         "tests/test_brain_learn.py",
     }
 
@@ -1722,9 +1763,9 @@ def test_schema_is_strict_and_matches_validator_bounds() -> None:
     assert MAX_FEEDBACK_BYTES == 16_384
     assert MAX_FINDINGS == 16
     assert MAX_SOURCES_PER_FINDING == 8
-    assert LEARN_MAX_FEEDBACK_BYTES == 34_816
+    assert LEARN_MAX_FEEDBACK_BYTES == 36_864
     assert LEARN_MAX_FINDINGS == 19
-    assert LEARN_MAX_SOURCES_PER_FINDING == 25
+    assert LEARN_MAX_SOURCES_PER_FINDING == 26
     assert schema["additionalProperties"] is False
     assert schema["properties"]["schema_version"]["const"] == 1
     assert schema["properties"]["kind"]["const"] == FEEDBACK_KIND
