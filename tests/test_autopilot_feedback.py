@@ -339,7 +339,7 @@ def test_prove_feedback_records_exact_unresolved_evidence_without_scope_expansio
     } == {"src/atp/brain/prove.py", "tests/test_brain_prove.py"}
 
 
-def test_learn_feedback_records_exact_run_evidence_through_111() -> None:
+def test_learn_feedback_records_exact_run_evidence_through_112() -> None:
     goal = load_goal(LEARN_GOAL_PATH)
     assert MAX_FEEDBACK_BYTES < LEARN_FEEDBACK_PATH.stat().st_size <= LEARN_MAX_FEEDBACK_BYTES
     normalized = load_feedback(LEARN_FEEDBACK_PATH, goal)
@@ -846,6 +846,12 @@ def test_learn_feedback_records_exact_run_evidence_through_111() -> None:
         "stage": "final_review",
         "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
     }
+    run_112_gate_source = {
+        "run_id": 33283891180,
+        "job_id": 99187133598,
+        "stage": "gate",
+        "base_sha": "8b45683d7cee8e1c5e794d83a15e4d4e973596be",
+    }
     findings = {finding["id"]: finding for finding in normalized["findings"]}
     assert {
         finding_id: finding["sources"]
@@ -907,6 +913,7 @@ def test_learn_feedback_records_exact_run_evidence_through_111() -> None:
             run_108_gate_source,
             run_109_gate_source,
             run_111_final_review_source,
+            run_112_gate_source,
         ],
         "empty-evidence-manufactures-retirement-grounds": [run_96_final_review_source],
         "evidence-failure-precedence-permutation-dependent": [run_40_source],
@@ -1627,6 +1634,11 @@ def test_learn_feedback_records_exact_run_evidence_through_111() -> None:
     assert {
         finding_id
         for finding_id, finding in findings.items()
+        if run_112_gate_source in finding["sources"]
+    } == {"coordinated-drift-tampering-bypasses-revalidation"}
+    assert {
+        finding_id
+        for finding_id, finding in findings.items()
         if run_67_gate_source in finding["sources"]
     } == {"invalid-policy-fixture-raises-before-result-refusal"}
     assert {
@@ -1765,7 +1777,7 @@ def test_schema_is_strict_and_matches_validator_bounds() -> None:
     assert MAX_SOURCES_PER_FINDING == 8
     assert LEARN_MAX_FEEDBACK_BYTES == 36_864
     assert LEARN_MAX_FINDINGS == 19
-    assert LEARN_MAX_SOURCES_PER_FINDING == 26
+    assert LEARN_MAX_SOURCES_PER_FINDING == 27
     assert schema["additionalProperties"] is False
     assert schema["properties"]["schema_version"]["const"] == 1
     assert schema["properties"]["kind"]["const"] == FEEDBACK_KIND
