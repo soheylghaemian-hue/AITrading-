@@ -101,7 +101,8 @@ describe("fetchConsensus — reads only through the same-origin proxy", () => {
     vi.stubGlobal("fetch", okFetch(CON));
     const res = await fetchConsensus("NVDA");
     expect(calls[0]).toBe("/api/dashboard/ai-consensus/NVDA");
-    expect(res.score).toBe(89) && expect(res.direction).toBe("BULLISH");
+    expect(res.score).toBe(89);
+    expect(res.direction).toBe("BULLISH");
     expect(res.components.length).toBe(6);
   });
   it("rejects on a non-OK backend response (caller shows NO DATA)", async () => {
