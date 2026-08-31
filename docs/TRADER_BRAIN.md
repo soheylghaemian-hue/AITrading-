@@ -1,4 +1,4 @@
-# Trader Brain — SENSE, THINK and PROVE (research only)
+# Trader Brain — SENSE, THINK, PROVE and LEARN (research only)
 
 `atp.brain` is a research vocabulary. It holds no order, allocation, leverage or execution authority, it
 cannot mutate the safety constitution, and nothing here may be promoted to trading authority outside a
@@ -84,6 +84,11 @@ missing or extraneous contradiction group — returns one deterministic non-admi
 false, `reasons == (INVALID_SENSE_RESULT,)`, no judgements, no beliefs, no scenarios. Evidence from a failed
 boundary is never partially used, and the single reason code deliberately does not describe how the forgery
 was built.
+
+A directly constructed `SenseResult` whose content is exactly what canonical SENSE admission would have
+produced stays admissible to THINK and LEARN. Both consumers trust the complete, revalidated value rather
+than an unverifiable claim about which Python call created the object. Malformed or noncanonical values still
+fail closed before any score or transition is produced.
 
 ### Scoring is a heuristic, not a probability
 
@@ -273,3 +278,165 @@ PROVE represents no order, allocation, sizing, leverage, routing or execution au
 is covered by the same subprocess import-graph proof as the rest of the brain: importing it loads no broker,
 execution, live, risk, runtime or service module. That proof is executable — it inspects real imports, not
 the wording of any docstring.
+
+## LEARN — drift, champion–challenger evidence and reversible transitions
+
+`atp.brain.learn` answers three research questions and nothing else: *has the regime this model was built
+for drifted?*, *does complete walk-forward proof prefer the challenger or the champion?*, and *is this
+retirement evidence-backed and exactly reversible?* LEARN represents no order, allocation, sizing,
+execution, deployment, promotion or risk-relaxation authority. Every evaluator is pure: no clock, no I/O, no
+provider, no persistence, no shared mutable module state and no side effect.
+
+### Public inventory
+
+| Export | Kind | Purpose |
+| --- | --- | --- |
+| `ModelRole` | enum | `CHAMPION`, `CHALLENGER`, `RETIRED` — the only roles a `ModelRecord` may hold |
+| `ModelRecord` | dataclass | `model_id`, `proposal_id`, `role`, `registered_at` |
+| `ProofSummary` | dataclass | the canonical, immutable snapshot LEARN keeps of one accepted `ProveResult` |
+| `ComparisonPreference` | enum | `CHAMPION`, `CHALLENGER`, `INCONCLUSIVE` — research evidence only, never a promotion |
+| `RetirementGround` | enum | `DRIFT_ABSTENTION`, `INFERIOR_COMPARISON` — the only admissible retirement grounds |
+| `DriftInputs` / `DriftResult` / `DriftFailure` | dataclass, dataclass, enum | drift assessment inputs, result and stable reasons |
+| `ComparisonInputs` / `ComparisonResult` / `ComparisonFailure` | dataclass, dataclass, enum | champion–challenger inputs, result and stable reasons |
+| `RetirementInputs` / `RetirementResult` | dataclass | retirement inputs and the reversible transition record |
+| `ReinstatementInputs` / `ReinstatementResult` | dataclass | reinstatement inputs and the reversal record |
+| `TransitionFailure` | enum | the stable reasons shared by retirement and reinstatement |
+| `evaluate_drift` | function | `evaluate_drift(model, evidence, claim_key=..., prior_confidence=..., abstention_threshold=..., as_of=...)` |
+| `evaluate_comparison` | function | `evaluate_comparison(champion, challenger, champion_proof=..., challenger_proof=..., as_of=...)` |
+| `evaluate_retirement` | function | `evaluate_retirement(model, retirement_id=..., as_of=..., drift=..., comparison=...)` |
+| `evaluate_reinstatement` | function | `evaluate_reinstatement(retirement, reversal_id=..., as_of=...)` |
+
+No other name is exported, and no exported object carries a method or field that could place an order, size
+a position, allocate capital, deploy a model, promote a challenger or relax a risk limit.
+
+### LEARN re-proves the complete SENSE value
+
+LEARN revalidates every `SenseResult` field, every `Evidence` item's own invariants, and a full re-run of
+canonical SENSE admission over the union of the represented usable and rejected evidence. The supplied
+partitions, reasons, ordering and contradictions must match that reconstruction exactly. A canonical direct
+reconstruction is the same research value; future, stale, duplicate-id, out-of-order or internally
+inconsistent evidence fails closed before it can affect confidence or a transition. The drift `as_of` must
+equal the `SenseResult`'s own `as_of`, so one admission value is never evaluated against another instant.
+
+### Drift can only lower confidence or force abstention
+
+Only usable evidence asserting the exact `claim_key` bears on drift. `REFUTES` is regime breakage,
+`SUPPORTS` is regime persistence, and each item contributes the same fixed quality weight THINK uses
+(`VERIFIED` 1.0, `OBSERVED_ONLY` 0.6, `UNKNOWN` 0.3). The versioned heuristic is labelled
+`LEARN_DRIFT_V1`:
+
+    drift_score = weighted_refuting / (weighted_supporting + weighted_refuting)
+    posterior_confidence = prior_confidence * (1 - drift_score)
+
+`posterior_confidence` is never above `prior_confidence`, and `abstain` is true only when bearing evidence
+exists **and** the posterior falls to or below the caller's `abstention_threshold`. Empty usable evidence
+can never manufacture drift, abstention or retirement grounds. With no bearing evidence the drift score is
+`0.0`, the posterior equals the prior, and `abstain` is false regardless of how low the prior or how high
+the threshold is. A model registered after the evaluation as-of instant can never produce actionable drift.
+Such a model is refused with `UNKNOWABLE_MODEL` before any evidence is scored.
+
+| `DriftFailure` | Condition |
+| --- | --- |
+| `INVALID_INPUT` | the inputs shell, `claim_key`, `prior_confidence`, `abstention_threshold` or `as_of` is not an exact, in-range value |
+| `INVALID_MODEL` | the model is not an exact, completely formed `ModelRecord` |
+| `INVALID_SENSE_RESULT` | the evidence is not a canonical `SenseResult` for this exact `as_of` |
+| `UNKNOWABLE_MODEL` | `model.registered_at` is later than `as_of` |
+
+Drift phases run in that fixed order: inputs shell, model shape, explicit scalars, SENSE boundary, then
+point-in-time knowability.
+
+### Comparison is evidence, never promotion
+
+`evaluate_comparison` binds one `CHAMPION` record and one `CHALLENGER` record to their own accepted
+`ProveResult`s and reports a `ComparisonPreference` derived only from the aggregate net return of the two
+proofs. Every proof must grade exactly the `proposal_id` its `ModelRecord` names. A preference is research
+evidence only, and it confers no promotion authority. Nothing in `ComparisonResult` can change a role.
+
+Validation phases are fixed and symmetric across the two sides:
+
+1. `INVALID_INPUT` — the inputs shell or `as_of`.
+2. `INVALID_MODEL` — either record is not an exact, completely formed `ModelRecord`; exact shells with
+   missing slots are refused here, never leaked as an exception.
+3. `INVALID_PROOF` — either proof is not an exact `ProveResult` that re-proves itself.
+4. `PROOF_NOT_PROVEN` — either proof is a refusal rather than a proven record.
+5. `PROOF_MODEL_MISMATCH` — either proof grades a different `proposal_id` than its own record names.
+6. `ROLE_MISMATCH` — the champion side is not `CHAMPION`, or the challenger side is not `CHALLENGER`.
+7. `SELF_COMPARISON` — both sides carry the correct roles but the same `model_id` or the same `proposal_id`.
+8. `UNKNOWABLE_EVIDENCE` — a record was registered, or a proof was evaluated, after the comparison `as_of`;
+   champion model, challenger model, champion proof, challenger proof, in that order.
+
+Role checking precedes identity checking, so a wrong-role pair with distinct identities is always
+`ROLE_MISMATCH` and a correctly rolled pair with one shared identity is always `SELF_COMPARISON`.
+Proof-to-model binding precedes knowability, so a future-registered model holding a wrong-proposal proof is
+`PROOF_MODEL_MISMATCH`.
+
+### Retirement is evidence-backed, reinstatement is exact
+
+`evaluate_retirement` accepts a target `ModelRecord` plus at least one accepted evidence result. Drift
+evidence counts only when it names the target model and its `abstain` is true (`DRIFT_ABSTENTION`).
+Comparison evidence counts only when its champion side is the target model and its preference is
+`CHALLENGER` (`INFERIOR_COMPARISON`). Evidence dated after the retirement instant is never grounds.
+
+| `TransitionFailure` | Condition |
+| --- | --- |
+| `INVALID_INPUT` | the inputs shell, `retirement_id`, `reversal_id` or `as_of` is not an exact value |
+| `INVALID_MODEL` | the target is not an exact, completely formed `ModelRecord` |
+| `MODEL_ALREADY_RETIRED` | the target's role is already `RETIRED` |
+| `INVALID_DRIFT` | the supplied drift evidence is not an accepted, fully reconciling `DriftResult` |
+| `INVALID_COMPARISON` | the supplied comparison evidence is not an accepted, fully reconciling `ComparisonResult` |
+| `EVIDENCE_MODEL_MISMATCH` | the evidence does not name the exact target record |
+| `INSUFFICIENT_EVIDENCE` | no evidence was supplied, or none of it establishes an admissible ground |
+| `INVALID_RETIREMENT` | the reinstatement input is not an accepted, fully reconciling `RetirementResult` |
+| `RETIREMENT_NOT_PRIOR` | the reinstatement `as_of` is not strictly later than `retired_at` |
+
+After the explicit retirement id and instant are validated, `MODEL_ALREADY_RETIRED` is checked before any
+evidence binding, so it is reachable for every already-retired target regardless of what evidence accompanies it.
+
+`evaluate_reinstatement` binds the exact retirement it reverses: the retirement checksum, the retirement id,
+the retired model and proposal identities, the complete canonical evidence that justified it, the reversal
+id and the reinstatement instant. Reinstatement restores exactly the role the model held before its
+retirement. A challenger can never be promoted to champion. Two genuine retirements that differ only in the
+evidence behind them therefore produce different reinstatement results and different checksums, because the
+reinstatement state embeds the whole retirement state.
+
+### Nested refusals never leak another evaluator's reason
+
+A failed, tampered, non-reconciling or malformed nested result is translated into the caller's own typed refusal —
+`INVALID_DRIFT`, `INVALID_COMPARISON` or `INVALID_RETIREMENT` — carrying exactly one reason, no inputs, no
+metrics and no evidence ids. No `DriftFailure` or `ComparisonFailure` value ever appears inside a
+`TransitionFailure` tuple, and constructing the refusal never raises.
+
+### Canonical equality, checksums and stateless replay
+
+Every LEARN result derives both its equality and its `checksum()` from one complete canonical state: UTC
+instants, canonically sorted semantic collections (including the assertions inside each evidence item),
+lossless `float.hex()` encoding with equal signed zeros normalised to `0.0`, exact decimal integers and
+type-tagged values. Equivalent inputs produce equal results and identical checksums. Permuted evidence,
+permuted assertions and alternative timezone spellings of the same instants are equivalent; distinct
+accepted values, adjacent floats and different model, proposal, evidence or transition identities are not.
+
+Replaying an evaluator on identical inputs is stateless and reproduces the same result. LEARN records no
+consumption and makes no exactly-once promise: calling `evaluate_reinstatement` twice with the same
+retirement, reversal id and instant returns two equal results with identical checksums.
+
+### Complete value revalidation, not object-origin authentication
+
+Every accepted `DriftResult`, `ComparisonResult`, `RetirementResult` and `ReinstatementResult` rebinds its
+complete canonical inputs and recomputes every derived output on construction, equality, checksumming and
+downstream consumption. A direct reconstruction, copy or serialization round-trip that represents exactly
+the same value is therefore equal and has the same checksum. An incomplete shell, malformed nested value or
+stored metric, preference, ground, role, id or timestamp that does not match recomputation is refused.
+
+This module deliberately makes no claim that it can authenticate which Python function created an object.
+Code with arbitrary reflection inside the same process can inspect or rewrite any Python-held token, ledger
+or module global; treating one as a security boundary would be false assurance. LEARN instead provides a
+pure, deterministic research-value contract. It has no deployment or execution authority, and callers that
+need cryptographic origin authentication must add a separate privileged signing boundary outside this
+module.
+
+### Research-only limits
+
+LEARN performs no I/O, reads no clock, calls no provider, opens no connection and writes nothing.
+`atp.brain.learn` is covered by the same executable import-graph proof as the rest of the brain: neither its
+declared imports — absolute, relative or deferred inside a function body — nor the transitive graph actually
+loaded when it is imported may reach a broker, execution, live, risk, runtime or service module.

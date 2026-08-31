@@ -2,8 +2,16 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from atp.brain import (Assertion, ContradictionGroup, Evidence, EvidenceQuality, RejectedEvidence,
-                       SenseFailure, Stance, evaluate_sense)
+from atp.brain import (
+    Assertion,
+    ContradictionGroup,
+    Evidence,
+    EvidenceQuality,
+    RejectedEvidence,
+    SenseFailure,
+    Stance,
+    evaluate_sense,
+)
 
 # A deliberately historical instant: SENSE must answer from `as_of` alone, never the wall clock.
 AS_OF = datetime(2020, 1, 2, 12, 0, tzinfo=UTC)
@@ -95,6 +103,22 @@ def test_duplicate_evidence_ids_reject_every_occurrence():
     assert result.usable == ()
     assert sorted(r.evidence.source for r in result.rejected) == ["mirror", "primary"]
     assert {r.reason for r in result.rejected} == {SenseFailure.DUPLICATE_EVIDENCE_ID}
+
+
+def test_overlapping_duplicate_future_and_stale_failures_are_permutation_stable():
+    future = _evidence("dup", event=AS_OF + HOUR, available=AS_OF + HOUR,
+                       observed=AS_OF + HOUR, source="future")
+    stale_at = AS_OF - 2 * DAY
+    stale = _evidence("dup", event=stale_at, available=stale_at, observed=stale_at,
+                      source="stale")
+    forward = evaluate_sense((future, stale), as_of=AS_OF, freshness_limit=HOUR)
+    reverse = evaluate_sense((stale, future), as_of=AS_OF, freshness_limit=HOUR)
+    assert [entry.reason for entry in forward.rejected] == [
+        SenseFailure.DUPLICATE_EVIDENCE_ID,
+        SenseFailure.DUPLICATE_EVIDENCE_ID,
+    ]
+    assert forward == reverse
+    assert forward.checksum() == reverse.checksum()
 
 
 def test_ordering_and_checksums_are_stable():
