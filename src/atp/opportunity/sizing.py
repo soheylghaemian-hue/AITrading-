@@ -1,9 +1,8 @@
 """Position sizing (§10/§15).
 
-Risk-based sizing: risk a fixed fraction of equity per trade (policy `risk_per_trade`),
-where "risk" is the stop distance × size. The result is then capped so a single instrument's
-gross notional can't exceed `max_position_pct` of equity (§14/§15). This keeps every entry's
-downside bounded *before* the Risk Engine's independent veto ever runs.
+Risk-based sizing risks a fixed fraction of effective capital per trade, where effective capital
+is the smaller of account equity and the policy's capital mandate. The result is capped by the
+same basis so a large broker account can never silently enlarge the mandate (§14/§15).
 """
 
 from __future__ import annotations
@@ -32,26 +31,38 @@ class PositionSizer:
         hedge_factor: float = 1.0,
         ref_price: float | None = None,
     ) -> float:
-        if price <= 0 or equity <= 0:
+        try:
+            capital_limit = float(policy.capital)
+        except (TypeError, ValueError, OverflowError):
             return 0.0
+        if (
+            not math.isfinite(price)
+            or not math.isfinite(equity)
+            or price <= 0
+            or equity <= 0
+            or math.isnan(capital_limit)
+            or capital_limit <= 0
+        ):
+            return 0.0
+        effective_equity = min(equity, capital_limit)
 
         if sizing == "hedged" and ref_price and ref_price > 0:
             # β-weighted market-neutral pairs sizing (§8): both legs derive base units from a
             # COMMON reference price, then scale by the hedge factor (1 for leg A, β for leg B).
             # This makes qty_b = β·qty_a, which neutralizes the shared move regardless of the
             # price levels / intercept (equal-notional would not).
-            base_units = (self._neutral_notional_pct * equity) / ref_price
+            base_units = (self._neutral_notional_pct * effective_equity) / ref_price
             units = base_units * hedge_factor
         elif sizing == "notional":
-            units = (self._neutral_notional_pct * equity) / (price * multiplier)
+            units = (self._neutral_notional_pct * effective_equity) / (price * multiplier)
         else:
             if stop_distance <= 0:
                 return 0.0
-            risk_budget = policy.risk_per_trade * equity
+            risk_budget = policy.risk_per_trade * effective_equity
             units = risk_budget / (stop_distance * multiplier)
 
         # Cap by max gross notional per instrument.
-        max_notional = policy.max_position_pct * equity
+        max_notional = policy.max_position_pct * effective_equity
         units_cap = max_notional / (price * multiplier)
         units = min(units, units_cap)
 

@@ -2,7 +2,7 @@
 fills, and that slicing a large order reduces total impact cost."""
 
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -10,8 +10,10 @@ from atp.brokers.base import Order
 from atp.brokers.paper import PaperBroker
 from atp.core.enums import AssetClass, Side
 from atp.core.events import Instrument, QuoteEvent
-from atp.execution.algo import ImmediateAlgo, SlicingAlgo
+from atp.execution.algo import ExecutionAlgo, ImmediateAlgo, SlicingAlgo
+from atp.execution.engine import ExecutionEngine
 from atp.execution.impact import MarketImpactModel
+from atp.risk.engine import RiskEngine, RiskLimits, RiskState
 
 INST = Instrument("X", AssetClass.EQUITY)
 TS = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -92,6 +94,29 @@ async def test_broker_no_impact_when_model_absent():
     assert await _fill_price(400, impact=False) == 100.0   # only spread/slippage (both zero)
 
 
+async def test_execution_rejects_nonconserving_child_plan():
+    class _ExpandingAlgo(ExecutionAlgo):
+        def plan(self, order, *, adv=None, urgency="normal"):
+            return [Order(order.instrument, order.side, order.quantity * 2)]
+
+    broker = PaperBroker(100_000.0)
+    await broker.connect()
+    broker.set_quote(QuoteEvent(INST, 100.0, 100.0, TS))
+    risk = RiskEngine(
+        limits=RiskLimits(max_position_pct=1.0, max_gross_leverage=2.0),
+        state=RiskState(day_start_equity=100_000.0, peak_equity=100_000.0),
+    )
+    execution = ExecutionEngine(broker, risk, algo=_ExpandingAlgo())
+    result = await execution.submit(
+        Order(INST, Side.BUY, 100),
+        await broker.get_account(),
+        price=100.0,
+        current_qty=0.0,
+    )
+    assert not result.approved and "child plan" in result.reason
+    assert await broker.get_positions() == {}
+
+
 # --------------------------------------------------------------------------- integration
 async def test_slicing_beats_immediate_in_a_full_backtest():
     """Same signals, same impact model — slicing large entries should end with higher equity
@@ -103,7 +128,6 @@ async def test_slicing_beats_immediate_in_a_full_backtest():
     from atp.regime.classifier import RegimeClassifier
     from atp.strategy.momentum import MomentumStrategy
 
-    from datetime import timedelta
     start = datetime(2026, 1, 5, tzinfo=timezone.utc)  # Monday, minute bars
     data = [Bar(INST, p := 100 + 4 * math.sin(i / 6.0) + 0.05 * i, p * 1.002, p * 0.998, p,
                 800, start + timedelta(minutes=i)) for i in range(200)]

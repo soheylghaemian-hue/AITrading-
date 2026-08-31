@@ -48,8 +48,7 @@ async def main():
            "bid": b[-1].close * 0.9999, "ask": b[-1].close * 1.0001}]
     await eng.step(now=b[-1].ts, bars=b, market_data=md)
 
-    acct = await broker.get_account()
-    snap = eng.snapshot(account=acct)
+    snap = await eng.snapshot()
     print("\n── AUTONOMOUS TRADING ──────────────────────")
     print(f"  mode={snap['mode']} status={snap['status']} live_execution={snap['live_execution']} ibkr_orders={snap['ibkr_orders']}")
     print(f"  paper_equity={snap['paper_equity']:.2f}  trades_today={snap['trades_today']}  open_positions={snap['open_positions']}")
@@ -62,7 +61,7 @@ async def main():
     await eng.step(now=b[-1].ts + timedelta(minutes=1), bars=b[-1:],
                    market_data=[{"symbol": "DEMO", "status": "DATA_NOT_AVAILABLE"}])
     print("\n  (fed unavailable data -> last decision:",
-          eng.snapshot(account=await broker.get_account())["decisions"][0]["decision"], ")")
+          (await eng.snapshot())["decisions"][0]["decision"], ")")
 
 
 if __name__ == "__main__":

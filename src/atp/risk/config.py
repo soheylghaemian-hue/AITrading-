@@ -7,6 +7,7 @@ monetary limits are derived, and the Position Sizer / Risk Engine compute everyt
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 
@@ -17,6 +18,11 @@ class TradingRiskConfig:
     max_daily_loss_pct: float = 0.02    # max fraction of capital lost in one trading day
 
     def __post_init__(self) -> None:
+        for name in ("capital", "risk_per_trade_pct", "max_daily_loss_pct"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                raise ValueError(f"{name} must be a finite number")
+            setattr(self, name, float(value))
         if not (self.capital > 0):
             raise ValueError("capital must be > 0")
         for name, v in (("risk_per_trade_pct", self.risk_per_trade_pct),

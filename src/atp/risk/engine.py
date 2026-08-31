@@ -38,6 +38,7 @@ class RiskLimits:
     max_portfolio_risk_pct: float = 0.06
     max_correlated_exposure_pct: float = 0.35   # cluster of correlated names vs equity (§14)
     correlation_threshold: float = 0.5          # |corr| at/above which names count as one cluster
+    max_capital: float = math.inf                # mandate cap; inf preserves legacy equity sizing
 
 
 @dataclass(slots=True)
@@ -79,17 +80,34 @@ class RiskEngine:
         self._state.halted = False
         self._state.halt_reason = ""
 
+    def effective_capital(self, equity: float) -> float:
+        """Return the usable capital basis, bounded by the configured mandate."""
+        try:
+            account_equity = float(equity)
+            capital_cap = float(self._limits.max_capital)
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
+        if not math.isfinite(account_equity) or account_equity <= 0:
+            return 0.0
+        if math.isnan(capital_cap) or capital_cap <= 0:
+            return 0.0
+        return min(account_equity, capital_cap)
+
+    _effective_capital = effective_capital
+
     def mark_equity(self, equity: float) -> None:
         """Update peak equity and latch a halt if a portfolio-level limit is breached (§14)."""
         self._state.peak_equity = max(self._state.peak_equity, equity)
 
-        if self._state.day_start_equity > 0:
-            daily_loss = (self._state.day_start_equity - equity) / self._state.day_start_equity
+        daily_capital = self._effective_capital(self._state.day_start_equity)
+        if daily_capital > 0:
+            daily_loss = (self._state.day_start_equity - equity) / daily_capital
             if daily_loss >= self._limits.max_daily_loss_pct:
                 self._halt(f"daily loss {daily_loss:.2%} >= {self._limits.max_daily_loss_pct:.2%}")
 
-        if self._state.peak_equity > 0:
-            dd = (self._state.peak_equity - equity) / self._state.peak_equity
+        drawdown_capital = self._effective_capital(self._state.peak_equity)
+        if drawdown_capital > 0:
+            dd = (self._state.peak_equity - equity) / drawdown_capital
             if dd >= self._limits.max_drawdown_pct:
                 self._halt(f"drawdown {dd:.2%} >= {self._limits.max_drawdown_pct:.2%}")
 
@@ -150,7 +168,12 @@ class RiskEngine:
             return RiskDecision(False, f"kill switch: {self._state.kill_reason}")
         if not self._state.broker_connected:
             return RiskDecision(False, "broker disconnected — no new orders")
-        if price <= 0 or math.isnan(price):
+        if (
+            isinstance(price, bool)
+            or not isinstance(price, (int, float))
+            or not math.isfinite(price)
+            or price <= 0
+        ):
             return RiskDecision(False, f"invalid price {price}")
 
         new_qty = current_qty + order.signed_quantity
@@ -165,15 +188,17 @@ class RiskEngine:
             return RiskDecision(False, f"halted: {self._state.halt_reason}")
 
         equity = account.equity
-        if equity <= 0:
+        effective_capital = self._effective_capital(equity)
+        if effective_capital <= 0:
             return RiskDecision(False, "non-positive equity")
 
         # Per-instrument gross notional cap.
         inst_notional = abs(new_qty) * price * mult
-        if inst_notional / equity > self._limits.max_position_pct + 1e-9:
+        if inst_notional / effective_capital > self._limits.max_position_pct + 1e-9:
             return RiskDecision(
                 False,
-                f"position {inst_notional / equity:.1%} > max {self._limits.max_position_pct:.0%}",
+                f"position {inst_notional / effective_capital:.1%} > max "
+                f"{self._limits.max_position_pct:.0%}",
             )
 
         # Gross leverage cap (replace this instrument's contribution in the gross total).
@@ -181,10 +206,11 @@ class RiskEngine:
         existing = account.positions.get(key)
         existing_notional = existing.notional if existing else abs(current_qty) * price * mult
         projected_gross = account.gross_exposure - existing_notional + inst_notional
-        if projected_gross / equity > self._limits.max_gross_leverage + 1e-9:
+        if projected_gross / effective_capital > self._limits.max_gross_leverage + 1e-9:
             return RiskDecision(
                 False,
-                f"leverage {projected_gross / equity:.2f}x > max {self._limits.max_gross_leverage:.2f}x",
+                f"leverage {projected_gross / effective_capital:.2f}x > max "
+                f"{self._limits.max_gross_leverage:.2f}x",
             )
 
         # Max open positions (only when opening a brand-new slot).
@@ -197,17 +223,20 @@ class RiskEngine:
         # Per-trade risk: stop distance × added size vs equity budget.
         added = abs(new_qty) - abs(current_qty)
         trade_risk = added * stop_distance * mult
-        if stop_distance > 0 and trade_risk / equity > self._limits.max_trade_risk_pct + 1e-9:
+        if (stop_distance > 0
+                and trade_risk / effective_capital > self._limits.max_trade_risk_pct + 1e-9):
             return RiskDecision(
                 False,
-                f"trade risk {trade_risk / equity:.2%} > max {self._limits.max_trade_risk_pct:.2%}",
+                f"trade risk {trade_risk / effective_capital:.2%} > max "
+                f"{self._limits.max_trade_risk_pct:.2%}",
             )
 
         # Remaining daily-loss budget (§15): a new trade may not risk more than what is left of
         # today's max-daily-loss budget. This keeps a single trade from being able to blow through
         # the day's loss cap in one go, and complements the post-loss halt latched in mark_equity.
         if stop_distance > 0 and self._state.day_start_equity > 0:
-            daily_budget = self._limits.max_daily_loss_pct * self._state.day_start_equity
+            daily_capital = self._effective_capital(self._state.day_start_equity)
+            daily_budget = self._limits.max_daily_loss_pct * daily_capital
             daily_loss_so_far = max(0.0, self._state.day_start_equity - equity)
             remaining_budget = daily_budget - daily_loss_so_far
             if trade_risk > remaining_budget + 1e-9:
@@ -226,10 +255,10 @@ class RiskEngine:
                 c = abs(correlation_fn(key, k))
                 if c >= self._limits.correlation_threshold:
                     cluster += c * p.notional
-            if cluster / equity > self._limits.max_correlated_exposure_pct + 1e-9:
+            if cluster / effective_capital > self._limits.max_correlated_exposure_pct + 1e-9:
                 return RiskDecision(
                     False,
-                    f"correlated exposure {cluster / equity:.0%} > max "
+                    f"correlated exposure {cluster / effective_capital:.0%} > max "
                     f"{self._limits.max_correlated_exposure_pct:.0%}",
                 )
 

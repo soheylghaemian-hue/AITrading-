@@ -1,6 +1,7 @@
 """Execution scheduler tests (§16): TWAP/VWAP slice splitting and time-sliced release across
 ticks, with in-flight tracking and risk-abort."""
 
+import math
 from datetime import datetime, timezone
 
 import pytest
@@ -34,6 +35,23 @@ def test_split_remainder_goes_to_last_slice():
 
 def test_split_drops_zero_slices():
     assert split_quantity(2, [1, 1, 1, 1]) == [2.0]   # 0,0,0,2 => keep the non-zero
+
+
+@pytest.mark.parametrize("weights", [[2, -1], [1, math.inf], [], [True, 1]])
+def test_split_rejects_nonfinite_or_nonpositive_weights(weights):
+    with pytest.raises(ValueError, match="finite and positive"):
+        split_quantity(100, weights)
+
+
+def test_scheduler_constructor_rejects_invalid_slices_and_profile():
+    risk = RiskEngine(
+        limits=RiskLimits(), state=RiskState(day_start_equity=100_000, peak_equity=100_000)
+    )
+    execution = ExecutionEngine(PaperBroker(100_000), risk)
+    with pytest.raises(ValueError, match="positive integer"):
+        ExecutionScheduler(execution, slices=0)
+    with pytest.raises(ValueError, match="finite positive"):
+        ExecutionScheduler(execution, volume_profile=[2, -1])
 
 
 # --------------------------------------------------------------------------- release over ticks

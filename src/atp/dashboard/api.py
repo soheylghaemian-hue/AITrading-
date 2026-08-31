@@ -13,11 +13,10 @@ Where there is no real data, fields are null/empty — never fabricated (§33).
 from __future__ import annotations
 
 import os
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
-
-from typing import Callable
+from typing import Any, Callable
 
 from ..brokers.base import Broker
 from ..desk.desk import AutonomousTradingDesk
@@ -110,8 +109,7 @@ class DashboardContext:
             execution_enabled=self.execution_enabled, connected=connected,
             risk_config=self.risk_config,
             risk_capital=(self.risk_config.capital if self.risk_config else None),
-            autonomous=(self.autonomous_engine.snapshot(
-                account=account, risk_config=self.risk_config, market_data=self.market_data)
+            autonomous=(await self.autonomous_engine.snapshot(market_data=self.market_data)
                 if self.autonomous_engine is not None else None),
         )
         return snap.as_dict()
@@ -124,13 +122,21 @@ class DashboardContext:
         cfg = self.config_store.load()
         if cfg is None:
             return None
-        self.risk.update_limits(
-            max_trade_risk_pct=cfg.risk_per_trade_pct,
-            max_daily_loss_pct=cfg.max_daily_loss_pct,
+        eng = self.autonomous_engine
+        update_guard = (
+            eng.risk_configuration_update(actor="risk-config-load")
+            if eng is not None and hasattr(eng, "risk_configuration_update")
+            else nullcontext()
         )
-        self.risk_config = cfg
-        if self.on_risk_config_change is not None:
-            self.on_risk_config_change(cfg)
+        with update_guard:
+            self.risk.update_limits(
+                max_capital=cfg.capital,
+                max_trade_risk_pct=cfg.risk_per_trade_pct,
+                max_daily_loss_pct=cfg.max_daily_loss_pct,
+            )
+            self.risk_config = cfg
+            if self.on_risk_config_change is not None:
+                self.on_risk_config_change(cfg)
         return cfg
 
     def set_risk_config(self, capital: float, risk_per_trade_pct: float,
@@ -143,16 +149,24 @@ class DashboardContext:
             capital=float(capital), risk_per_trade_pct=float(risk_per_trade_pct),
             max_daily_loss_pct=float(max_daily_loss_pct),
         )
-        # The Risk Engine is the single authority — update its hard caps first.
-        self.risk.update_limits(
-            max_trade_risk_pct=cfg.risk_per_trade_pct,
-            max_daily_loss_pct=cfg.max_daily_loss_pct,
+        eng = self.autonomous_engine
+        update_guard = (
+            eng.risk_configuration_update(actor="risk-config")
+            if eng is not None and hasattr(eng, "risk_configuration_update")
+            else nullcontext()
         )
-        self.risk_config = cfg
+        # Stop/invalidate any old execution epoch while RiskEngine and policy are rebound together.
+        with update_guard:
+            self.risk.update_limits(
+                max_capital=cfg.capital,
+                max_trade_risk_pct=cfg.risk_per_trade_pct,
+                max_daily_loss_pct=cfg.max_daily_loss_pct,
+            )
+            self.risk_config = cfg
+            if self.on_risk_config_change is not None:
+                self.on_risk_config_change(cfg)
         if self.config_store is not None:
             self.config_store.save(cfg)       # persist — survives a restart (§15)
-        if self.on_risk_config_change is not None:
-            self.on_risk_config_change(cfg)   # let the runner update the sizer/policy + capital
         if self.notifications is not None:
             self.notifications.push(
                 Kind.SYSTEM_ERROR,
@@ -164,14 +178,22 @@ class DashboardContext:
 
     def emergency_stop(self, reason: str = "manual emergency stop") -> dict:
         """Trip the Risk Engine kill switch (§13). Stops ALL new orders; does not auto-flatten."""
-        self.risk.kill_switch(reason)
+        eng = self.autonomous_engine
+        if eng is not None and hasattr(eng, "kill"):
+            eng.kill(reason=reason, actor="dashboard")
+        else:
+            self.risk.kill_switch(reason)
         if self.notifications is not None:
             self.notifications.push(Kind.EMERGENCY_STOP, f"TRADING HALTED — {reason}",
                                     severity=Severity.CRITICAL)
         return {"status": "halted", "reason": reason}
 
     def resume(self, reason: str = "manual resume") -> dict:
-        self.risk.reset_kill()
+        eng = self.autonomous_engine
+        if eng is not None and hasattr(eng, "reset_kill"):
+            eng.reset_kill(actor="dashboard")
+        else:
+            self.risk.reset_kill()
         if self.notifications is not None:
             self.notifications.push(Kind.SYSTEM_ERROR, f"trading resumed — {reason}",
                                     severity=Severity.WARNING)
@@ -204,7 +226,7 @@ def create_app(context: DashboardContext) -> Any:
 
     read_token = os.environ.get("ATP_DASHBOARD_READ_TOKEN")        # required on reads when set
     rate_limit = int(os.environ.get("ATP_DASHBOARD_RATE_LIMIT", "60"))   # requests / 60s / IP
-    _hits: dict[str, "deque"] = {}
+    _hits: dict[str, Any] = {}
 
     @app.middleware("http")
     async def _guard(request, call_next):

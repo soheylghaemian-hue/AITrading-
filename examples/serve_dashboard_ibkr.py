@@ -214,8 +214,7 @@ class IBKRContext:
         notes = self._base.notifications.recent(50) if self._base.notifications is not None else []
         data_ok = any(r["status"] in ("DATA_AVAILABLE", "DELAYED") for r in md) if md else None
         eng = self._base.autonomous_engine
-        autonomous = (eng.snapshot(account=c["account"], risk_config=self._base.risk_config,
-                                   market_data=md) if eng is not None else None)
+        autonomous = (await eng.snapshot(market_data=md) if eng is not None else None)
         snap = build_snapshot(
             account=c["account"], risk=self._base.risk, mode=self._base.mode, connected=connected,
             execution_enabled=self._base.execution_enabled, market_data=md,
@@ -272,11 +271,26 @@ def main() -> None:
     from atp.policy import TradingPolicy  # noqa: PLC0415
     from atp.strategy import BreakoutStrategy, MeanReversionStrategy, MomentumStrategy  # noqa: PLC0415
     journal = InMemoryJournal()
+    paper_policy = TradingPolicy(
+        capital=capital,
+        risk_per_trade=(loaded.risk_per_trade_pct if loaded is not None else risk.limits.max_trade_risk_pct),
+        daily_loss_limit=(loaded.max_daily_loss_pct if loaded is not None else risk.limits.max_daily_loss_pct),
+    )
+    risk.update_limits(max_capital=paper_policy.capital)
     desk, paper_broker, _ = asyncio.run(build_paper_stack(
-        policy=TradingPolicy(capital=capital),
+        policy=paper_policy,
         strategies=[MomentumStrategy(), MeanReversionStrategy(), BreakoutStrategy()],
         journal=journal, risk=risk))       # shared Risk Engine
     base.autonomous_engine = PaperAutonomousEngine(desk=desk, broker=paper_broker, risk=risk, journal=journal)
+
+    def _bind_paper_policy(cfg):
+        desk._policy = desk._policy.model_copy(update={  # noqa: SLF001 - single composition root
+            "capital": cfg.capital,
+            "risk_per_trade": cfg.risk_per_trade_pct,
+            "daily_loss_limit": cfg.max_daily_loss_pct,
+        })
+
+    base.on_risk_config_change = _bind_paper_policy
     base.autonomous_engine.set_decision_journal(os.environ.get("ATP_DECISION_JOURNAL"))  # § Phase 11
 
     # Massive realtime worker (AAPL/NVDA/SPY) — only if the key is configured server-side. Read-only.

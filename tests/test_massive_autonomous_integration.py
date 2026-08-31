@@ -57,7 +57,10 @@ def _realtime_frames():
 
 
 def _engine_and_provider(frames):
-    risk = RiskEngine(limits=RiskLimits(), state=RiskState(day_start_equity=1_000_000.0, peak_equity=1_000_000.0))
+    risk = RiskEngine(
+        limits=RiskLimits(max_capital=1_000_000.0),
+        state=RiskState(day_start_equity=1_000_000.0, peak_equity=1_000_000.0),
+    )
     journal = InMemoryJournal()
     desk, broker, _ = asyncio.run(build_paper_stack(
         policy=TradingPolicy(capital=1_000_000.0),
