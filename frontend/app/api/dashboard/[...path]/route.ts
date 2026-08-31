@@ -27,17 +27,38 @@ const READ_PATHS = new Set([
   "research-validation", "research-intel",        // § R3.1A AI-validation read-models (GET-only, no runner)
 ]);
 // Mutations require the OWNER token, supplied by the user (not stored) and enforced by the backend.
-// "autonomous" covers the token-gated /dashboard/autonomous/{arm,start,stop,disarm,kill,reset}.
+// The complete route shape is checked before a token or body can be forwarded. In particular,
+// "autonomous" only covers /dashboard/autonomous/{arm,disarm,dry_run,start,stop,kill,reset}.
 // "backtests" (POST) starts an INTERNAL historical research run — it never creates a broker order.
 // "research-datasets" (POST) builds an immutable research DATA dataset — never trades, never an order.
-const WRITE_PATHS = new Set(["emergency-stop", "resume", "risk-config", "autonomous", "backtests",
-  "research-datasets"]);
+const SINGLE_SEGMENT_WRITE_PATHS = new Set([
+  "emergency-stop", "resume", "risk-config", "backtests", "research-datasets",
+]);
+const AUTONOMOUS_ACTIONS = new Set(["arm", "disarm", "dry_run", "start", "stop", "kill", "reset"]);
+
+function isAllowedWritePath(path: string[]): boolean {
+  if (path.length === 1) return SINGLE_SEGMENT_WRITE_PATHS.has(path[0]);
+  return path.length === 2 && path[0] === "autonomous" && AUTONOMOUS_ACTIONS.has(path[1]);
+}
+
+// Catch-all params have already been decoded once by Next. A later URL parser decodes percent escapes
+// again, so `%252e%252e` can otherwise become a `..` segment only after the whitelist check. Reject
+// every remaining percent escape fail-closed, together with separators, traversal segments and
+// controls, before constructing any backend URL. Safe dynamic values are encoded again at the
+// forwarding boundary.
+function isSafePathSegment(segment: string): boolean {
+  return segment !== "." && segment !== ".." && !/[%\\/\\\\\u0000-\u001f\u007f]/.test(segment);
+}
 
 async function forward(req: NextRequest, path: string[], method: "GET" | "POST") {
-  // Enforce the path whitelist FIRST — a non-allowed path is 404 regardless of configuration.
+  // Enforce segment safety and the complete route whitelist FIRST — a non-allowed path is 404
+  // regardless of configuration, and no backend credential can be attached to it.
+  if (path.length === 0 || !path.every(isSafePathSegment)) {
+    return NextResponse.json({ detail: "not found" }, { status: 404 });
+  }
   const top = path[0] ?? "";
-  const allowed = method === "GET" ? READ_PATHS : WRITE_PATHS;
-  if (!allowed.has(top)) return NextResponse.json({ detail: "not found" }, { status: 404 });
+  const allowed = method === "GET" ? READ_PATHS.has(top) : isAllowedWritePath(path);
+  if (!allowed) return NextResponse.json({ detail: "not found" }, { status: 404 });
   if (!BACKEND) return NextResponse.json({ detail: "backend not configured" }, { status: 502 });
 
   const headers: Record<string, string> = {};
@@ -114,7 +135,7 @@ async function forward(req: NextRequest, path: string[], method: "GET" | "POST")
               ? (path[1] ? `${BACKEND}/market/${sym}/ai-governance` : `${BACKEND}/ai/governance${req.nextUrl.search}`)
               : top === "macro"
                 ? `${BACKEND}/macro/current`
-                : `${BACKEND}/dashboard/${path.join("/")}`;
+                : `${BACKEND}/dashboard/${path.map(encodeURIComponent).join("/")}`;
 
   try {
     const res = await fetch(target, init);
@@ -125,9 +146,13 @@ async function forward(req: NextRequest, path: string[], method: "GET" | "POST")
   }
 }
 
-export async function GET(req: NextRequest, { params }: { params: { path: string[] } }) {
-  return forward(req, params.path ?? [], "GET");
+type DashboardRouteContext = { params: Promise<{ path: string[] }> };
+
+export async function GET(req: NextRequest, { params }: DashboardRouteContext) {
+  const { path } = await params;
+  return forward(req, path ?? [], "GET");
 }
-export async function POST(req: NextRequest, { params }: { params: { path: string[] } }) {
-  return forward(req, params.path ?? [], "POST");
+export async function POST(req: NextRequest, { params }: DashboardRouteContext) {
+  const { path } = await params;
+  return forward(req, path ?? [], "POST");
 }

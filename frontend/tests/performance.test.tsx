@@ -121,7 +121,8 @@ describe("fetch endpoints — via the same-origin proxy only", () => {
       horizons: [1, 3, 5, 20], classification: { "TRUE POSITIVE": 6, "FALSE POSITIVE": 2 } }));
     const res = await fetchOutcomes();
     expect(calls[0]).toBe("/api/dashboard/ai-outcomes");
-    expect(res.pending_count).toBe(8) && expect(res.accuracy).toBe(75);
+    expect(res.pending_count).toBe(8);
+    expect(res.accuracy).toBe(75);
   });
   it("rejects on a non-OK response (caller shows NO DATA)", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 502, json: async () => ({}) } as any)));
