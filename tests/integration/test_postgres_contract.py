@@ -26,9 +26,25 @@ from atp.store import D, open_store
 from atp.store.base import FillRow, utcnow_iso
 from atp.store.postgres_store import PostgresStore
 
-_TABLES = ["schema_migrations", "accounts", "runtime_state", "risk_config", "risk_state",
-           "kill_switch", "daily_pnl", "daily_loss_lock", "positions", "orders", "fills",
-           "trades", "decisions", "audit_events", "service_heartbeats", "market_data_health"]
+_TABLES = [
+    "paper_reconciliations", "paper_order_events", "paper_fills", "paper_positions",
+    "paper_orders", "paper_accounts", "paper_canary_runs",
+    "research_validation_metrics", "research_validation_runs",
+    "research_intel_collection_events", "research_intel_outcomes",
+    "research_intel_snapshot_inputs", "research_intel_snapshots",
+    "research_dataset_events", "research_ohlc_bars", "research_datasets",
+    "backtest_events", "backtest_metrics", "backtest_equity_points", "backtest_trades",
+    "backtest_decisions", "backtest_runs", "risk_events", "risk_control_policy",
+    "insider_clusters", "insider_transactions", "institutional_position_changes",
+    "macro_snapshots", "data_completeness_snapshots", "ai_governance_results",
+    "ai_prediction_outcomes", "ai_predictions", "ai_assessment_components", "ai_assessments",
+    "options_flow", "options_snapshot", "analyst_estimates", "valuation",
+    "financial_metrics", "companies", "trader_positions", "trader_performance", "traders",
+    "news_items", "ohlc_bars", "market_data_health", "service_heartbeats", "audit_events",
+    "decisions", "trades", "fills", "orders", "positions", "daily_loss_lock", "daily_pnl",
+    "kill_switch", "risk_state", "risk_config", "runtime_state", "accounts",
+    "schema_migrations",
+]
 
 
 def _reset():
@@ -54,13 +70,14 @@ def _new_store():
 # ---------------------------------------------------------------- migrations + NUMERIC precision
 def test_migrations_applied(store):
     versions = sorted(r[0] for r in store._all("SELECT version FROM schema_migrations"))
-    assert versions == [1, 2]
+    assert versions == list(range(1, 23))
 
 
 def test_numeric_types_in_information_schema(store):
     rows = store._all(
         "SELECT table_name, column_name, data_type FROM information_schema.columns "
-        "WHERE table_name IN ('risk_config','positions','fills','daily_pnl','orders') "
+        "WHERE table_name IN ('risk_config','positions','fills','daily_pnl','orders',"
+        "'paper_accounts','paper_positions','paper_fills','paper_orders') "
         "AND column_name IN ('capital','avg_price','realized_pnl','price','commission',"
         "'unrealized_pnl','quantity','notional','monetary_risk','slippage','fees')")
     assert rows, "expected money columns present"
@@ -69,8 +86,8 @@ def test_numeric_types_in_information_schema(store):
 
 
 def test_numeric_precision_exact(store):
-    store.upsert_risk_config(capital=D("1234567.89"), risk_per_trade_pct=D("0.01"),
-                             max_daily_loss_pct=D("0.03"))
+    store.upsert_risk_config(capital=D("1234567.89"), risk_per_trade_pct=D("1"),
+                             max_daily_loss_pct=D("3"))
     assert store.get_risk_config().capital == Decimal("1234567.89000000")
     store.upsert_daily_pnl(trade_date="2026-08-14", day_start_equity=D("1000000"),
                            realized_pnl=D("-0.07"), unrealized_pnl=D("0"))

@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from ..store.money import D
 from .lifecycle import LifecycleManager, RuntimeStatus
 
+_PERCENT = D(100)
+
 
 def today_utc() -> str:
     return datetime.now(timezone.utc).date().isoformat()
@@ -53,13 +55,16 @@ class TradingGate:
 
 def remaining_daily_budget(store, *, trade_date: str | None = None):
     """Remaining daily-loss budget from DURABLE state = max_daily_loss − loss_so_far.
-    Returns a Decimal, or None if config/pnl are missing."""
+    Canonical DB percentages use percentage points (``1`` means 1%), matching Risk Control.
+    Returns a Decimal, or None if config/pnl are missing or invalid."""
     d = trade_date or today_utc()
     cfg = store.get_risk_config()
     pnl = store.get_daily_pnl(d)
     if cfg is None or pnl is None:
         return None
-    limit = cfg.capital * cfg.max_daily_loss_pct
+    if not (cfg.capital > 0 and D(0) < cfg.max_daily_loss_pct <= _PERCENT):
+        return None
+    limit = cfg.capital * cfg.max_daily_loss_pct / _PERCENT
     loss_so_far = max(D(0), -(pnl.realized_pnl + pnl.unrealized_pnl))
     return max(D(0), limit - loss_so_far)
 

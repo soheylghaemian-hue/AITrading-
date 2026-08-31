@@ -21,14 +21,30 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import ROUND_HALF_EVEN, Decimal
 
-from .money import D, money_str, opt_money_str, to_decimal
+from .money import QUANT, D, money_str, to_decimal
 
 
 class _ReclaimSkipped(Exception):
     """Internal sentinel: a stale-reclaim tx whose guarded terminal flip matched 0 rows (a fresh heartbeat
     won the race) — used to roll the whole transaction back so the reclaim event is never left behind."""
+
+
+class PaperCanaryError(RuntimeError):
+    """Base error for the durable PAPER-only canary ledger."""
+
+
+class PaperCanaryConflict(PaperCanaryError):
+    """An idempotency key or immutable identity was reused with different canonical content."""
+
+
+class PaperCanaryStateError(PaperCanaryConflict):
+    """A version/status compare-and-swap or state-machine precondition failed."""
+
+
+class PaperCanarySafetyError(PaperCanaryError):
+    """A durable runtime, kill, risk, capital, or exposure guard refused execution."""
 
 
 def risk_config_token(*, capital, risk_per_trade_pct, max_daily_loss_pct, rc_updated_at, config_version,
@@ -53,7 +69,228 @@ def new_id() -> str:
     return uuid.uuid4().hex
 
 
+def _paper_exact_money(value, *, field: str, positive: bool = False,
+                       nonnegative: bool = False) -> Decimal:
+    if type(value) is not Decimal:
+        raise TypeError(f"{field} must be an exact Decimal")
+    if not value.is_finite() or D(money_str(value)) != value:
+        raise ValueError(f"{field} must be finite and exactly representable at 8 decimal places")
+    if value == 0 and value.is_signed():
+        raise ValueError(f"{field} must not use signed zero")
+    if positive and value <= 0:
+        raise ValueError(f"{field} must be positive")
+    if nonnegative and value < 0:
+        raise ValueError(f"{field} must be nonnegative")
+    return value
+
+
+def paper_canary_money_str(value: Decimal) -> str:
+    """Canonical fixed-point 8dp text for Paper Canary hashes and config snapshots."""
+    exact = _paper_exact_money(value, field="paper money")
+    canonical = exact.quantize(QUANT, rounding=ROUND_HALF_EVEN)
+    if canonical == 0:
+        canonical = abs(canonical)
+    return format(canonical, "f")
+
+
+def _paper_timestamp(value: str, *, field: str) -> str:
+    if type(value) is not str or not value:
+        raise TypeError(f"{field} must be a non-empty aware ISO-8601 string")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(None):
+            raise ValueError(f"{field} must be UTC")
+        return parsed.astimezone(timezone.utc).isoformat()
+    except Exception as exc:
+        if isinstance(exc, ValueError) and str(exc) == f"{field} must be UTC":
+            raise
+        raise ValueError(f"{field} must be a UTC ISO-8601 timestamp") from exc
+
+
+def _paper_json(value, *, field: str, require_object: bool = True) -> tuple[dict, str]:
+    def unique_object(pairs):
+        result = {}
+        for key, item in pairs:
+            if key in result:
+                raise ValueError(f"{field} contains duplicate key {key!r}")
+            result[key] = item
+        return result
+
+    try:
+        decoded = json.loads(value, object_pairs_hook=unique_object) if type(value) is str else value
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{field} must be valid JSON") from exc
+    if require_object and type(decoded) is not dict:
+        raise ValueError(f"{field} must be a JSON object")
+    try:
+        canonical = json.dumps(decoded, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                               allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must be canonicalizable JSON") from exc
+    return decoded, canonical
+
+
+def paper_canary_config_checksum(config_json) -> str:
+    """Checksum the canonical, lossless PAPER-canary config snapshot."""
+    _, canonical = _paper_json(config_json, field="config_json")
+    return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def paper_canary_request_checksum(*, run_id: str, decision_id: str, client_order_id: str,
+                                  instrument: str, side: str, quantity: Decimal, order_type: str,
+                                  quote_bid: Decimal, quote_ask: Decimal, quote_ts: str,
+                                  risk_config_checksum: str, config_checksum: str,
+                                  asset_class: str = "EQUITY",
+                                  multiplier: Decimal = Decimal("1")) -> str:
+    """Canonical full-request binding shared by the runtime and durable idempotency boundary."""
+    q = _paper_exact_money(quantity, field="quantity", positive=True)
+    bid = _paper_exact_money(quote_bid, field="quote_bid", positive=True)
+    ask = _paper_exact_money(quote_ask, field="quote_ask", positive=True)
+    mult = _paper_exact_money(multiplier, field="multiplier", positive=True)
+    if not all(type(v) is str and v for v in (
+        run_id, decision_id, client_order_id, instrument, side, order_type,
+        risk_config_checksum, config_checksum, asset_class,
+    )):
+        raise ValueError("paper request string fields must be non-empty")
+    payload = {
+        "asset_class": asset_class,
+        "client_order_id": client_order_id,
+        "config_checksum": config_checksum,
+        "decision_id": decision_id,
+        "instrument": instrument,
+        "multiplier": paper_canary_money_str(mult),
+        "order_type": order_type,
+        "quantity": paper_canary_money_str(q),
+        "quote": {"ask": paper_canary_money_str(ask), "bid": paper_canary_money_str(bid),
+                  "ts": _paper_timestamp(quote_ts, field="quote_ts")},
+        "risk_config_checksum": risk_config_checksum,
+        "run_id": run_id,
+        "side": side,
+        "tag": "atp.paper-canary.request.v1",
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+
+
 # --------------------------------------------------------------------------- rows
+@dataclass(frozen=True, slots=True)
+class PaperCanaryRunRow:
+    run_id: str
+    status: str
+    active_slot: int | None
+    version: int
+    config_json: str
+    config_checksum: str
+    risk_config_checksum: str
+    commit_sha: str
+    reason: str | None
+    created_at: str
+    started_at: str | None
+    heartbeat_at: str | None
+    ended_at: str | None
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class PaperCanaryAccountRow:
+    run_id: str
+    starting_cash: Decimal
+    cash: Decimal
+    equity: Decimal
+    realized_pnl: Decimal
+    gross_exposure: Decimal
+    net_exposure: Decimal
+    version: int
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class PaperCanaryOrderRow:
+    client_order_id: str
+    run_id: str
+    idempotency_key: str
+    decision_id: str
+    instrument: str
+    side: str
+    quantity: Decimal
+    order_type: str
+    state: str
+    request_checksum: str
+    risk_config_checksum: str
+    quote_bid: Decimal
+    quote_ask: Decimal
+    quote_ts: str
+    broker_order_id: str | None
+    reason: str | None
+    version: int
+    correlation_id: str | None
+    created_at: str
+    authorized_at: str | None
+    terminal_at: str | None
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class PaperCanaryFillRow:
+    fill_id: str
+    client_order_id: str
+    broker_fill_id: str
+    ledger_seq: int
+    instrument: str
+    side: str
+    quantity: Decimal
+    price: Decimal
+    commission: Decimal
+    multiplier: Decimal
+    quote_ts: str
+    ts: str
+
+
+@dataclass(frozen=True, slots=True)
+class PaperCanaryPositionRow:
+    run_id: str
+    instrument: str
+    quantity: Decimal
+    avg_price: Decimal
+    mark_price: Decimal
+    realized_pnl: Decimal
+    version: int
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class PaperCanaryOrderEventRow:
+    event_id: str
+    client_order_id: str
+    seq: int
+    ts: str
+    event_type: str
+    previous_state: str | None
+    new_state: str | None
+    reason: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class PaperCanaryReconciliationRow:
+    reconciliation_id: str
+    run_id: str
+    status: str
+    fills_checksum: str
+    positions_checksum: str
+    account_checksum: str
+    open_order_count: int
+    breaks_json: str
+    checked_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class PaperCanaryFillCommitResult:
+    order: PaperCanaryOrderRow
+    fill: PaperCanaryFillRow
+    account: PaperCanaryAccountRow
+    position: PaperCanaryPositionRow
+
+
 @dataclass(slots=True)
 class RuntimeStateRow:
     status: str
@@ -1113,6 +1350,15 @@ class SqlStore(Store):
                       "broker_order_id,correlation_id,reason,created_at,updated_at FROM orders "
                       "WHERE client_order_id=?", (client_order_id,))
         return self._order_row(r) if r else None
+
+    def list_orders(self) -> list[OrderRow]:
+        """Read the complete durable legacy-order set for restart recovery."""
+        rows = self._all(
+            "SELECT client_order_id,idempotency_key,instrument,side,quantity,order_type,state,"
+            "broker_order_id,correlation_id,reason,created_at,updated_at FROM orders "
+            "ORDER BY created_at,client_order_id",
+        )
+        return [self._order_row(row) for row in rows]
 
     def _order_row(self, r) -> OrderRow:
         return OrderRow(r[0], r[1], r[2], r[3], to_decimal(r[4]), r[5], r[6], r[7], r[8], r[9], r[10], r[11])
@@ -2572,3 +2818,1267 @@ class SqlStore(Store):
     def rv_list_metrics(self, run_id: str) -> list[tuple]:
         return self._all("SELECT metric_group,metrics_json FROM research_validation_metrics WHERE run_id=? "
                          "ORDER BY metric_group ASC", (run_id,))
+
+    # -- durable PAPER-canary lifecycle + ledger -------------------------
+    _PAPER_RUN_COLS = (
+        "run_id,status,active_slot,version,config_json,config_checksum,risk_config_checksum,"
+        "commit_sha,reason,created_at,started_at,heartbeat_at,ended_at,updated_at"
+    )
+    _PAPER_ACCOUNT_COLS = (
+        "run_id,starting_cash,cash,equity,realized_pnl,gross_exposure,net_exposure,version,updated_at"
+    )
+    _PAPER_ORDER_COLS = (
+        "client_order_id,run_id,idempotency_key,decision_id,instrument,side,quantity,order_type,state,"
+        "request_checksum,risk_config_checksum,quote_bid,quote_ask,quote_ts,broker_order_id,reason,"
+        "version,correlation_id,created_at,authorized_at,terminal_at,updated_at"
+    )
+    _PAPER_FILL_COLS = (
+        "fill_id,client_order_id,broker_fill_id,ledger_seq,instrument,side,quantity,price,commission,"
+        "multiplier,quote_ts,ts"
+    )
+    _PAPER_POSITION_COLS = (
+        "run_id,instrument,quantity,avg_price,mark_price,realized_pnl,version,updated_at"
+    )
+    _PAPER_EVENT_COLS = (
+        "event_id,client_order_id,seq,ts,event_type,previous_state,new_state,reason"
+    )
+    _PAPER_RECON_COLS = (
+        "reconciliation_id,run_id,status,fills_checksum,positions_checksum,account_checksum,"
+        "open_order_count,breaks_json,checked_at"
+    )
+    _PAPER_ACTIVE_RUN_STATES = frozenset({
+        "CREATED", "READY_FOR_ARM", "RUNNING", "RECOVERY_REQUIRED",
+    })
+    _PAPER_TERMINAL_RUN_STATES = frozenset({"STOPPED", "FAILED", "COMPLETED"})
+    _PAPER_RUN_TRANSITIONS = {
+        "CREATED": frozenset({"READY_FOR_ARM", "STOPPED", "FAILED"}),
+        "READY_FOR_ARM": frozenset({"RUNNING", "STOPPED", "FAILED"}),
+        "RUNNING": frozenset({"RECOVERY_REQUIRED", "STOPPED", "FAILED", "COMPLETED"}),
+        "RECOVERY_REQUIRED": frozenset({"READY_FOR_ARM", "STOPPED", "FAILED"}),
+        "STOPPED": frozenset(),
+        "FAILED": frozenset(),
+        "COMPLETED": frozenset(),
+    }
+    _PAPER_ORDER_TRANSITIONS = {
+        "INTENT": frozenset({"AUTHORIZED", "REJECTED", "CANCELLED"}),
+        "AUTHORIZED": frozenset({"REJECTED", "CANCELLED"}),
+    }
+
+    @staticmethod
+    def _paper_run_row(row) -> PaperCanaryRunRow:
+        values = list(row)
+        values[2] = None if values[2] is None else int(values[2])
+        values[3] = int(values[3])
+        return PaperCanaryRunRow(*values)
+
+    @staticmethod
+    def _paper_account_row(row) -> PaperCanaryAccountRow:
+        values = list(row)
+        for index in range(1, 7):
+            values[index] = to_decimal(values[index])
+        values[7] = int(values[7])
+        return PaperCanaryAccountRow(*values)
+
+    @staticmethod
+    def _paper_order_row(row) -> PaperCanaryOrderRow:
+        values = list(row)
+        values[6] = to_decimal(values[6])
+        values[11] = to_decimal(values[11])
+        values[12] = to_decimal(values[12])
+        values[16] = int(values[16])
+        return PaperCanaryOrderRow(*values)
+
+    @staticmethod
+    def _paper_fill_row(row) -> PaperCanaryFillRow:
+        values = list(row)
+        values[3] = int(values[3])
+        for index in range(6, 10):
+            values[index] = to_decimal(values[index])
+        return PaperCanaryFillRow(*values)
+
+    @staticmethod
+    def _paper_position_row(row) -> PaperCanaryPositionRow:
+        values = list(row)
+        for index in range(2, 6):
+            values[index] = to_decimal(values[index])
+        values[6] = int(values[6])
+        return PaperCanaryPositionRow(*values)
+
+    @staticmethod
+    def _paper_event_row(row) -> PaperCanaryOrderEventRow:
+        values = list(row)
+        values[2] = int(values[2])
+        return PaperCanaryOrderEventRow(*values)
+
+    @staticmethod
+    def _paper_reconciliation_row(row) -> PaperCanaryReconciliationRow:
+        values = list(row)
+        values[6] = int(values[6])
+        return PaperCanaryReconciliationRow(*values)
+
+    @staticmethod
+    def _paper_cap(value, *, field: str) -> Decimal:
+        if type(value) is not str:
+            raise ValueError(f"config {field} must be a canonical decimal string")
+        try:
+            parsed = Decimal(str(value))
+        except Exception as exc:
+            raise ValueError(f"config {field} is not a decimal") from exc
+        exact = _paper_exact_money(parsed, field=field, positive=True)
+        if value != paper_canary_money_str(exact):
+            raise ValueError(f"config {field} is not canonical 8dp money")
+        return exact
+
+    @staticmethod
+    def _paper_config_amount(value, *, field: str, positive: bool = False) -> Decimal:
+        if type(value) is not str:
+            raise ValueError(f"config {field} must be a canonical decimal string")
+        try:
+            parsed = Decimal(value)
+        except Exception as exc:
+            raise ValueError(f"config {field} is not a decimal") from exc
+        exact = _paper_exact_money(
+            parsed, field=field, positive=positive, nonnegative=not positive,
+        )
+        if value != paper_canary_money_str(exact):
+            raise ValueError(f"config {field} is not canonical 8dp money")
+        return exact
+
+    @classmethod
+    def _paper_config(cls, config_json) -> tuple[dict, str, str]:
+        config, canonical = _paper_json(config_json, field="config_json")
+        required = frozenset({
+            "asset_class", "commission_per_unit", "instrument", "max_daily_turnover",
+            "max_gross_notional", "max_order_notional", "max_orders", "min_commission",
+            "mode", "quote_max_age_s", "slippage_bps", "starting_cash", "tag",
+        })
+        if frozenset(config) != required:
+            raise ValueError("config_json has an invalid durable Paper Canary shape")
+        if config["tag"] != "atp.paper-canary.config.v1" or config["mode"] != "paper":
+            raise ValueError("config_json has an invalid Paper Canary scope tag/mode")
+        instrument = config.get("instrument")
+        if (
+            type(instrument) is not str
+            or not instrument
+            or instrument != instrument.strip()
+            or instrument != instrument.upper()
+            or len(instrument) > 128
+            or any(ord(character) < 32 for character in instrument)
+        ):
+            raise ValueError("config instrument must be one non-empty uppercase symbol")
+        if config.get("asset_class", "EQUITY") != "EQUITY":
+            raise ValueError("Paper Canary supports only EQUITY")
+        for name in (
+            "max_order_notional", "max_gross_notional", "max_daily_turnover",
+        ):
+            cls._paper_cap(config.get(name), field=name)
+        starting_cash = cls._paper_config_amount(
+            config.get("starting_cash"), field="starting_cash", positive=True,
+        )
+        commission_per_unit = cls._paper_config_amount(
+            config.get("commission_per_unit"), field="commission_per_unit",
+        )
+        min_commission = cls._paper_config_amount(
+            config.get("min_commission"), field="min_commission",
+        )
+        slippage_bps = cls._paper_config_amount(config.get("slippage_bps"), field="slippage_bps")
+        cls._paper_config_amount(config.get("quote_max_age_s"), field="quote_max_age_s", positive=True)
+        max_orders = config.get("max_orders")
+        if type(max_orders) is not int or max_orders <= 0:
+            raise ValueError("config max_orders must be a positive integer")
+        if cls._paper_cap(config["max_order_notional"], field="max_order_notional") > cls._paper_cap(
+            config["max_gross_notional"], field="max_gross_notional",
+        ):
+            raise ValueError("max_order_notional cannot exceed max_gross_notional")
+        if cls._paper_cap(config["max_gross_notional"], field="max_gross_notional") > starting_cash:
+            raise ValueError("max_gross_notional cannot exceed starting_cash")
+        if slippage_bps >= Decimal("10000"):
+            raise ValueError("slippage_bps must be below 10000")
+        if commission_per_unit < 0 or min_commission < 0:  # defensive after exact validation
+            raise ValueError("commission values must be nonnegative")
+        checksum = "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+        return config, canonical, checksum
+
+    def _paper_risk_checksum_in_tx(self, cur) -> str:
+        self._exec(
+            cur,
+            "SELECT capital,risk_per_trade_pct,max_daily_loss_pct,updated_at "
+            f"FROM risk_config WHERE id=1{self.LOCK_CLAUSE}",
+        )
+        risk = cur.fetchone()
+        if not risk:
+            raise PaperCanarySafetyError("canonical risk_config is missing")
+        self._exec(
+            cur,
+            "SELECT risk_config_id,currency,warning_threshold_pct,max_portfolio_exposure_pct,max_drawdown_pct,"
+            f"config_version FROM risk_control_policy WHERE id='policy'{self.LOCK_CLAUSE}",
+        )
+        policy = cur.fetchone()
+        capital = to_decimal(risk[0])
+        risk_per_trade = to_decimal(risk[1])
+        max_daily_loss = to_decimal(risk[2])
+        try:
+            capital = _paper_exact_money(capital, field="risk capital", positive=True)
+            risk_per_trade = _paper_exact_money(
+                risk_per_trade, field="risk_per_trade_pct", positive=True,
+            )
+            max_daily_loss = _paper_exact_money(
+                max_daily_loss, field="max_daily_loss_pct", positive=True,
+            )
+        except (TypeError, ValueError) as exc:
+            raise PaperCanarySafetyError("canonical risk_config is not exact 8dp money") from exc
+        if (
+            capital is None
+            or risk_per_trade is None
+            or max_daily_loss is None
+            or not all(value.is_finite() for value in (capital, risk_per_trade, max_daily_loss))
+            or capital <= 0
+            or not Decimal("0") < risk_per_trade <= max_daily_loss <= Decimal("100")
+        ):
+            raise PaperCanarySafetyError("canonical risk_config is incomplete or out of bounds")
+        if (
+            not policy
+            or int(policy[0]) != 1
+            or type(policy[1]) is not str
+            or not policy[1]
+            or policy[1] != policy[1].strip()
+            or any(policy[index] is None for index in (2, 3, 4))
+            or int(policy[5]) <= 0
+        ):
+            raise PaperCanarySafetyError("risk_control_policy is incomplete")
+        warning = to_decimal(policy[2])
+        exposure = to_decimal(policy[3])
+        drawdown = to_decimal(policy[4])
+        try:
+            warning = _paper_exact_money(warning, field="warning_threshold_pct", positive=True)
+            exposure = _paper_exact_money(
+                exposure, field="max_portfolio_exposure_pct", positive=True,
+            )
+            drawdown = _paper_exact_money(drawdown, field="max_drawdown_pct", positive=True)
+        except (TypeError, ValueError) as exc:
+            raise PaperCanarySafetyError("risk_control_policy is not exact 8dp money") from exc
+        if (
+            warning is None
+            or exposure is None
+            or drawdown is None
+            or not all(value.is_finite() for value in (warning, exposure, drawdown))
+            or not Decimal("0") < warning <= Decimal("100")
+            or not Decimal("0") < exposure <= Decimal("100")
+            or not Decimal("0") < drawdown <= Decimal("100")
+        ):
+            raise PaperCanarySafetyError("risk_control_policy percentages are out of bounds")
+        return risk_config_token(
+            capital=capital,
+            risk_per_trade_pct=risk_per_trade,
+            max_daily_loss_pct=max_daily_loss,
+            rc_updated_at=risk[3],
+            config_version=int(policy[5]),
+            currency=policy[1],
+            warning_threshold_pct=warning,
+            max_portfolio_exposure_pct=exposure,
+            max_drawdown_pct=drawdown,
+        )
+
+    def _paper_risk_capital_in_tx(self, cur) -> Decimal:
+        """Read the already transaction-locked canonical risk capital as exact Paper money."""
+        self._exec(
+            cur,
+            f"SELECT capital FROM risk_config WHERE id=1{self.LOCK_CLAUSE}",
+        )
+        row = cur.fetchone()
+        if not row:
+            raise PaperCanarySafetyError("canonical risk_config is missing")
+        try:
+            return _paper_exact_money(
+                to_decimal(row[0]), field="risk capital", positive=True,
+            )
+        except (TypeError, ValueError) as exc:
+            raise PaperCanarySafetyError("canonical risk capital is invalid") from exc
+
+    def _paper_serialize_sqlite_write(self, cur) -> None:
+        """Acquire SQLite's single-writer lock before any read that drives a later write.
+
+        PostgreSQL uses the explicit row locks on the selected run/order/runtime rows. SQLite has
+        no `FOR UPDATE`; without an early write, two deferred read transactions can deadlock while
+        upgrading. This value-preserving singleton update makes one writer wait before it observes
+        idempotency or ledger state.
+        """
+        if self.MONEY_AS_TEXT:
+            self._exec(cur, "UPDATE risk_config SET updated_at=updated_at WHERE id=1")
+            if cur.rowcount != 1:
+                raise PaperCanarySafetyError("canonical risk_config is missing")
+
+    def current_paper_risk_config_checksum(self) -> str:
+        with self.tx() as cur:
+            return self._paper_risk_checksum_in_tx(cur)
+
+    def create_paper_run(self, *, run_id: str, config_json, risk_config_checksum: str,
+                         commit_sha: str, starting_cash: Decimal,
+                         status: str = "CREATED", reason: str | None = None) -> PaperCanaryRunRow:
+        if not all(type(value) is str and value for value in (run_id, risk_config_checksum, commit_sha)):
+            raise ValueError("run_id, risk_config_checksum, and commit_sha must be non-empty strings")
+        if status not in {"CREATED", "READY_FOR_ARM"}:
+            raise PaperCanaryStateError("new run must start CREATED or READY_FOR_ARM")
+        cash = _paper_exact_money(starting_cash, field="starting_cash", positive=True)
+        _, canonical, config_checksum = self._paper_config(config_json)
+        config, _, _ = self._paper_config(canonical)
+        if self._paper_config_amount(
+            config["starting_cash"], field="starting_cash", positive=True,
+        ) != cash:
+            raise PaperCanaryConflict("starting_cash does not match the immutable config snapshot")
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._paper_serialize_sqlite_write(cur)
+            if self._paper_risk_checksum_in_tx(cur) != risk_config_checksum:
+                raise PaperCanarySafetyError("risk configuration changed before run creation")
+            if cash > self._paper_risk_capital_in_tx(cur):
+                raise PaperCanarySafetyError(
+                    "Paper Canary starting_cash exceeds canonical risk capital",
+                )
+            self._exec(
+                cur,
+                "INSERT INTO paper_canary_runs "
+                "(run_id,status,active_slot,version,config_json,config_checksum,risk_config_checksum,"
+                "commit_sha,reason,created_at,started_at,heartbeat_at,ended_at,updated_at) "
+                "VALUES (?,?,1,0,?,?,?,?,?,?,NULL,NULL,NULL,?) ON CONFLICT DO NOTHING",
+                (run_id, status, canonical, config_checksum, risk_config_checksum, commit_sha, reason, now, now),
+            )
+            created = cur.rowcount == 1
+            self._exec(
+                cur,
+                f"SELECT {self._PAPER_RUN_COLS} FROM paper_canary_runs WHERE run_id=?{self.LOCK_CLAUSE}",
+                (run_id,),
+            )
+            raw_run = cur.fetchone()
+            if not raw_run:
+                raise PaperCanaryConflict("another active Paper Canary run already owns the slot")
+            run = self._paper_run_row(raw_run)
+            if created:
+                zero = self._m(Decimal("0"))
+                self._exec(
+                    cur,
+                    "INSERT INTO paper_accounts "
+                    "(run_id,starting_cash,cash,equity,realized_pnl,gross_exposure,net_exposure,version,updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,0,?)",
+                    (run_id, self._m(cash), self._m(cash), self._m(cash), zero, zero, zero, now),
+                )
+            self._exec(cur, f"SELECT {self._PAPER_ACCOUNT_COLS} FROM paper_accounts WHERE run_id=?",
+                       (run_id,))
+            raw_account = cur.fetchone()
+            if (
+                run.status != status
+                or run.config_json != canonical
+                or run.config_checksum != config_checksum
+                or run.risk_config_checksum != risk_config_checksum
+                or run.commit_sha != commit_sha
+                or run.reason != reason
+                or not raw_account
+                or self._paper_account_row(raw_account).starting_cash != cash
+            ):
+                raise PaperCanaryConflict("run_id already exists with different immutable content")
+            return run
+
+    def get_paper_run(self, run_id: str) -> PaperCanaryRunRow | None:
+        row = self._one(f"SELECT {self._PAPER_RUN_COLS} FROM paper_canary_runs WHERE run_id=?", (run_id,))
+        return self._paper_run_row(row) if row else None
+
+    def list_paper_runs(self, *, status: str | None = None,
+                        limit: int = 100) -> list[PaperCanaryRunRow]:
+        count = max(1, min(1000, int(limit)))
+        if status is None:
+            rows = self._all(
+                f"SELECT {self._PAPER_RUN_COLS} FROM paper_canary_runs "
+                "ORDER BY created_at DESC,run_id DESC LIMIT ?", (count,),
+            )
+        else:
+            rows = self._all(
+                f"SELECT {self._PAPER_RUN_COLS} FROM paper_canary_runs WHERE status=? "
+                "ORDER BY created_at DESC,run_id DESC LIMIT ?", (status, count),
+            )
+        return [self._paper_run_row(row) for row in rows]
+
+    def transition_paper_run(self, *, run_id: str, expected_status: str,
+                             expected_version: int, new_status: str,
+                             reason: str | None = None) -> PaperCanaryRunRow:
+        if new_status not in self._PAPER_RUN_TRANSITIONS.get(expected_status, frozenset()):
+            raise PaperCanaryStateError(f"invalid Paper Canary transition {expected_status}->{new_status}")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a nonnegative integer")
+        active_slot = 1 if new_status in self._PAPER_ACTIVE_RUN_STATES else None
+        now = utcnow_iso()
+        terminal = new_status in self._PAPER_TERMINAL_RUN_STATES
+        with self.tx() as cur:
+            self._exec(
+                cur,
+                "UPDATE paper_canary_runs SET status=?,active_slot=?,version=version+1,reason=?,"
+                "started_at=CASE WHEN ?='RUNNING' THEN COALESCE(started_at,?) ELSE started_at END,"
+                "heartbeat_at=CASE WHEN ?='RUNNING' THEN ? ELSE heartbeat_at END,"
+                "ended_at=CASE WHEN ?=1 THEN ? ELSE ended_at END,updated_at=? "
+                "WHERE run_id=? AND status=? AND version=?",
+                (new_status, active_slot, reason, new_status, now, new_status, now,
+                 1 if terminal else 0, now, now, run_id, expected_status, expected_version),
+            )
+            if cur.rowcount != 1:
+                raise PaperCanaryStateError("run status/version compare-and-swap failed")
+            self._exec(cur, f"SELECT {self._PAPER_RUN_COLS} FROM paper_canary_runs WHERE run_id=?",
+                       (run_id,))
+            return self._paper_run_row(cur.fetchone())
+
+    def get_paper_account(self, run_id: str) -> PaperCanaryAccountRow | None:
+        row = self._one(f"SELECT {self._PAPER_ACCOUNT_COLS} FROM paper_accounts WHERE run_id=?", (run_id,))
+        return self._paper_account_row(row) if row else None
+
+    def _paper_append_order_event(self, cur, *, client_order_id: str, event_type: str,
+                                  previous_state: str | None, new_state: str | None,
+                                  reason: str | None, now: str) -> PaperCanaryOrderEventRow:
+        self._exec(cur, "SELECT COALESCE(MAX(seq),0) FROM paper_order_events WHERE client_order_id=?",
+                   (client_order_id,))
+        seq = int(cur.fetchone()[0]) + 1
+        event_id = "pce_" + hashlib.sha256(
+            f"{client_order_id}\0{seq}\0{event_type}".encode()
+        ).hexdigest()[:24]
+        self._exec(
+            cur,
+            "INSERT INTO paper_order_events "
+            "(event_id,client_order_id,seq,ts,event_type,previous_state,new_state,reason) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (event_id, client_order_id, seq, now, event_type, previous_state, new_state, reason),
+        )
+        return PaperCanaryOrderEventRow(
+            event_id, client_order_id, seq, now, event_type, previous_state, new_state, reason,
+        )
+
+    def get_or_create_paper_intent(
+        self, *, run_id: str, idempotency_key: str, decision_id: str, instrument: str,
+        side: str, quantity: Decimal, quote_bid: Decimal, quote_ask: Decimal, quote_ts: str,
+        risk_config_checksum: str, correlation_id: str | None = None,
+        client_order_id: str | None = None, order_type: str = "MARKET",
+    ) -> PaperCanaryOrderRow:
+        if not all(type(value) is str and value for value in (
+            run_id, idempotency_key, decision_id, instrument, side, risk_config_checksum,
+        )):
+            raise ValueError("paper intent identity fields must be non-empty strings")
+        if correlation_id is not None and (type(correlation_id) is not str or not correlation_id):
+            raise ValueError("correlation_id must be None or a non-empty string")
+        if side not in {"BUY", "SELL"} or order_type != "MARKET":
+            raise ValueError("Paper Canary supports BUY/SELL MARKET orders only")
+        qty = _paper_exact_money(quantity, field="quantity", positive=True)
+        bid = _paper_exact_money(quote_bid, field="quote_bid", positive=True)
+        ask = _paper_exact_money(quote_ask, field="quote_ask", positive=True)
+        if ask < bid:
+            raise ValueError("quote_ask must be greater than or equal to quote_bid")
+        quote_time = _paper_timestamp(quote_ts, field="quote_ts")
+        order_id = client_order_id or (
+            "pco_" + hashlib.sha256(f"{run_id}\0{idempotency_key}".encode()).hexdigest()[:24]
+        )
+        if type(order_id) is not str or not order_id:
+            raise ValueError("client_order_id must be a non-empty string")
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._paper_serialize_sqlite_write(cur)
+            self._exec(
+                cur,
+                f"SELECT {self._PAPER_RUN_COLS} FROM paper_canary_runs WHERE run_id=?{self.LOCK_CLAUSE}",
+                (run_id,),
+            )
+            raw_run = cur.fetchone()
+            if not raw_run:
+                raise PaperCanaryStateError("Paper Canary run does not exist")
+            run = self._paper_run_row(raw_run)
+            if run.status != "RUNNING" or run.active_slot != 1:
+                raise PaperCanaryStateError("Paper Canary run is not active RUNNING")
+            config, canonical_config, config_checksum = self._paper_config(run.config_json)
+            if canonical_config != run.config_json or config_checksum != run.config_checksum:
+                raise PaperCanarySafetyError("Paper Canary config snapshot was altered")
+            if instrument != config["instrument"]:
+                raise PaperCanarySafetyError("order instrument is outside the one-instrument run config")
+            current_risk = self._paper_risk_checksum_in_tx(cur)
+            if risk_config_checksum != run.risk_config_checksum or current_risk != run.risk_config_checksum:
+                raise PaperCanarySafetyError("risk configuration token does not match the run snapshot")
+            request_checksum = paper_canary_request_checksum(
+                run_id=run_id,
+                decision_id=decision_id,
+                client_order_id=order_id,
+                instrument=instrument,
+                side=side,
+                quantity=qty,
+                order_type=order_type,
+                quote_bid=bid,
+                quote_ask=ask,
+                quote_ts=quote_time,
+                risk_config_checksum=risk_config_checksum,
+                config_checksum=config_checksum,
+                asset_class=config.get("asset_class", "EQUITY"),
+            )
+            self._exec(
+                cur,
+                "INSERT INTO paper_orders "
+                "(client_order_id,run_id,idempotency_key,decision_id,instrument,side,quantity,order_type,"
+                "state,request_checksum,risk_config_checksum,quote_bid,quote_ask,quote_ts,broker_order_id,"
+                "reason,version,correlation_id,created_at,authorized_at,terminal_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,'INTENT',?,?,?,?,?,NULL,NULL,0,?,?,NULL,NULL,?) "
+                "ON CONFLICT DO NOTHING",
+                (order_id, run_id, idempotency_key, decision_id, instrument, side, self._m(qty), order_type,
+                 request_checksum, risk_config_checksum, self._m(bid), self._m(ask), quote_time,
+                 correlation_id, now, now),
+            )
+            created = cur.rowcount == 1
+            if created:
+                self._paper_append_order_event(
+                    cur,
+                    client_order_id=order_id,
+                    event_type="INTENT",
+                    previous_state=None,
+                    new_state="INTENT",
+                    reason=None,
+                    now=now,
+                )
+            self._exec(
+                cur,
+                f"SELECT {self._PAPER_ORDER_COLS} FROM paper_orders "
+                "WHERE client_order_id=? OR idempotency_key=? OR (run_id=? AND decision_id=?) "
+                f"ORDER BY client_order_id{self.LOCK_CLAUSE}",
+                (order_id, idempotency_key, run_id, decision_id),
+            )
+            matches = cur.fetchall()
+            if len(matches) != 1:
+                raise PaperCanaryConflict("intent identities resolve to conflicting durable orders")
+            order = self._paper_order_row(matches[0])
+            expected = (
+                order.client_order_id == order_id
+                and order.run_id == run_id
+                and order.idempotency_key == idempotency_key
+                and order.decision_id == decision_id
+                and order.instrument == instrument
+                and order.side == side
+                and order.quantity == qty
+                and order.order_type == order_type
+                and order.request_checksum == request_checksum
+                and order.risk_config_checksum == risk_config_checksum
+                and order.quote_bid == bid
+                and order.quote_ask == ask
+                and order.quote_ts == quote_time
+                and order.correlation_id == correlation_id
+            )
+            if not expected:
+                raise PaperCanaryConflict("idempotency key or decision was reused with another request")
+            return order
+
+    def get_paper_order(self, client_order_id: str) -> PaperCanaryOrderRow | None:
+        row = self._one(
+            f"SELECT {self._PAPER_ORDER_COLS} FROM paper_orders WHERE client_order_id=?",
+            (client_order_id,),
+        )
+        return self._paper_order_row(row) if row else None
+
+    def list_paper_orders(self, *, run_id: str, state: str | None = None,
+                          limit: int = 1000) -> list[PaperCanaryOrderRow]:
+        count = max(1, min(10000, int(limit)))
+        if state is None:
+            rows = self._all(
+                f"SELECT {self._PAPER_ORDER_COLS} FROM paper_orders WHERE run_id=? "
+                "ORDER BY created_at,client_order_id LIMIT ?", (run_id, count),
+            )
+        else:
+            rows = self._all(
+                f"SELECT {self._PAPER_ORDER_COLS} FROM paper_orders WHERE run_id=? AND state=? "
+                "ORDER BY created_at,client_order_id LIMIT ?", (run_id, state, count),
+            )
+        return [self._paper_order_row(row) for row in rows]
+
+    def transition_paper_order(self, *, client_order_id: str, expected_status: str,
+                               expected_version: int, new_status: str,
+                               reason: str | None = None,
+                               broker_order_id: str | None = None) -> PaperCanaryOrderRow:
+        allowed = self._PAPER_ORDER_TRANSITIONS.get(expected_status, frozenset())
+        if new_status not in allowed:
+            raise PaperCanaryStateError(f"invalid paper order transition {expected_status}->{new_status}")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a nonnegative integer")
+        if broker_order_id is not None and (type(broker_order_id) is not str or not broker_order_id):
+            raise ValueError("broker_order_id must be None or a non-empty string")
+        now = utcnow_iso()
+        terminal = new_status in {"REJECTED", "CANCELLED"}
+        with self.tx() as cur:
+            self._exec(
+                cur,
+                "UPDATE paper_orders SET state=?,broker_order_id=COALESCE(?,broker_order_id),reason=?,"
+                "version=version+1,authorized_at=CASE WHEN ?='AUTHORIZED' THEN ? ELSE authorized_at END,"
+                "terminal_at=CASE WHEN ?=1 THEN ? ELSE terminal_at END,updated_at=? "
+                "WHERE client_order_id=? AND state=? AND version=?",
+                (new_status, broker_order_id, reason, new_status, now, 1 if terminal else 0,
+                 now, now, client_order_id, expected_status, expected_version),
+            )
+            if cur.rowcount != 1:
+                raise PaperCanaryStateError("order status/version compare-and-swap failed")
+            self._paper_append_order_event(
+                cur,
+                client_order_id=client_order_id,
+                event_type=new_status,
+                previous_state=expected_status,
+                new_state=new_status,
+                reason=reason,
+                now=now,
+            )
+            self._exec(
+                cur,
+                f"SELECT {self._PAPER_ORDER_COLS} FROM paper_orders WHERE client_order_id=?",
+                (client_order_id,),
+            )
+            return self._paper_order_row(cur.fetchone())
+
+    def list_paper_order_events(self, client_order_id: str) -> list[PaperCanaryOrderEventRow]:
+        rows = self._all(
+            f"SELECT {self._PAPER_EVENT_COLS} FROM paper_order_events WHERE client_order_id=? ORDER BY seq",
+            (client_order_id,),
+        )
+        return [self._paper_event_row(row) for row in rows]
+
+    def get_paper_fill(self, client_order_id: str | None = None, *,
+                       fill_id: str | None = None) -> PaperCanaryFillRow | None:
+        if (client_order_id is None) == (fill_id is None):
+            raise ValueError("provide exactly one of client_order_id or fill_id")
+        if client_order_id is not None:
+            row = self._one(
+                f"SELECT {self._PAPER_FILL_COLS} FROM paper_fills WHERE client_order_id=?",
+                (client_order_id,),
+            )
+        else:
+            row = self._one(f"SELECT {self._PAPER_FILL_COLS} FROM paper_fills WHERE fill_id=?", (fill_id,))
+        return self._paper_fill_row(row) if row else None
+
+    def list_paper_fills(self, *, run_id: str, limit: int = 10000) -> list[PaperCanaryFillRow]:
+        count = max(1, min(100000, int(limit)))
+        rows = self._all(
+            f"SELECT {','.join(f'f.{name}' for name in self._PAPER_FILL_COLS.split(','))} "
+            "FROM paper_fills f JOIN paper_orders o ON o.client_order_id=f.client_order_id "
+            "WHERE o.run_id=? ORDER BY f.ledger_seq LIMIT ?",
+            (run_id, count),
+        )
+        return [self._paper_fill_row(row) for row in rows]
+
+    def get_paper_position(self, *, run_id: str,
+                           instrument: str) -> PaperCanaryPositionRow | None:
+        row = self._one(
+            f"SELECT {self._PAPER_POSITION_COLS} FROM paper_positions WHERE run_id=? AND instrument=?",
+            (run_id, instrument),
+        )
+        return self._paper_position_row(row) if row else None
+
+    def list_paper_positions(self, *, run_id: str) -> list[PaperCanaryPositionRow]:
+        rows = self._all(
+            f"SELECT {self._PAPER_POSITION_COLS} FROM paper_positions WHERE run_id=? ORDER BY instrument",
+            (run_id,),
+        )
+        return [self._paper_position_row(row) for row in rows]
+
+    @staticmethod
+    def _paper_require_ledger_money(value: Decimal, *, field: str,
+                                    nonnegative: bool = False) -> Decimal:
+        try:
+            return _paper_exact_money(value, field=field, nonnegative=nonnegative)
+        except (TypeError, ValueError) as exc:
+            raise PaperCanarySafetyError(
+                f"{field} is not exactly representable in the durable 8dp ledger"
+            ) from exc
+
+    def _paper_existing_fill_result(
+        self, cur, *, run: PaperCanaryRunRow, order: PaperCanaryOrderRow,
+        existing: PaperCanaryFillRow, fill_id: str, broker_order_id: str,
+        broker_fill_id: str, instrument: str, side: str, quantity: Decimal,
+        price: Decimal, commission: Decimal, multiplier: Decimal, quote_ts: str, ts: str,
+    ) -> PaperCanaryFillCommitResult:
+        if (
+            order.run_id != run.run_id
+            or order.state != "FILLED"
+            or order.broker_order_id != broker_order_id
+            or existing.fill_id != fill_id
+            or existing.broker_fill_id != broker_fill_id
+            or existing.instrument != instrument
+            or existing.side != side
+            or existing.quantity != quantity
+            or existing.price != price
+            or existing.commission != commission
+            or existing.multiplier != multiplier
+            or existing.quote_ts != quote_ts
+            or existing.ts != ts
+        ):
+            raise PaperCanaryConflict("fill retry does not exactly match the immutable committed fill")
+        self._exec(
+            cur,
+            f"SELECT {self._PAPER_ACCOUNT_COLS} FROM paper_accounts WHERE run_id=?{self.LOCK_CLAUSE}",
+            (run.run_id,),
+        )
+        raw_account = cur.fetchone()
+        self._exec(
+            cur,
+            f"SELECT {self._PAPER_POSITION_COLS} FROM paper_positions "
+            f"WHERE run_id=? AND instrument=?{self.LOCK_CLAUSE}",
+            (run.run_id, instrument),
+        )
+        raw_position = cur.fetchone()
+        if not raw_account or not raw_position:
+            raise PaperCanarySafetyError("committed fill is missing its account or position projection")
+        return PaperCanaryFillCommitResult(
+            order,
+            existing,
+            self._paper_account_row(raw_account),
+            self._paper_position_row(raw_position),
+        )
+
+    def commit_paper_fill_atomic(
+        self, *, run_id: str, client_order_id: str, expected_order_version: int,
+        fill_id: str, broker_order_id: str, broker_fill_id: str, instrument: str,
+        side: str, quantity: Decimal, price: Decimal, commission: Decimal,
+        multiplier: Decimal, quote_ts: str, ts: str,
+    ) -> PaperCanaryFillCommitResult:
+        """Commit one full PAPER fill and every ledger projection in one serializable transaction.
+
+        The exact existing fill is returned for an identical retry. Any mismatch, unsafe runtime
+        state, stale configuration, cap breach, short sale, or partial-ledger inconsistency fails
+        closed and rolls the transaction back.
+        """
+        if not all(type(value) is str and value for value in (
+            run_id, client_order_id, fill_id, broker_order_id, broker_fill_id, instrument, side,
+        )):
+            raise ValueError("fill identity fields must be non-empty strings")
+        if side not in {"BUY", "SELL"}:
+            raise ValueError("fill side must be BUY or SELL")
+        if type(expected_order_version) is not int or expected_order_version < 0:
+            raise ValueError("expected_order_version must be a nonnegative integer")
+        qty = _paper_exact_money(quantity, field="quantity", positive=True)
+        px = _paper_exact_money(price, field="price", positive=True)
+        fee = _paper_exact_money(commission, field="commission", nonnegative=True)
+        mult = _paper_exact_money(multiplier, field="multiplier", positive=True)
+        quote_time = _paper_timestamp(quote_ts, field="quote_ts")
+        fill_time = _paper_timestamp(ts, field="ts")
+        if datetime.fromisoformat(fill_time) < datetime.fromisoformat(quote_time):
+            raise ValueError("fill timestamp cannot precede the bound quote")
+        transaction_started_at = utcnow_iso()
+        with self.tx() as cur:
+            self._paper_serialize_sqlite_write(cur)
+            self._exec(
+                cur,
+                f"SELECT {self._PAPER_RUN_COLS} FROM paper_canary_runs WHERE run_id=?{self.LOCK_CLAUSE}",
+                (run_id,),
+            )
+            raw_run = cur.fetchone()
+            if not raw_run:
+                raise PaperCanaryStateError("Paper Canary run does not exist")
+            run = self._paper_run_row(raw_run)
+            self._exec(
+                cur,
+                f"SELECT {self._PAPER_ORDER_COLS} FROM paper_orders "
+                f"WHERE client_order_id=?{self.LOCK_CLAUSE}",
+                (client_order_id,),
+            )
+            raw_order = cur.fetchone()
+            if not raw_order:
+                raise PaperCanaryStateError("paper order does not exist")
+            order = self._paper_order_row(raw_order)
+            self._exec(
+                cur,
+                f"SELECT {self._PAPER_FILL_COLS} FROM paper_fills "
+                f"WHERE client_order_id=?{self.LOCK_CLAUSE}",
+                (client_order_id,),
+            )
+            raw_existing = cur.fetchone()
+            if raw_existing:
+                return self._paper_existing_fill_result(
+                    cur,
+                    run=run,
+                    order=order,
+                    existing=self._paper_fill_row(raw_existing),
+                    fill_id=fill_id,
+                    broker_order_id=broker_order_id,
+                    broker_fill_id=broker_fill_id,
+                    instrument=instrument,
+                    side=side,
+                    quantity=qty,
+                    price=px,
+                    commission=fee,
+                    multiplier=mult,
+                    quote_ts=quote_time,
+                    ts=fill_time,
+                )
+            if run.status != "RUNNING" or run.active_slot != 1:
+                raise PaperCanarySafetyError("Paper Canary run is not active RUNNING")
+            if order.run_id != run_id:
+                raise PaperCanaryConflict("order is not bound to the requested Paper Canary run")
+            if order.state != "AUTHORIZED" or order.version != expected_order_version:
+                raise PaperCanaryStateError("order is not AUTHORIZED at the expected version")
+            if order.broker_order_id not in {None, broker_order_id}:
+                raise PaperCanaryConflict("broker_order_id does not match the authorized order")
+            if (
+                order.instrument != instrument
+                or order.side != side
+                or order.quantity != qty
+                or order.quote_ts != quote_time
+            ):
+                raise PaperCanaryConflict("fill does not match the full authorized order binding")
+            config, canonical_config, config_checksum = self._paper_config(run.config_json)
+            if canonical_config != run.config_json or config_checksum != run.config_checksum:
+                raise PaperCanarySafetyError("Paper Canary config snapshot was altered")
+            if instrument != config["instrument"]:
+                raise PaperCanarySafetyError("fill instrument is outside the one-instrument run config")
+            quote_age = datetime.fromisoformat(fill_time) - datetime.fromisoformat(quote_time)
+            quote_age_us = (
+                (quote_age.days * 86_400 + quote_age.seconds) * 1_000_000
+                + quote_age.microseconds
+            )
+            quote_age_seconds = Decimal(quote_age_us) / Decimal(1_000_000)
+            if quote_age_seconds > self._paper_config_amount(
+                config["quote_max_age_s"], field="quote_max_age_s", positive=True,
+            ):
+                raise PaperCanarySafetyError("bound quote is stale at atomic fill commit")
+            slip = self._paper_config_amount(config["slippage_bps"], field="slippage_bps") / Decimal("10000")
+            raw_price = order.quote_ask * (Decimal("1") + slip) if side == "BUY" else (
+                order.quote_bid * (Decimal("1") - slip)
+            )
+            expected_price = raw_price.quantize(QUANT, rounding=ROUND_HALF_EVEN)
+            expected_commission = max(
+                self._paper_config_amount(config["min_commission"], field="min_commission"),
+                self._paper_config_amount(
+                    config["commission_per_unit"], field="commission_per_unit",
+                ) * qty,
+            ).quantize(QUANT, rounding=ROUND_HALF_EVEN)
+            if px != expected_price or fee != expected_commission or mult != Decimal("1"):
+                raise PaperCanaryConflict(
+                    "fill price/commission/multiplier does not match deterministic config terms"
+                )
+
+            self._exec(
+                cur,
+                f"SELECT status FROM runtime_state WHERE id=1{self.LOCK_CLAUSE}",
+            )
+            runtime = cur.fetchone()
+            if not runtime or runtime[0] != "RUNNING":
+                raise PaperCanarySafetyError("global runtime is not RUNNING")
+            self._exec(
+                cur,
+                "INSERT INTO kill_switch (id,engaged,actor,reason,updated_at) "
+                "VALUES (1,0,NULL,NULL,?) ON CONFLICT(id) DO NOTHING",
+                (transaction_started_at,),
+            )
+            self._exec(
+                cur,
+                f"SELECT engaged FROM kill_switch WHERE id=1{self.LOCK_CLAUSE}",
+            )
+            kill = cur.fetchone()
+            if not kill or bool(kill[0]):
+                raise PaperCanarySafetyError("kill switch is engaged")
+            self._exec(
+                cur,
+                f"SELECT halted,killed FROM risk_state WHERE id=1{self.LOCK_CLAUSE}",
+            )
+            risk_state = cur.fetchone()
+            if not risk_state or bool(risk_state[0]) or bool(risk_state[1]):
+                raise PaperCanarySafetyError("durable risk state is halted, killed, or missing")
+            current_risk = self._paper_risk_checksum_in_tx(cur)
+            if (
+                current_risk != run.risk_config_checksum
+                or order.risk_config_checksum != run.risk_config_checksum
+            ):
+                raise PaperCanarySafetyError("risk configuration changed after authorization")
+            if self._paper_config_amount(
+                config["starting_cash"], field="starting_cash", positive=True,
+            ) > self._paper_risk_capital_in_tx(cur):
+                raise PaperCanarySafetyError(
+                    "Paper Canary starting_cash exceeds canonical risk capital",
+                )
+
+            self._exec(
+                cur,
+                f"SELECT {self._PAPER_ACCOUNT_COLS} FROM paper_accounts "
+                f"WHERE run_id=?{self.LOCK_CLAUSE}",
+                (run_id,),
+            )
+            raw_account = cur.fetchone()
+            if not raw_account:
+                raise PaperCanarySafetyError("Paper Canary account is missing")
+            account = self._paper_account_row(raw_account)
+            if account.starting_cash != self._paper_config_amount(
+                config["starting_cash"], field="starting_cash", positive=True,
+            ):
+                raise PaperCanarySafetyError("account capital does not match the immutable run config")
+            self._exec(
+                cur,
+                f"SELECT {self._PAPER_POSITION_COLS} FROM paper_positions "
+                f"WHERE run_id=? AND instrument=?{self.LOCK_CLAUSE}",
+                (run_id, instrument),
+            )
+            raw_position = cur.fetchone()
+            position = self._paper_position_row(raw_position) if raw_position else None
+
+            # The first Store-owned time selects only the candidate UTC safety day. Lock that
+            # day's loss row before the final market-health attestation; a wait here must never
+            # leave quote/health freshness frozen at a pre-wait instant.
+            candidate_now = _paper_timestamp(utcnow_iso(), field="candidate_commit_now")
+            candidate_dt = datetime.fromisoformat(candidate_now)
+            trade_date = candidate_dt.date().isoformat()
+            self._exec(
+                cur,
+                "INSERT INTO daily_loss_lock (trade_date,engaged,reason,updated_at) "
+                "VALUES (?,0,NULL,?) ON CONFLICT(trade_date) DO NOTHING",
+                (trade_date, candidate_now),
+            )
+            self._exec(
+                cur,
+                f"SELECT engaged FROM daily_loss_lock WHERE trade_date=?{self.LOCK_CLAUSE}",
+                (trade_date,),
+            )
+            daily_lock = cur.fetchone()
+            if not daily_lock or bool(daily_lock[0]):
+                raise PaperCanarySafetyError("daily loss lock is engaged")
+
+            # Re-attest the authoritative symbol row only after every safety row governing this
+            # commit is locked. PostgreSQL holds it through commit; SQLite's early writer lock
+            # provides equivalent serialization. `READY` is the durable representation emitted
+            # only by the REALTIME quality gate, so MASSIVE/READY is the database-side attestation.
+            self._exec(
+                cur,
+                "SELECT symbol,source,status,updated_at FROM market_data_health "
+                f"WHERE symbol=?{self.LOCK_CLAUSE}",
+                (instrument,),
+            )
+            raw_health = cur.fetchone()
+            if (
+                not raw_health
+                or raw_health[0] != instrument
+                or raw_health[1] != "MASSIVE"
+                or raw_health[2] != "READY"
+            ):
+                raise PaperCanarySafetyError(
+                    "market-data health is not exact MASSIVE/READY/REALTIME for the fill symbol",
+                )
+            health_time = _paper_timestamp(
+                raw_health[3], field="market-data health updated_at",
+            )
+
+            # Capture the authoritative time only after the daily and health locks. The candidate
+            # time above never authorizes freshness or a day rollover.
+            now = _paper_timestamp(utcnow_iso(), field="commit_now")
+            quote_dt = datetime.fromisoformat(quote_time)
+            fill_dt = datetime.fromisoformat(fill_time)
+            commit_dt = datetime.fromisoformat(now)
+            health_dt = datetime.fromisoformat(health_time)
+            if quote_dt > commit_dt or fill_dt > commit_dt or health_dt > commit_dt:
+                raise PaperCanarySafetyError(
+                    "quote/fill/market-data health timestamp is in the future at atomic fill commit"
+                )
+            if commit_dt.date() != candidate_dt.date() or fill_dt.date() != commit_dt.date():
+                raise PaperCanarySafetyError(
+                    "candidate, fill evidence, and atomic commit must share one UTC trading day",
+                )
+            if health_dt < quote_dt:
+                raise PaperCanarySafetyError(
+                    "market-data health predates the bound REALTIME quote",
+                )
+            health_age = commit_dt - health_dt
+            health_age_us = (
+                (health_age.days * 86_400 + health_age.seconds) * 1_000_000
+                + health_age.microseconds
+            )
+            if Decimal(health_age_us) / Decimal(1_000_000) > self._paper_config_amount(
+                config["quote_max_age_s"], field="quote_max_age_s", positive=True,
+            ):
+                raise PaperCanarySafetyError(
+                    "market-data health became stale before the atomic fill commit",
+                )
+            commit_age = commit_dt - quote_dt
+            commit_age_us = (
+                (commit_age.days * 86_400 + commit_age.seconds) * 1_000_000
+                + commit_age.microseconds
+            )
+            if Decimal(commit_age_us) / Decimal(1_000_000) > self._paper_config_amount(
+                config["quote_max_age_s"], field="quote_max_age_s", positive=True,
+            ):
+                raise PaperCanarySafetyError(
+                    "bound quote became stale while waiting to commit the atomic fill"
+                )
+
+            old_quantity = Decimal("0") if position is None else position.quantity
+            old_average = Decimal("0") if position is None else position.avg_price
+            old_mark = Decimal("0") if position is None else position.mark_price
+            old_realized = Decimal("0") if position is None else position.realized_pnl
+            old_net = self._paper_require_ledger_money(
+                old_quantity * old_mark * mult, field="existing net exposure", nonnegative=True,
+            )
+            if (
+                old_quantity < 0
+                or account.realized_pnl != old_realized
+                or account.gross_exposure != abs(old_net)
+                or account.net_exposure != old_net
+                or account.equity != account.cash + old_net
+            ):
+                raise PaperCanarySafetyError("account and position projections are inconsistent")
+            if side == "SELL" and qty > old_quantity:
+                raise PaperCanarySafetyError("Paper Canary is long-only; SELL exceeds the long position")
+
+            notional = self._paper_require_ledger_money(
+                qty * px * mult, field="order notional", nonnegative=True,
+            )
+            if notional > self._paper_cap(config["max_order_notional"], field="max_order_notional"):
+                raise PaperCanarySafetyError("max_order_notional exceeded")
+            new_quantity = old_quantity + qty if side == "BUY" else old_quantity - qty
+            projected_gross = self._paper_require_ledger_money(
+                abs(new_quantity) * px * mult, field="projected gross exposure", nonnegative=True,
+            )
+            if projected_gross > self._paper_cap(
+                config["max_gross_notional"], field="max_gross_notional",
+            ):
+                raise PaperCanarySafetyError("max_gross_notional exceeded")
+            self._exec(
+                cur,
+                "SELECT f.quantity,f.price,f.multiplier,f.ts FROM paper_fills f "
+                "JOIN paper_orders o ON o.client_order_id=f.client_order_id "
+                "WHERE o.run_id=? ORDER BY f.ledger_seq",
+                (run_id,),
+            )
+            prior_fills = cur.fetchall()
+            turnover = sum(
+                (to_decimal(row[0]) * to_decimal(row[1]) * to_decimal(row[2])
+                 for row in prior_fills if row[3][:10] == trade_date),
+                Decimal("0"),
+            )
+            turnover = self._paper_require_ledger_money(
+                turnover + notional, field="daily turnover", nonnegative=True,
+            )
+            if turnover > self._paper_cap(
+                config["max_daily_turnover"], field="max_daily_turnover",
+            ):
+                raise PaperCanarySafetyError("max_daily_turnover exceeded")
+            daily_fill_count = sum(1 for row in prior_fills if row[3][:10] == trade_date)
+            if daily_fill_count + 1 > int(config["max_orders"]):
+                raise PaperCanarySafetyError("max_orders exceeded")
+
+            if side == "BUY":
+                new_cash = account.cash - notional - fee
+                weighted_cost = old_quantity * old_average + qty * px
+                new_average = weighted_cost / new_quantity
+                realized_delta = Decimal("0")
+            else:
+                new_cash = account.cash + notional - fee
+                new_average = Decimal("0") if new_quantity == 0 else old_average
+                realized_delta = (px - old_average) * qty * mult - fee
+            new_cash = self._paper_require_ledger_money(new_cash, field="cash", nonnegative=True)
+            new_average = self._paper_require_ledger_money(
+                new_average, field="average price", nonnegative=True,
+            )
+            new_realized = self._paper_require_ledger_money(
+                old_realized + realized_delta, field="realized PnL",
+            )
+            new_net = projected_gross
+            new_equity = self._paper_require_ledger_money(
+                new_cash + new_net, field="equity", nonnegative=True,
+            )
+
+            self._exec(cur, "SELECT COALESCE(MAX(ledger_seq),0) FROM paper_fills")
+            ledger_seq = int(cur.fetchone()[0]) + 1
+            self._exec(
+                cur,
+                "UPDATE paper_orders SET state='FILLED',broker_order_id=?,reason=NULL,version=version+1,"
+                "terminal_at=?,updated_at=? WHERE client_order_id=? AND state='AUTHORIZED' AND version=?",
+                (broker_order_id, fill_time, now, client_order_id, expected_order_version),
+            )
+            if cur.rowcount != 1:
+                raise PaperCanaryStateError("order authorization was consumed concurrently")
+            self._exec(
+                cur,
+                "INSERT INTO paper_fills "
+                "(fill_id,client_order_id,broker_fill_id,ledger_seq,instrument,side,quantity,price,commission,"
+                "multiplier,quote_ts,ts) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (fill_id, client_order_id, broker_fill_id, ledger_seq, instrument, side, self._m(qty),
+                 self._m(px), self._m(fee), self._m(mult), quote_time, fill_time),
+            )
+            if position is None:
+                self._exec(
+                    cur,
+                    "INSERT INTO paper_positions "
+                    "(run_id,instrument,quantity,avg_price,mark_price,realized_pnl,version,updated_at) "
+                    "VALUES (?,?,?,?,?,?,0,?)",
+                    (run_id, instrument, self._m(new_quantity), self._m(new_average), self._m(px),
+                     self._m(new_realized), now),
+                )
+            else:
+                self._exec(
+                    cur,
+                    "UPDATE paper_positions SET quantity=?,avg_price=?,mark_price=?,realized_pnl=?,"
+                    "version=version+1,updated_at=? WHERE run_id=? AND instrument=? AND version=?",
+                    (self._m(new_quantity), self._m(new_average), self._m(px), self._m(new_realized),
+                     now, run_id, instrument, position.version),
+                )
+                if cur.rowcount != 1:
+                    raise PaperCanaryStateError("position version compare-and-swap failed")
+            self._exec(
+                cur,
+                "UPDATE paper_accounts SET cash=?,equity=?,realized_pnl=?,gross_exposure=?,net_exposure=?,"
+                "version=version+1,updated_at=? WHERE run_id=? AND version=?",
+                (self._m(new_cash), self._m(new_equity), self._m(new_realized), self._m(projected_gross),
+                 self._m(new_net), now, run_id, account.version),
+            )
+            if cur.rowcount != 1:
+                raise PaperCanaryStateError("account version compare-and-swap failed")
+            self._paper_append_order_event(
+                cur,
+                client_order_id=client_order_id,
+                event_type="FILLED",
+                previous_state="AUTHORIZED",
+                new_state="FILLED",
+                reason=None,
+                now=fill_time,
+            )
+            self._exec(
+                cur,
+                f"SELECT {self._PAPER_ORDER_COLS} FROM paper_orders WHERE client_order_id=?",
+                (client_order_id,),
+            )
+            committed_order = self._paper_order_row(cur.fetchone())
+            self._exec(cur, f"SELECT {self._PAPER_FILL_COLS} FROM paper_fills WHERE fill_id=?", (fill_id,))
+            committed_fill = self._paper_fill_row(cur.fetchone())
+            self._exec(cur, f"SELECT {self._PAPER_ACCOUNT_COLS} FROM paper_accounts WHERE run_id=?", (run_id,))
+            committed_account = self._paper_account_row(cur.fetchone())
+            self._exec(
+                cur,
+                f"SELECT {self._PAPER_POSITION_COLS} FROM paper_positions "
+                "WHERE run_id=? AND instrument=?",
+                (run_id, instrument),
+            )
+            committed_position = self._paper_position_row(cur.fetchone())
+            return PaperCanaryFillCommitResult(
+                committed_order, committed_fill, committed_account, committed_position,
+            )
+
+    def cancel_paper_nonterminal_orders(self, *, run_id: str,
+                                        reason: str) -> list[PaperCanaryOrderRow]:
+        if type(reason) is not str or not reason:
+            raise ValueError("recovery cancellation reason must be a non-empty string")
+        now = utcnow_iso()
+        cancelled: list[PaperCanaryOrderRow] = []
+        with self.tx() as cur:
+            self._paper_serialize_sqlite_write(cur)
+            self._exec(
+                cur,
+                f"SELECT {self._PAPER_RUN_COLS} FROM paper_canary_runs WHERE run_id=?{self.LOCK_CLAUSE}",
+                (run_id,),
+            )
+            raw_run = cur.fetchone()
+            if not raw_run:
+                raise PaperCanaryStateError("Paper Canary run does not exist")
+            run = self._paper_run_row(raw_run)
+            if run.status not in {"RECOVERY_REQUIRED", "STOPPED", "FAILED"}:
+                raise PaperCanaryStateError("nonterminal orders may be bulk-cancelled only during recovery")
+            self._exec(
+                cur,
+                f"SELECT {self._PAPER_ORDER_COLS} FROM paper_orders "
+                "WHERE run_id=? AND state IN ('INTENT','AUTHORIZED') ORDER BY created_at,client_order_id"
+                f"{self.LOCK_CLAUSE}",
+                (run_id,),
+            )
+            orders = [self._paper_order_row(row) for row in cur.fetchall()]
+            for order in orders:
+                self._exec(
+                    cur,
+                    "UPDATE paper_orders SET state='CANCELLED',reason=?,version=version+1,terminal_at=?,"
+                    "updated_at=? WHERE client_order_id=? AND state=? AND version=?",
+                    (reason, now, now, order.client_order_id, order.state, order.version),
+                )
+                if cur.rowcount != 1:
+                    raise PaperCanaryStateError("recovery order cancellation compare-and-swap failed")
+                self._paper_append_order_event(
+                    cur,
+                    client_order_id=order.client_order_id,
+                    event_type="CANCELLED",
+                    previous_state=order.state,
+                    new_state="CANCELLED",
+                    reason=reason,
+                    now=now,
+                )
+                self._exec(
+                    cur,
+                    f"SELECT {self._PAPER_ORDER_COLS} FROM paper_orders WHERE client_order_id=?",
+                    (order.client_order_id,),
+                )
+                cancelled.append(self._paper_order_row(cur.fetchone()))
+        return cancelled
+
+    def record_paper_reconciliation(
+        self, *, run_id: str, status: str, fills_checksum: str,
+        positions_checksum: str, account_checksum: str, open_order_count: int,
+        breaks_json, reconciliation_id: str | None = None,
+        checked_at: str | None = None,
+    ) -> PaperCanaryReconciliationRow:
+        if status not in {"PASS", "FAIL"}:
+            raise ValueError("reconciliation status must be PASS or FAIL")
+        if not all(type(value) is str and value for value in (
+            run_id, fills_checksum, positions_checksum, account_checksum,
+        )):
+            raise ValueError("reconciliation identities/checksums must be non-empty strings")
+        if type(open_order_count) is not int or open_order_count < 0:
+            raise ValueError("open_order_count must be a nonnegative integer")
+        try:
+            breaks = json.loads(breaks_json) if type(breaks_json) is str else breaks_json
+            if type(breaks) is not list or any(type(item) is not str or not item for item in breaks):
+                raise ValueError("breaks_json must be a JSON list of non-empty strings")
+            canonical_breaks = json.dumps(
+                breaks, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False,
+            )
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("breaks_json must be a canonicalizable JSON list") from exc
+        checked = _paper_timestamp(checked_at or utcnow_iso(), field="checked_at")
+        recon_id = reconciliation_id or (
+            "pcr_" + hashlib.sha256(
+                "\0".join((run_id, status, fills_checksum, positions_checksum, account_checksum,
+                            str(open_order_count), canonical_breaks, checked)).encode()
+            ).hexdigest()[:24]
+        )
+        if type(recon_id) is not str or not recon_id:
+            raise ValueError("reconciliation_id must be a non-empty string")
+        with self.tx() as cur:
+            self._paper_serialize_sqlite_write(cur)
+            self._exec(
+                cur,
+                f"SELECT run_id FROM paper_canary_runs WHERE run_id=?{self.LOCK_CLAUSE}",
+                (run_id,),
+            )
+            if not cur.fetchone():
+                raise PaperCanaryStateError("Paper Canary run does not exist")
+            self._exec(
+                cur,
+                "INSERT INTO paper_reconciliations "
+                "(reconciliation_id,run_id,status,fills_checksum,positions_checksum,account_checksum,"
+                "open_order_count,breaks_json,checked_at) VALUES (?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(reconciliation_id) DO NOTHING",
+                (recon_id, run_id, status, fills_checksum, positions_checksum, account_checksum,
+                 open_order_count, canonical_breaks, checked),
+            )
+            self._exec(
+                cur,
+                f"SELECT {self._PAPER_RECON_COLS} FROM paper_reconciliations "
+                "WHERE reconciliation_id=?",
+                (recon_id,),
+            )
+            row = self._paper_reconciliation_row(cur.fetchone())
+            if row != PaperCanaryReconciliationRow(
+                recon_id, run_id, status, fills_checksum, positions_checksum, account_checksum,
+                open_order_count, canonical_breaks, checked,
+            ):
+                raise PaperCanaryConflict("reconciliation_id already exists with different content")
+            return row
+
+    def get_paper_reconciliation(self, reconciliation_id: str) -> PaperCanaryReconciliationRow | None:
+        row = self._one(
+            f"SELECT {self._PAPER_RECON_COLS} FROM paper_reconciliations WHERE reconciliation_id=?",
+            (reconciliation_id,),
+        )
+        return self._paper_reconciliation_row(row) if row else None
+
+    def list_paper_reconciliations(self, *, run_id: str,
+                                   limit: int = 1000) -> list[PaperCanaryReconciliationRow]:
+        count = max(1, min(10000, int(limit)))
+        rows = self._all(
+            f"SELECT {self._PAPER_RECON_COLS} FROM paper_reconciliations WHERE run_id=? "
+            "ORDER BY checked_at,reconciliation_id LIMIT ?",
+            (run_id, count),
+        )
+        return [self._paper_reconciliation_row(row) for row in rows]

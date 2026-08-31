@@ -31,7 +31,7 @@ def _seed_position(store, symbol, qty, avg, realized):
 
 
 def test_full_composition_from_persisted_state(store):
-    store.upsert_risk_config(capital=D("1000000"), risk_per_trade_pct=D("0.01"), max_daily_loss_pct=D("0.03"))
+    store.upsert_risk_config(capital=D("1000000"), risk_per_trade_pct=D("1"), max_daily_loss_pct=D("3"))
     store.upsert_risk_state(day_start_equity=D("1000000"), peak_equity=D("1010000"), halted=False, killed=False)
     store.upsert_daily_pnl(trade_date=TODAY, day_start_equity=D("1000000"),
                            realized_pnl=D("-5000"), unrealized_pnl=D("-3200"))
@@ -78,7 +78,7 @@ def test_missing_state_is_no_data_never_fabricated(store):
 
 
 def test_secrets_never_appear_in_the_read_model(store):
-    store.upsert_risk_config(capital=D("1000000"), risk_per_trade_pct=D("0.01"), max_daily_loss_pct=D("0.03"))
+    store.upsert_risk_config(capital=D("1000000"), risk_per_trade_pct=D("1"), max_daily_loss_pct=D("3"))
     # a broker dict polluted with secret-like keys → the read-model must copy NONE of them
     broker = {"connection": "CONNECTED", "equity": 1000.0, "cash": 100.0,
               "password": "hunter2", "token": "sekret", "session": "abc", "username": "trader"}

@@ -756,6 +756,208 @@ def _migration_021(dialect: str) -> list[str]:
     return tables + indexes + triggers
 
 
+# ---- § Phase P2 — durable Paper Canary ledger (PAPER ONLY) -------------------------------
+def _paper_canary_triggers_sqlite() -> list[str]:
+    """Enforce append-only fills/events and the Paper Canary order state machine in SQLite."""
+    return [
+        """CREATE TRIGGER IF NOT EXISTS trg_paper_order_events_no_update
+            BEFORE UPDATE ON paper_order_events
+            BEGIN SELECT RAISE(ABORT, 'paper_order_events: rows are immutable (insert-only)'); END""",
+        """CREATE TRIGGER IF NOT EXISTS trg_paper_order_events_no_delete
+            BEFORE DELETE ON paper_order_events
+            BEGIN SELECT RAISE(ABORT, 'paper_order_events: rows cannot be deleted'); END""",
+        """CREATE TRIGGER IF NOT EXISTS trg_paper_fills_no_update
+            BEFORE UPDATE ON paper_fills
+            BEGIN SELECT RAISE(ABORT, 'paper_fills: rows are immutable (insert-only)'); END""",
+        """CREATE TRIGGER IF NOT EXISTS trg_paper_fills_no_delete
+            BEFORE DELETE ON paper_fills
+            BEGIN SELECT RAISE(ABORT, 'paper_fills: rows cannot be deleted'); END""",
+        """CREATE TRIGGER IF NOT EXISTS trg_paper_orders_no_delete
+            BEFORE DELETE ON paper_orders
+            BEGIN SELECT RAISE(ABORT, 'paper_orders: rows cannot be deleted'); END""",
+        """CREATE TRIGGER IF NOT EXISTS trg_paper_orders_terminal_immutable
+            BEFORE UPDATE ON paper_orders
+            WHEN OLD.state IN ('FILLED','REJECTED','CANCELLED')
+            BEGIN SELECT RAISE(ABORT, 'paper_orders: terminal order is immutable'); END""",
+        """CREATE TRIGGER IF NOT EXISTS trg_paper_orders_request_immutable
+            BEFORE UPDATE ON paper_orders
+            WHEN OLD.client_order_id IS NOT NEW.client_order_id
+              OR OLD.run_id IS NOT NEW.run_id
+              OR OLD.idempotency_key IS NOT NEW.idempotency_key
+              OR OLD.decision_id IS NOT NEW.decision_id
+              OR OLD.instrument IS NOT NEW.instrument
+              OR OLD.side IS NOT NEW.side
+              OR OLD.quantity IS NOT NEW.quantity
+              OR OLD.order_type IS NOT NEW.order_type
+              OR OLD.request_checksum IS NOT NEW.request_checksum
+              OR OLD.risk_config_checksum IS NOT NEW.risk_config_checksum
+              OR OLD.quote_bid IS NOT NEW.quote_bid
+              OR OLD.quote_ask IS NOT NEW.quote_ask
+              OR OLD.quote_ts IS NOT NEW.quote_ts
+              OR OLD.correlation_id IS NOT NEW.correlation_id
+              OR OLD.created_at IS NOT NEW.created_at
+            BEGIN SELECT RAISE(ABORT, 'paper_orders: request fields are immutable'); END""",
+        """CREATE TRIGGER IF NOT EXISTS trg_paper_orders_state_graph
+            BEFORE UPDATE ON paper_orders
+            WHEN NEW.version != OLD.version + 1 OR (
+              OLD.state IS NOT NEW.state AND NOT (
+                (OLD.state = 'INTENT' AND NEW.state IN ('AUTHORIZED','REJECTED','CANCELLED'))
+                OR (OLD.state = 'AUTHORIZED' AND NEW.state IN ('FILLED','REJECTED','CANCELLED'))))
+            BEGIN SELECT RAISE(ABORT, 'paper_orders: invalid state transition'); END""",
+    ]
+
+
+def _paper_canary_triggers_postgres() -> list[str]:
+    """PostgreSQL equivalent of the durable Paper Canary write boundary."""
+    return [
+        # `%%` is the psycopg literal-percent escape; PL/pgSQL receives `%` for RAISE formatting.
+        """CREATE OR REPLACE FUNCTION atp_paper_order_event_block_mutate() RETURNS trigger AS $$
+           BEGIN RAISE EXCEPTION '%%: rows are immutable', TG_TABLE_NAME; END; $$ LANGUAGE plpgsql""",
+        "DROP TRIGGER IF EXISTS trg_paper_order_events_no_update ON paper_order_events",
+        "CREATE TRIGGER trg_paper_order_events_no_update BEFORE UPDATE ON paper_order_events "
+        "FOR EACH ROW EXECUTE FUNCTION atp_paper_order_event_block_mutate()",
+        "DROP TRIGGER IF EXISTS trg_paper_order_events_no_delete ON paper_order_events",
+        "CREATE TRIGGER trg_paper_order_events_no_delete BEFORE DELETE ON paper_order_events "
+        "FOR EACH ROW EXECUTE FUNCTION atp_paper_order_event_block_mutate()",
+        """CREATE OR REPLACE FUNCTION atp_paper_block_mutate() RETURNS trigger AS $$
+           BEGIN RAISE EXCEPTION 'Paper Canary ledger row is immutable'; END; $$ LANGUAGE plpgsql""",
+        "DROP TRIGGER IF EXISTS trg_paper_fills_no_update ON paper_fills",
+        "CREATE TRIGGER trg_paper_fills_no_update BEFORE UPDATE ON paper_fills "
+        "FOR EACH ROW EXECUTE FUNCTION atp_paper_block_mutate()",
+        "DROP TRIGGER IF EXISTS trg_paper_fills_no_delete ON paper_fills",
+        "CREATE TRIGGER trg_paper_fills_no_delete BEFORE DELETE ON paper_fills "
+        "FOR EACH ROW EXECUTE FUNCTION atp_paper_block_mutate()",
+        "DROP TRIGGER IF EXISTS trg_paper_orders_no_delete ON paper_orders",
+        "CREATE TRIGGER trg_paper_orders_no_delete BEFORE DELETE ON paper_orders "
+        "FOR EACH ROW EXECUTE FUNCTION atp_paper_block_mutate()",
+        """CREATE OR REPLACE FUNCTION atp_paper_validate_order_update() RETURNS trigger AS $$
+           BEGIN
+             IF OLD.state IN ('FILLED','REJECTED','CANCELLED') THEN
+               RAISE EXCEPTION 'paper_orders: terminal order is immutable';
+             END IF;
+             IF OLD.client_order_id IS DISTINCT FROM NEW.client_order_id
+                OR OLD.run_id IS DISTINCT FROM NEW.run_id
+                OR OLD.idempotency_key IS DISTINCT FROM NEW.idempotency_key
+                OR OLD.decision_id IS DISTINCT FROM NEW.decision_id
+                OR OLD.instrument IS DISTINCT FROM NEW.instrument
+                OR OLD.side IS DISTINCT FROM NEW.side
+                OR OLD.quantity IS DISTINCT FROM NEW.quantity
+                OR OLD.order_type IS DISTINCT FROM NEW.order_type
+                OR OLD.request_checksum IS DISTINCT FROM NEW.request_checksum
+                OR OLD.risk_config_checksum IS DISTINCT FROM NEW.risk_config_checksum
+                OR OLD.quote_bid IS DISTINCT FROM NEW.quote_bid
+                OR OLD.quote_ask IS DISTINCT FROM NEW.quote_ask
+                OR OLD.quote_ts IS DISTINCT FROM NEW.quote_ts
+                OR OLD.correlation_id IS DISTINCT FROM NEW.correlation_id
+                OR OLD.created_at IS DISTINCT FROM NEW.created_at THEN
+               RAISE EXCEPTION 'paper_orders: request fields are immutable';
+             END IF;
+             IF NEW.version <> OLD.version + 1 OR (
+                  OLD.state IS DISTINCT FROM NEW.state AND NOT (
+                    (OLD.state = 'INTENT' AND NEW.state IN ('AUTHORIZED','REJECTED','CANCELLED'))
+                    OR (OLD.state = 'AUTHORIZED' AND NEW.state IN ('FILLED','REJECTED','CANCELLED')))) THEN
+               RAISE EXCEPTION 'paper_orders: invalid state transition';
+             END IF;
+             RETURN NEW;
+           END; $$ LANGUAGE plpgsql""",
+        "DROP TRIGGER IF EXISTS trg_paper_orders_validate_update ON paper_orders",
+        "CREATE TRIGGER trg_paper_orders_validate_update BEFORE UPDATE ON paper_orders "
+        "FOR EACH ROW EXECUTE FUNCTION atp_paper_validate_order_update()",
+    ]
+
+
+def _migration_022(dialect: str) -> list[str]:
+    """§ Phase P2 — durable Paper Canary lifecycle and ledger (PAPER ONLY).
+
+    Dedicated tables deliberately leave the legacy Phase-B account/order/fill/position contract
+    untouched. PostgreSQL remains authoritative; SQLite mirrors the schema for deterministic local
+    tests. Money uses NUMERIC(20,8) in PostgreSQL and canonical-decimal TEXT in SQLite. The event
+    stream is database-append-only, and `active_slot` permits at most one active canary run.
+    """
+    t = _types(dialect)
+    ts, txt, i, m = t["TS"], t["TXT"], t["INT"], t["MONEY"]
+    tables = [
+        f"""CREATE TABLE IF NOT EXISTS paper_canary_runs (
+            run_id {txt} PRIMARY KEY,
+            status {txt} NOT NULL CHECK (status IN
+                ('CREATED','RUNNING','RECOVERY_REQUIRED','READY_FOR_ARM','STOPPED','FAILED','COMPLETED')),
+            active_slot {i} UNIQUE CHECK (active_slot IS NULL OR active_slot = 1),
+            version {i} NOT NULL DEFAULT 0,
+            config_json {txt} NOT NULL, config_checksum {txt} NOT NULL,
+            risk_config_checksum {txt} NOT NULL, commit_sha {txt} NOT NULL, reason {txt},
+            created_at {ts} NOT NULL, started_at {ts}, heartbeat_at {ts}, ended_at {ts},
+            updated_at {ts} NOT NULL,
+            CHECK ((status IN ('CREATED','RUNNING','RECOVERY_REQUIRED','READY_FOR_ARM')
+                    AND active_slot IS NOT NULL AND active_slot = 1)
+                OR (status IN ('STOPPED','FAILED','COMPLETED') AND active_slot IS NULL)))""",
+        f"""CREATE TABLE IF NOT EXISTS paper_accounts (
+            run_id {txt} PRIMARY KEY REFERENCES paper_canary_runs(run_id),
+            starting_cash {m} NOT NULL, cash {m} NOT NULL, equity {m} NOT NULL,
+            realized_pnl {m} NOT NULL, gross_exposure {m} NOT NULL, net_exposure {m} NOT NULL,
+            version {i} NOT NULL DEFAULT 0, updated_at {ts} NOT NULL,
+            CHECK (CAST(starting_cash AS NUMERIC) > 0), CHECK (CAST(cash AS NUMERIC) >= 0),
+            CHECK (CAST(gross_exposure AS NUMERIC) >= 0))""",
+        f"""CREATE TABLE IF NOT EXISTS paper_orders (
+            client_order_id {txt} PRIMARY KEY,
+            run_id {txt} NOT NULL REFERENCES paper_canary_runs(run_id),
+            idempotency_key {txt} NOT NULL UNIQUE, decision_id {txt} NOT NULL,
+            instrument {txt} NOT NULL, side {txt} NOT NULL CHECK (side IN ('BUY','SELL')),
+            quantity {m} NOT NULL, order_type {txt} NOT NULL CHECK (order_type = 'MARKET'),
+            state {txt} NOT NULL CHECK (state IN ('INTENT','AUTHORIZED','REJECTED','FILLED','CANCELLED')),
+            request_checksum {txt} NOT NULL, risk_config_checksum {txt} NOT NULL,
+            quote_bid {m} NOT NULL, quote_ask {m} NOT NULL, quote_ts {ts} NOT NULL,
+            broker_order_id {txt} UNIQUE, reason {txt}, version {i} NOT NULL DEFAULT 0,
+            correlation_id {txt}, created_at {ts} NOT NULL, authorized_at {ts}, terminal_at {ts},
+            updated_at {ts} NOT NULL, UNIQUE (run_id, decision_id),
+            CHECK (CAST(quantity AS NUMERIC) > 0), CHECK (CAST(quote_bid AS NUMERIC) > 0),
+            CHECK (CAST(quote_ask AS NUMERIC) >= CAST(quote_bid AS NUMERIC)))""",
+        f"""CREATE TABLE IF NOT EXISTS paper_fills (
+            fill_id {txt} PRIMARY KEY,
+            client_order_id {txt} NOT NULL UNIQUE REFERENCES paper_orders(client_order_id),
+            broker_fill_id {txt} NOT NULL UNIQUE, ledger_seq {i} NOT NULL UNIQUE,
+            instrument {txt} NOT NULL, side {txt} NOT NULL CHECK (side IN ('BUY','SELL')),
+            quantity {m} NOT NULL, price {m} NOT NULL, commission {m} NOT NULL,
+            multiplier {m} NOT NULL, quote_ts {ts} NOT NULL, ts {ts} NOT NULL,
+            CHECK (CAST(quantity AS NUMERIC) > 0), CHECK (CAST(price AS NUMERIC) > 0),
+            CHECK (CAST(commission AS NUMERIC) >= 0), CHECK (CAST(multiplier AS NUMERIC) = 1))""",
+        f"""CREATE TABLE IF NOT EXISTS paper_positions (
+            run_id {txt} NOT NULL REFERENCES paper_canary_runs(run_id), instrument {txt} NOT NULL,
+            quantity {m} NOT NULL, avg_price {m} NOT NULL, mark_price {m} NOT NULL,
+            realized_pnl {m} NOT NULL, version {i} NOT NULL DEFAULT 0, updated_at {ts} NOT NULL,
+            PRIMARY KEY (run_id, instrument), CHECK (CAST(quantity AS NUMERIC) >= 0),
+            CHECK (CAST(avg_price AS NUMERIC) >= 0), CHECK (CAST(mark_price AS NUMERIC) >= 0))""",
+        f"""CREATE TABLE IF NOT EXISTS paper_order_events (
+            event_id {txt} PRIMARY KEY,
+            client_order_id {txt} NOT NULL REFERENCES paper_orders(client_order_id),
+            seq {i} NOT NULL, ts {ts} NOT NULL, event_type {txt} NOT NULL,
+            previous_state {txt}, new_state {txt}, reason {txt},
+            UNIQUE (client_order_id, seq))""",
+        f"""CREATE TABLE IF NOT EXISTS paper_reconciliations (
+            reconciliation_id {txt} PRIMARY KEY,
+            run_id {txt} NOT NULL REFERENCES paper_canary_runs(run_id),
+            status {txt} NOT NULL CHECK (status IN ('PASS','FAIL')),
+            fills_checksum {txt} NOT NULL, positions_checksum {txt} NOT NULL,
+            account_checksum {txt} NOT NULL, open_order_count {i} NOT NULL,
+            breaks_json {txt} NOT NULL, checked_at {ts} NOT NULL)""",
+    ]
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS ix_paper_runs_status ON paper_canary_runs(status, updated_at)",
+        "CREATE INDEX IF NOT EXISTS ix_paper_orders_run_state ON paper_orders(run_id, state, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_paper_orders_run_instrument ON paper_orders(run_id, instrument)",
+        "CREATE INDEX IF NOT EXISTS ix_paper_fills_instrument_ts ON paper_fills(instrument, ts)",
+        "CREATE INDEX IF NOT EXISTS ix_paper_fills_ledger_seq ON paper_fills(ledger_seq)",
+        "CREATE INDEX IF NOT EXISTS ix_paper_positions_run ON paper_positions(run_id, instrument)",
+        "CREATE INDEX IF NOT EXISTS ix_paper_order_events_order_ts ON paper_order_events(client_order_id, ts)",
+        "CREATE INDEX IF NOT EXISTS ix_paper_reconciliations_run ON paper_reconciliations(run_id, checked_at)",
+    ]
+    triggers = (
+        _paper_canary_triggers_postgres()
+        if dialect == "postgres"
+        else _paper_canary_triggers_sqlite()
+    )
+    return tables + indexes + triggers
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -779,6 +981,7 @@ MIGRATIONS = [
     (19, "backtest_actual_risk", _migration_019),
     (20, "research_datasets", _migration_020),
     (21, "research_intel_validation", _migration_021),
+    (22, "durable_paper_canary", _migration_022),
 ]
 
 

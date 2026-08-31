@@ -14,15 +14,192 @@ stale and the Control service reports it unhealthy.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import hmac
 import json
 import os
 import signal
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from collections.abc import Awaitable, Callable
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
+from typing import Any
 
 from ..runtime.lifecycle import LifecycleManager
 from ..store import open_store
 from .bus import Bus, open_bus
+
+PAPER_CANARY_INTERNAL_TOKEN_HEADER = "X-ATP-Paper-Canary-Token"
+PAPER_CANARY_COMMAND_BODY_LIMIT = 16_384
+
+
+class LoopbackCommandError(RuntimeError):
+    """A deliberately bounded error returned by the private loopback command adapter."""
+
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
+class _LoopbackCommandHandler(BaseHTTPRequestHandler):
+    """Private JSON-only adapter; command execution is always marshalled onto the owner loop."""
+
+    def setup(self) -> None:
+        super().setup()
+        adapter: LoopbackCommandServer = self.server.adapter  # type: ignore[attr-defined]
+        self.connection.settimeout(adapter.request_timeout)
+
+    def _write(self, code: int, payload: dict[str, Any]) -> None:
+        body = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False,
+        ).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:
+        self._write(404, {"detail": "not found"})
+
+    def do_POST(self) -> None:
+        adapter: LoopbackCommandServer = self.server.adapter  # type: ignore[attr-defined]
+        if self.path not in adapter.paths:
+            self._write(404, {"detail": "not found"})
+            return
+        supplied = self.headers.get(PAPER_CANARY_INTERNAL_TOKEN_HEADER, "")
+        if not hmac.compare_digest(adapter.token, supplied):
+            self._write(401, {"detail": "unauthorized"})
+            return
+        if self.headers.get("Transfer-Encoding") is not None:
+            self._write(400, {"detail": "transfer encoding is not supported"})
+            return
+        if self.headers.get("Content-Type") != "application/json":
+            self._write(415, {"detail": "content type must be application/json"})
+            return
+        raw_length = self.headers.get("Content-Length")
+        try:
+            length = int(raw_length) if raw_length is not None else -1
+        except (TypeError, ValueError):
+            length = -1
+        if length < 0:
+            self._write(400, {"detail": "a valid content length is required"})
+            return
+        if length > adapter.body_limit:
+            self._write(413, {"detail": "request body too large"})
+            return
+        try:
+            raw = self.rfile.read(length)
+        except (OSError, TimeoutError):
+            self._write(408, {"detail": "request body timed out"})
+            return
+        if len(raw) != length:
+            self._write(400, {"detail": "incomplete request body"})
+            return
+
+        def _unique_object(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate JSON field")
+                result[key] = value
+            return result
+
+        try:
+            payload = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object)
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            self._write(400, {"detail": "malformed JSON object"})
+            return
+        if type(payload) is not dict:
+            self._write(400, {"detail": "request body must be a JSON object"})
+            return
+        future = asyncio.run_coroutine_threadsafe(
+            adapter.handler(self.path, payload), adapter.owner_loop,
+        )
+        try:
+            result = future.result(timeout=adapter.command_timeout)
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            self._write(504, {"detail": "owner command timed out"})
+        except LoopbackCommandError as exc:
+            self._write(exc.status_code, {"detail": exc.detail})
+        except Exception:  # noqa: BLE001 - private boundary must map every owner failure to fail-closed
+            self._write(500, {"detail": "owner command failed closed"})
+        else:
+            self._write(200, {"ok": True, "result": result})
+
+    def log_message(self, *_a) -> None:
+        pass
+
+
+class LoopbackCommandServer:
+    """A loopback-only HTTP thread that can never execute a command off the supplied event loop."""
+
+    def __init__(
+        self,
+        *,
+        owner_loop: asyncio.AbstractEventLoop,
+        handler: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]],
+        token: str,
+        paths: frozenset[str],
+        port: int,
+        body_limit: int = PAPER_CANARY_COMMAND_BODY_LIMIT,
+        command_timeout: float = 30.0,
+        request_timeout: float = 10.0,
+    ) -> None:
+        if type(token) is not str or not token:
+            raise ValueError("loopback command token must be a non-empty string")
+        if type(port) is not int or not 0 <= port <= 65_535:
+            raise ValueError("loopback command port is invalid")
+        if type(body_limit) is not int or body_limit <= 0:
+            raise ValueError("loopback command body limit is invalid")
+        if type(command_timeout) not in {int, float} or not 0 < command_timeout <= 300:
+            raise ValueError("loopback command timeout is invalid")
+        if type(request_timeout) not in {int, float} or not 0 < request_timeout <= 60:
+            raise ValueError("loopback request timeout is invalid")
+        if not paths or any(type(path) is not str or not path.startswith("/") for path in paths):
+            raise ValueError("loopback command paths are invalid")
+        self.owner_loop = owner_loop
+        self.handler = handler
+        self.token = token
+        self.paths = paths
+        self.body_limit = body_limit
+        self.command_timeout = float(command_timeout)
+        self.request_timeout = float(request_timeout)
+        self._httpd = HTTPServer(("127.0.0.1", port), _LoopbackCommandHandler)
+        self._httpd.adapter = self  # type: ignore[attr-defined]
+        self._thread: threading.Thread | None = None
+        self._closed = False
+
+    @property
+    def port(self) -> int:
+        return int(self._httpd.server_address[1])
+
+    def start(self) -> None:
+        if self._closed:
+            raise RuntimeError("loopback command server is closed")
+        if self._thread is not None:
+            raise RuntimeError("loopback command server already started")
+        thread = threading.Thread(
+            target=self._httpd.serve_forever,
+            daemon=True,
+            name="paper-canary-loopback",
+        )
+        thread.start()
+        self._thread = thread
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        thread = self._thread
+        if thread is None:
+            self._httpd.server_close()
+            return
+        self._httpd.shutdown()
+        self._httpd.server_close()
+        thread.join(timeout=5)
+        self._thread = None
 
 
 # ---------------------------------------------------------------- connection config (from env/atp.env)

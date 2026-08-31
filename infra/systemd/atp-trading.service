@@ -11,6 +11,11 @@ User=atp
 Group=atp
 WorkingDirectory=/opt/atp/app
 Environment=PYTHONPATH=/opt/atp/app/src
+# Durable Paper Canary is opt-in only. atp.env may override the first flag with the exact literal
+# `true`; live broker execution must remain the exact literal `false` for the canary to accept work.
+Environment=ATP_DURABLE_PAPER_CANARY_ENABLED=false
+Environment=BROKER_EXECUTION_ENABLED=false
+Environment=ATP_PAPER_CANARY_OWNER_PORT=9112
 EnvironmentFile=/opt/atp/atp.env
 ExecStart=/opt/atp/app/.venv/bin/python -m atp.services.trading
 Restart=on-failure

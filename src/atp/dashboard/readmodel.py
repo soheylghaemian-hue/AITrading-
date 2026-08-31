@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from decimal import Decimal
 
 
 def _f(v) -> float | None:
@@ -84,8 +85,10 @@ def build_dashboard_read_model(store, broker: dict | None = None, *, now: dateti
     if rc is not None or rstate is not None or dpnl is not None:
         risk_out = {
             "capital": _f(rc.capital) if rc else None,
-            "risk_per_trade_pct": _f(rc.risk_per_trade_pct) if rc else None,
-            "max_daily_loss_pct": _f(rc.max_daily_loss_pct) if rc else None,
+            # DB Risk Control stores percentage points (1 == 1%). This legacy dashboard field is a
+            # fraction, so bridge explicitly instead of silently treating 1 as 100%.
+            "risk_per_trade_pct": _f(rc.risk_per_trade_pct / Decimal(100)) if rc else None,
+            "max_daily_loss_pct": _f(rc.max_daily_loss_pct / Decimal(100)) if rc else None,
             "day_start_equity": day_start,
             "peak_equity": peak,
             "daily_pnl": daily_pnl,
