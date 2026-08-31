@@ -816,6 +816,10 @@ def _bind_retirement(inputs: object) -> tuple:
     grounds: list[RetirementGround] = []
     if inputs.drift is not None:
         _require_accepted(inputs.drift, DriftResult, TransitionFailure.INVALID_DRIFT)
+    if inputs.comparison is not None:
+        _require_accepted(inputs.comparison, ComparisonResult,
+                          TransitionFailure.INVALID_COMPARISON)
+    if inputs.drift is not None:
         if _model_state(inputs.drift.inputs.model, TransitionFailure.INVALID_MODEL) != target:
             raise _LearnError(TransitionFailure.EVIDENCE_MODEL_MISMATCH,
                               "drift evidence must name the exact model being retired")
@@ -823,8 +827,6 @@ def _bind_retirement(inputs: object) -> tuple:
                 and inputs.drift.abstain is True):
             grounds.append(RetirementGround.DRIFT_ABSTENTION)
     if inputs.comparison is not None:
-        _require_accepted(inputs.comparison, ComparisonResult,
-                          TransitionFailure.INVALID_COMPARISON)
         if (_model_state(inputs.comparison.inputs.champion, TransitionFailure.INVALID_MODEL)
                 != target):
             raise _LearnError(TransitionFailure.EVIDENCE_MODEL_MISMATCH,

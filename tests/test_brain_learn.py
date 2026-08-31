@@ -657,6 +657,13 @@ def test_retirement_refuses_evidence_naming_another_model():
     assert result.reasons == (TransitionFailure.EVIDENCE_MODEL_MISMATCH,)
 
 
+def test_retirement_checks_all_nested_shapes_before_any_model_binding():
+    other = _model("m-other", proposal_id="p-other")
+    result = evaluate_retirement(_model(), retirement_id="r-1", as_of=_at(11),
+                                 drift=_drift(model=other), comparison="not-a-comparison")
+    assert result.reasons == (TransitionFailure.INVALID_COMPARISON,)
+
+
 def test_already_retired_models_are_refused_before_any_evidence_binding():
     retired = _model(role=ModelRole.RETIRED)
     result = evaluate_retirement(retired, retirement_id="r-1", as_of=_at(11), drift=_drift())
