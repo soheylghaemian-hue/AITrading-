@@ -171,6 +171,81 @@ def test_stale_timestamp_rejected_by_gate():
     assert q.status == QualityStatus.STALE.value
 
 
+def test_fresh_trade_does_not_refresh_an_old_top_of_book():
+    old_quote = _ts() - 60_000
+    fresh_trade = _ts()
+    provider = MassiveProvider(
+        [MASSIVE_SYMBOLS[0]], api_key="k", connect_fn=_connect_fn([]), max_age_s=5.0,
+    )
+    provider._apply(
+        {"ev": "Q", "sym": "AAPL", "bp": 226.10, "ap": 226.12, "t": old_quote},
+    )
+    provider._apply(
+        {"ev": "T", "sym": "AAPL", "p": 226.11, "s": 100, "t": fresh_trade},
+    )
+
+    raw = provider.raw_by_symbol()["AAPL"]
+    assert int(raw["timestamp"].timestamp() * 1000) == old_quote
+    assert provider.quotes()[0].status == QualityStatus.STALE.value
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        {"bp": 226.10, "t": None},
+        {"ap": 226.12, "t": None},
+        {"bp": 226.10, "ap": 226.12},
+        {"bp": float("nan"), "ap": 226.12, "t": None},
+        {"bp": 226.12, "ap": 226.10, "t": None},
+    ],
+)
+def test_incomplete_quote_invalidates_old_top_of_book(broken):
+    provider = MassiveProvider(
+        [MASSIVE_SYMBOLS[0]], api_key="k", connect_fn=_connect_fn([]), max_age_s=5.0,
+    )
+    provider._apply(
+        {"ev": "Q", "sym": "AAPL", "bp": 226.10, "ap": 226.12, "t": _ts()},
+    )
+    provider._apply({"ev": "Q", "sym": "AAPL", **broken})
+
+    raw = provider.raw_by_symbol()["AAPL"]
+    assert raw["bid"] is None and raw["ask"] is None and raw["timestamp"] is None
+    assert provider.quotes()[0].status != QualityStatus.READY.value
+
+
+def test_out_of_order_quote_cannot_replace_newer_complete_book():
+    newest = _ts()
+    provider = MassiveProvider([MASSIVE_SYMBOLS[0]], api_key="k", connect_fn=_connect_fn([]))
+    provider._apply(
+        {"ev": "Q", "sym": "AAPL", "bp": 226.10, "ap": 226.12, "t": newest},
+    )
+    provider._apply(
+        {"ev": "Q", "sym": "AAPL", "bp": 1.0, "ap": 2.0, "t": newest - 1000},
+    )
+
+    raw = provider.raw_by_symbol()["AAPL"]
+    assert (raw["bid"], raw["ask"]) == (226.10, 226.12)
+    assert int(raw["timestamp"].timestamp() * 1000) == newest
+
+
+@pytest.mark.parametrize("poisoned_ts", [1e20, lambda: _ts() + 60_000])
+def test_unrepresentable_or_future_quote_cannot_poison_timestamp_ordering(poisoned_ts):
+    provider = MassiveProvider([MASSIVE_SYMBOLS[0]], api_key="k", connect_fn=_connect_fn([]))
+    bad = poisoned_ts() if callable(poisoned_ts) else poisoned_ts
+    provider._apply(
+        {"ev": "Q", "sym": "AAPL", "bp": 1.0, "ap": 2.0, "t": bad},
+    )
+    assert provider.raw_by_symbol()["AAPL"]["timestamp"] is None
+
+    current = _ts()
+    provider._apply(
+        {"ev": "Q", "sym": "AAPL", "bp": 226.10, "ap": 226.12, "t": current},
+    )
+    raw = provider.raw_by_symbol()["AAPL"]
+    assert int(raw["timestamp"].timestamp() * 1000) == current
+    assert provider.quotes()[0].status == QualityStatus.READY.value
+
+
 def test_realtime_only_after_a_live_tick():
     # No tick yet -> market_data_type stays None (never falsely REALTIME); source is always MASSIVE.
     p = MassiveProvider([MASSIVE_SYMBOLS[0]], api_key="k", connect_fn=_connect_fn([]))

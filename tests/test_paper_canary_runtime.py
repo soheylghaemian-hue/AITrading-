@@ -75,7 +75,8 @@ def _seed_store(path):
         )
     store.transition(new_status="RUNNING", actor="test", reason="test paper boundary")
     store.upsert_md_health(
-        symbol="AAPL", source="MASSIVE", status="READY", latency_ms=1, ts=NOW.isoformat(),
+        symbol="AAPL", source="MASSIVE", status="READY", latency_ms=1,
+        ts=NOW.isoformat(), quote_ts=NOW.isoformat(),
     )
     return store
 

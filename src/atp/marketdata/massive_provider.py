@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import time
 from dataclasses import dataclass, field
@@ -63,9 +64,9 @@ class _Book:
     volume: float | None = None
     bid_exch: int | None = None       # bid venue id (Polygon/Massive exchange code)
     ask_exch: int | None = None       # ask venue id
-    ts_ms: int | None = None          # newest source (SIP) timestamp seen, ms
-    recv_ms: float | None = None      # local wall-clock when we received it, ms
-    latency_ms: float | None = None   # recv_ms - ts_ms (one-way, best-effort)
+    ts_ms: int | None = None          # source (SIP) timestamp of the current Q top-of-book, ms
+    recv_ms: float | None = None      # local wall-clock when that Q event arrived, ms
+    latency_ms: float | None = None   # quote recv_ms - quote ts_ms (one-way, best-effort)
     events: int = 0
 
 
@@ -182,18 +183,58 @@ class MassiveProvider:
         now_ms = time.time() * 1000.0
         if kind == "Q":
             bp, ap = ev.get("bp"), ev.get("ap")
-            if bp is not None:
-                b.bid = float(bp)
-            if ap is not None:
-                b.ask = float(ap)
-            if ev.get("bs") is not None:
-                b.bid_size = float(ev["bs"]) * 100.0     # round lots -> shares
-            if ev.get("as") is not None:
-                b.ask_size = float(ev["as"]) * 100.0
-            if ev.get("bx") is not None:
-                b.bid_exch = int(ev["bx"])
-            if ev.get("ax") is not None:
-                b.ask_exch = int(ev["ax"])
+            try:
+                bid = float(bp)
+                ask = float(ap)
+                quote_ms = float(t)
+                valid = (
+                    type(t) in {int, float}
+                    and math.isfinite(bid)
+                    and math.isfinite(ask)
+                    and math.isfinite(quote_ms)
+                    and bid > 0.0
+                    and ask >= bid
+                    and quote_ms > 0.0
+                    and quote_ms <= now_ms
+                )
+                if valid:
+                    # Prove the provider millisecond value is representable on this platform now,
+                    # rather than letting a corrupt timestamp crash a later normalization pass.
+                    datetime.fromtimestamp(quote_ms / 1000.0, tz=timezone.utc)
+            except (TypeError, ValueError, OverflowError, OSError):
+                valid = False
+
+            # An out-of-order quote cannot replace or invalidate a newer complete top-of-book.
+            # Every other malformed/incomplete Q invalidates the whole book atomically: an old
+            # price must never inherit a fresh event timestamp, and a fresh price without a valid
+            # source timestamp must never become READY.
+            if valid and b.ts_ms is not None and int(quote_ms) < b.ts_ms:
+                pass
+            elif not valid:
+                b.bid = b.ask = None
+                b.bid_size = b.ask_size = None
+                b.bid_exch = b.ask_exch = None
+                b.ts_ms = b.recv_ms = b.latency_ms = None
+            else:
+                b.bid, b.ask = bid, ask
+                try:
+                    bid_size = float(ev["bs"]) * 100.0 if ev.get("bs") is not None else None
+                    ask_size = float(ev["as"]) * 100.0 if ev.get("as") is not None else None
+                    b.bid_size = bid_size if bid_size is not None and math.isfinite(bid_size) else None
+                    b.ask_size = ask_size if ask_size is not None and math.isfinite(ask_size) else None
+                except (TypeError, ValueError, OverflowError):
+                    b.bid_size = b.ask_size = None
+                try:
+                    b.bid_exch = int(ev["bx"]) if ev.get("bx") is not None else None
+                    b.ask_exch = int(ev["ax"]) if ev.get("ax") is not None else None
+                except (TypeError, ValueError, OverflowError):
+                    b.bid_exch = b.ask_exch = None
+                b.ts_ms = int(quote_ms)
+                b.recv_ms = now_ms
+                b.latency_ms = max(0.0, now_ms - quote_ms)
+                self._lat_sum += b.latency_ms
+                self._lat_n += 1
+                self._lat_max = max(self._lat_max, b.latency_ms)
         elif kind == "T":
             if ev.get("p") is not None:
                 b.last = float(ev["p"])
@@ -209,13 +250,6 @@ class MassiveProvider:
                 b.last = float(ev["c"])
         else:
             return
-        if isinstance(t, (int, float)):
-            b.ts_ms = int(t)
-            b.recv_ms = now_ms
-            b.latency_ms = max(0.0, now_ms - float(t))
-            self._lat_sum += b.latency_ms
-            self._lat_n += 1
-            self._lat_max = max(self._lat_max, b.latency_ms)
         b.events += 1
         self.total_events += 1
 

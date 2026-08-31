@@ -438,6 +438,7 @@ class DurablePaperCanary:
         commit_sha: str,
         risk_config_checksum: str | None = None,
         reason: str | None = None,
+        require_prepared: bool = False,
     ):
         """Create an idempotent READY_FOR_ARM run bound to source, risk and exact config."""
         canonical_run = _identifier(run_id, "run_id")
@@ -447,6 +448,8 @@ class DurablePaperCanary:
             raise PaperCanaryConfigurationError("commit_sha must be a full lowercase 40-hex SHA")
         if reason is not None and (type(reason) is not str or not reason):
             raise PaperCanaryConfigurationError("reason must be None or a non-empty string")
+        if type(require_prepared) is not bool:
+            raise PaperCanaryConfigurationError("require_prepared must be an exact bool")
         current = self._current_risk_token()
         if config.starting_cash > self._current_risk_capital():
             raise PaperCanarySafetyError(
@@ -465,6 +468,7 @@ class DurablePaperCanary:
             starting_cash=config.starting_cash,
             status="READY_FOR_ARM",
             reason=reason,
+            require_prepared=require_prepared,
         )
         if run.status != "READY_FOR_ARM" or self._config(run) != config:
             raise PaperCanarySafetyError("Store did not persist the requested Paper Canary run")
@@ -996,11 +1000,22 @@ class DurablePaperCanary:
                 if notional is None:
                     continue
                 day = fill_time.date().isoformat()
-                per_day_turnover[day] = per_day_turnover.get(day, Decimal(0)) + notional
-                per_day_orders[day] = per_day_orders.get(day, 0) + 1
-                if notional > config.max_order_notional:
-                    breaks.append(f"fill {fill.fill_id} exceeds max_order_notional")
+                prior_day_turnover = per_day_turnover.get(day, Decimal(0))
+                prior_day_orders = per_day_orders.get(day, 0)
+                # These are entry/admission caps.  A durable long-reducing SELL is an exit and
+                # may take the day's totals past them; its notional/count still consume activity
+                # so a later BUY remains blocked.
+                if fill.side == "BUY":
+                    if notional > config.max_order_notional:
+                        breaks.append(f"fill {fill.fill_id} exceeds max_order_notional")
+                    if prior_day_turnover + notional > config.max_daily_turnover:
+                        breaks.append(f"daily turnover cap exceeded on {day}")
+                    if prior_day_orders + 1 > config.max_orders_per_day:
+                        breaks.append(f"daily order-count cap exceeded on {day}")
+                per_day_turnover[day] = prior_day_turnover + notional
+                per_day_orders[day] = prior_day_orders + 1
 
+                prior_quantity = quantity
                 if fill.side == "BUY":
                     new_quantity = quantity + qty
                     weighted = quantity * average + qty * price
@@ -1010,6 +1025,8 @@ class DurablePaperCanary:
                     new_cash = _ledger_money(cash - notional - fee, f"fill {fill.fill_id} cash", breaks)
                     if new_average is None or new_cash is None:
                         continue
+                    if new_cash < 0:
+                        breaks.append(f"fill {fill.fill_id} uses Paper leverage")
                 elif fill.side == "SELL":
                     if qty > quantity:
                         breaks.append(f"fill {fill.fill_id} creates a short position")
@@ -1029,8 +1046,16 @@ class DurablePaperCanary:
                     continue
                 quantity, average, cash, mark = new_quantity, new_average, new_cash, price
                 gross = _ledger_money(quantity * mark, f"fill {fill.fill_id} gross exposure", breaks)
-                if gross is not None and gross > config.max_gross_notional:
+                if gross is not None and fill.side == "BUY" and gross > config.max_gross_notional:
                     breaks.append(f"fill {fill.fill_id} exceeds max_gross_notional")
+                if gross is not None and fill.side == "SELL":
+                    pre_sell_gross = _ledger_money(
+                        prior_quantity * price * mult,
+                        f"fill {fill.fill_id} pre-sell gross exposure",
+                        breaks,
+                    )
+                    if pre_sell_gross is not None and gross >= pre_sell_gross:
+                        breaks.append(f"fill {fill.fill_id} does not reduce long exposure")
             except Exception as exc:  # noqa: BLE001 - hostile durable row must record a break
                 breaks.append(
                     f"fill {getattr(fill, 'fill_id', '?')} is malformed: {type(exc).__name__}"
@@ -1045,13 +1070,6 @@ class DurablePaperCanary:
                     breaks.append(f"terminal non-FILLED order {order.client_order_id} has a fill")
             except Exception as exc:  # noqa: BLE001 - hostile durable order must record a break
                 breaks.append(f"paper order is malformed: {type(exc).__name__}")
-        for day, turnover in per_day_turnover.items():
-            if turnover > config.max_daily_turnover:
-                breaks.append(f"daily turnover cap exceeded on {day}")
-        for day, count in per_day_orders.items():
-            if count > config.max_orders_per_day:
-                breaks.append(f"daily order-count cap exceeded on {day}")
-
         net = _ledger_money(quantity * mark, "replayed net exposure", breaks)
         if net is None:
             return None, breaks
@@ -1198,7 +1216,65 @@ class DurablePaperCanary:
                     reason=f"stop recovery: {reason}",
                 )
             elif run.status == "READY_FOR_ARM":
-                recovery = self.prove_reconciled_ready(run_id=run.run_id)
+                if run.started_at is None and run.heartbeat_at is None:
+                    # A newly created run may be aborted before its first activation. It cannot have
+                    # accepted an order through the supported Store graph, but recompute the empty
+                    # ledger and persist the same checksum proof used by normal recovery before
+                    # releasing the active slot.
+                    orders = tuple(self._store.list_paper_orders(run_id=run.run_id))
+                    fills = tuple(self._store.list_paper_fills(run_id=run.run_id))
+                    positions = tuple(self._store.list_paper_positions(run_id=run.run_id))
+                    account = self._store.get_paper_account(run.run_id)
+                    _, breaks = self._replay(
+                        run=run,
+                        config=self._config(run),
+                        orders=orders,
+                        fills=fills,
+                        positions=positions,
+                        account=account,
+                    )
+                    if orders or fills or positions:
+                        breaks.append("never-started Paper Canary contains unexpected ledger work")
+                    if account is None:
+                        fills_checksum = _checksum({"fills": [], "tag": RECONCILIATION_TAG})
+                        positions_checksum = _checksum(
+                            {"positions": [], "tag": RECONCILIATION_TAG},
+                        )
+                        account_checksum = _checksum({"account": None, "tag": RECONCILIATION_TAG})
+                    else:
+                        try:
+                            fills_checksum, positions_checksum, account_checksum = self._actual_checksums(
+                                fills=fills,
+                                positions=positions,
+                                account=account,
+                            )
+                        except Exception as exc:  # noqa: BLE001 - malformed rows fail closed
+                            breaks.append(
+                                f"never-started reconciliation rows are malformed: {type(exc).__name__}",
+                            )
+                            fills_checksum = _checksum(
+                                {"fills": "INVALID", "tag": RECONCILIATION_TAG},
+                            )
+                            positions_checksum = _checksum(
+                                {"positions": "INVALID", "tag": RECONCILIATION_TAG},
+                            )
+                            account_checksum = _checksum(
+                                {"account": "INVALID", "tag": RECONCILIATION_TAG},
+                            )
+                    reconciliation = self._store.record_paper_reconciliation(
+                        run_id=run.run_id,
+                        status="PASS" if not breaks else "FAIL",
+                        fills_checksum=fills_checksum,
+                        positions_checksum=positions_checksum,
+                        account_checksum=account_checksum,
+                        open_order_count=len(orders),
+                        breaks_json=_canonical_json(breaks),
+                    )
+                    recovery = PaperCanaryRecovery(
+                        not breaks, run, reconciliation, (), tuple(breaks),
+                    )
+                else:
+                    recovery = self.prove_reconciled_ready(run_id=run.run_id)
             else:
                 raise PaperCanaryStateError(
                     "stop requires RUNNING, RECOVERY_REQUIRED, or reconciled READY_FOR_ARM"
@@ -1307,4 +1383,110 @@ def verify_paper_reconciled_ready(store, *, run_id: str) -> PaperCanaryRecovery:
                 breaks.append("persisted PASS does not bind the current READY ledger cycle")
         except Exception as exc:  # noqa: BLE001 - malformed proof metadata fails closed
             breaks.append(f"persisted PASS metadata is malformed: {type(exc).__name__}")
+    return PaperCanaryRecovery(not breaks, run, latest, (), tuple(breaks))
+
+
+def verify_paper_stopped(store, *, run_id: str) -> PaperCanaryRecovery:
+    """Read-only verification that a terminal run is current, reconciled, and exactly flat.
+
+    STOPPED is terminal in the supported Store/runtime graph, so this recomputation observes a
+    stable ledger: immutable fills/orders are replayed and the persisted account/position projections
+    plus latest reconciliation checksums must still match.  A clean reconciliation alone is not
+    sufficient because a consistent paper ledger may legitimately contain an open position.
+    """
+    canonical = _identifier(run_id, "run_id")
+    run = store.get_paper_run(canonical)
+    if run is None:
+        raise PaperCanaryStateError("Paper Canary run does not exist")
+    if type(run.run_id) is not str or run.run_id != canonical:
+        raise PaperCanarySafetyError("Store returned the wrong Paper Canary run")
+    if type(run.version) is not int or run.version < 0 or type(run.status) is not str:
+        raise PaperCanarySafetyError("Paper Canary run state is malformed")
+    config = DurablePaperCanary._config(run)
+    if run.status != "STOPPED" or run.active_slot is not None:
+        raise PaperCanaryStateError("terminal proof requires inactive STOPPED")
+
+    orders = tuple(store.list_paper_orders(run_id=run.run_id))
+    fills = tuple(store.list_paper_fills(run_id=run.run_id))
+    positions = tuple(store.list_paper_positions(run_id=run.run_id))
+    account = store.get_paper_account(run.run_id)
+    _, breaks = DurablePaperCanary._replay(
+        run=run,
+        config=config,
+        orders=orders,
+        fills=fills,
+        positions=positions,
+        account=account,
+    )
+
+    open_orders = 0
+    for order in orders:
+        try:
+            if order.state in _NONTERMINAL_ORDER_STATES:
+                open_orders += 1
+        except Exception as exc:  # noqa: BLE001 - malformed order is conservatively open
+            open_orders += 1
+            breaks.append(f"paper order state is malformed: {type(exc).__name__}")
+    if open_orders:
+        breaks.append("nonterminal paper orders invalidate terminal proof")
+
+    current_checksums = None
+    if account is None:
+        breaks.append("paper account is missing from terminal proof")
+    else:
+        try:
+            if account.gross_exposure != Decimal(0) or account.net_exposure != Decimal(0):
+                breaks.append("paper account is not flat")
+            if any(position.quantity != Decimal(0) for position in positions):
+                breaks.append("paper positions are not flat")
+            current_checksums = DurablePaperCanary._actual_checksums(
+                fills=fills,
+                positions=positions,
+                account=account,
+            )
+        except Exception as exc:  # noqa: BLE001 - malformed terminal rows fail closed
+            breaks.append(f"terminal paper rows are malformed: {type(exc).__name__}")
+            current_checksums = None
+
+    reconciliations = tuple(store.list_paper_reconciliations(
+        run_id=run.run_id,
+        limit=10000,
+    ))
+    latest = reconciliations[-1] if reconciliations else None
+    if latest is None:
+        breaks.append("terminal PASS reconciliation is missing")
+    else:
+        try:
+            checked = _parse_utc(latest.checked_at, "reconciliation.checked_at")
+            baseline = _parse_utc(
+                run.heartbeat_at if run.heartbeat_at is not None else run.created_at,
+                "run.heartbeat_at" if run.heartbeat_at is not None else "run.created_at",
+            )
+            ended = _parse_utc(run.ended_at, "run.ended_at")
+            proof_fields_match = (
+                latest.run_id == run.run_id
+                and latest.status == "PASS"
+                and type(latest.open_order_count) is int
+                and latest.open_order_count == 0
+                and latest.breaks_json == "[]"
+                and current_checksums is not None
+                and (
+                    latest.fills_checksum,
+                    latest.positions_checksum,
+                    latest.account_checksum,
+                ) == current_checksums
+                and latest.checked_at == _iso_utc(checked)
+                and (
+                    run.heartbeat_at == _iso_utc(baseline)
+                    if run.heartbeat_at is not None
+                    else run.created_at == _iso_utc(baseline)
+                )
+                and run.ended_at == _iso_utc(ended)
+                and checked >= baseline
+                and ended >= checked
+            )
+            if not proof_fields_match:
+                breaks.append("terminal PASS does not bind the current STOPPED ledger")
+        except Exception as exc:  # noqa: BLE001 - malformed proof metadata fails closed
+            breaks.append(f"terminal PASS metadata is malformed: {type(exc).__name__}")
     return PaperCanaryRecovery(not breaks, run, latest, (), tuple(breaks))

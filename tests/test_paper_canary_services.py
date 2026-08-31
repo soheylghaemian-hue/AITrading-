@@ -80,9 +80,17 @@ def _seed(path: Path):
             ),
         )
     store.transition(new_status="RUNNING", actor="test", reason="owner integration")
+    risk_token = store.current_paper_risk_config_checksum()
+    with store.tx() as cur:
+        store._exec(
+            cur,
+            "UPDATE runtime_state SET paper_commit_sha=?,paper_config_checksum=?,"
+            "paper_risk_config_checksum=?,paper_prepared_at=? WHERE id=1",
+            (COMMIT, _config().checksum, risk_token, NOW.isoformat()),
+        )
     store.upsert_md_health(
         symbol="AAPL", source="MASSIVE", status="READY", latency_ms=1,
-        ts=NOW.isoformat(),
+        ts=NOW.isoformat(), quote_ts=NOW.isoformat(),
     )
     return store
 
@@ -107,6 +115,7 @@ def _paper_env(monkeypatch):
     monkeypatch.setenv("BROKER_EXECUTION_ENABLED", "false")
     monkeypatch.setenv("ATP_PAPER_CANARY_CONFIG_JSON", _config().canonical_json())
     monkeypatch.setenv("ATP_COMMIT_REF", COMMIT)
+    monkeypatch.setattr(PaperCanaryOwner, "_deployed_commit", staticmethod(lambda: COMMIT))
 
 
 def _request(port: int, path: str, body: bytes, *, token: str | None = TOKEN,
@@ -222,6 +231,66 @@ async def test_owner_positive_path_is_serial_and_submit_is_server_bound(tmp_path
         assert len(primary.list_paper_fills(run_id="run-1")) == 1
     finally:
         server.close()
+        await owner.close()
+        primary.close()
+
+
+@pytest.mark.asyncio
+async def test_owner_uses_reduction_gate_for_sell_but_normal_gate_for_buy(tmp_path):
+    primary = _seed(tmp_path / "owner-reduction-gate.db")
+    normal = {"allowed": True}
+    calls = []
+
+    def normal_gate():
+        calls.append("normal")
+        return (normal["allowed"], "normal gate blocked")
+
+    def reduction_gate():
+        calls.append("reduction")
+        return (True, "daily latch may be bypassed only for Store-proven reduction")
+
+    owner = PaperCanaryOwner(
+        quote_getter=lambda _symbol: _quote(),
+        trade_gate=normal_gate,
+        risk_reduction_gate=reduction_gate,
+        store_factory=lambda: open_store(
+            str(tmp_path / "owner-reduction-gate.db"), migrate=False,
+        ),
+        clock=lambda: NOW,
+    )
+    await owner.start()
+    try:
+        await owner.command("/internal/paper-canary/create", {"run_id": "run-1"})
+        await owner.command(
+            "/internal/paper-canary/activate",
+            {"run_id": "run-1", "confirm": CONFIRM_PHRASE},
+        )
+        await owner.command(
+            "/internal/paper-canary/submit",
+            {"run_id": "run-1", "decision_id": "buy-1", "side": "BUY", "quantity": "1"},
+        )
+
+        primary.set_daily_loss_lock(
+            trade_date=NOW.date().isoformat(),
+            engaged=True,
+            reason="exercise owner risk-reduction path",
+            actor="test",
+        )
+        normal["allowed"] = False
+        with pytest.raises(LoopbackCommandError, match="normal gate blocked"):
+            await owner.command(
+                "/internal/paper-canary/submit",
+                {"run_id": "run-1", "decision_id": "buy-2", "side": "BUY", "quantity": "1"},
+            )
+        sold = await owner.command(
+            "/internal/paper-canary/submit",
+            {"run_id": "run-1", "decision_id": "sell-1", "side": "SELL", "quantity": "1"},
+        )
+        assert sold["order"]["side"] == "SELL"
+        assert primary.get_paper_position(run_id="run-1", instrument="AAPL").quantity == D("0")
+        assert calls.count("reduction") == 1
+        assert calls.count("normal") == 2
+    finally:
         await owner.close()
         primary.close()
 
@@ -446,7 +515,9 @@ async def test_loopback_stalled_body_is_bounded():
 async def test_startup_recovers_once_and_never_auto_activates(tmp_path):
     primary = _seed(tmp_path / "recovery.db")
     old = DurablePaperCanary(primary, clock=lambda: NOW)
-    old.create_run(run_id="run-1", config=_config(), commit_sha=COMMIT)
+    old.create_run(
+        run_id="run-1", config=_config(), commit_sha=COMMIT, require_prepared=True,
+    )
     old.activate(run_id="run-1", confirm=CONFIRM_PHRASE)
     owner = PaperCanaryOwner(
         quote_getter=lambda _symbol: None,
@@ -487,13 +558,13 @@ async def test_deploy_and_server_config_drift_block_activation_and_new_submit(tm
     await owner.start()
     try:
         await owner.command("/internal/paper-canary/create", {"run_id": "run-1"})
-        monkeypatch.setenv("ATP_COMMIT_REF", "b" * 40)
+        monkeypatch.setattr(PaperCanaryOwner, "_deployed_commit", staticmethod(lambda: "b" * 40))
         with pytest.raises(Exception, match="different deployed commit"):
             await owner.command(
                 "/internal/paper-canary/activate",
                 {"run_id": "run-1", "confirm": CONFIRM_PHRASE},
             )
-        monkeypatch.setenv("ATP_COMMIT_REF", COMMIT)
+        monkeypatch.setattr(PaperCanaryOwner, "_deployed_commit", staticmethod(lambda: COMMIT))
         other = replace(_config(), allowed_instruments=("MSFT",))
         monkeypatch.setenv("ATP_PAPER_CANARY_CONFIG_JSON", other.canonical_json())
         with pytest.raises(Exception, match="different server config"):
@@ -506,7 +577,7 @@ async def test_deploy_and_server_config_drift_block_activation_and_new_submit(tm
             "/internal/paper-canary/activate",
             {"run_id": "run-1", "confirm": CONFIRM_PHRASE},
         )
-        monkeypatch.setenv("ATP_COMMIT_REF", "b" * 40)
+        monkeypatch.setattr(PaperCanaryOwner, "_deployed_commit", staticmethod(lambda: "b" * 40))
         with pytest.raises(Exception, match="different deployed commit"):
             await owner.command(
                 "/internal/paper-canary/submit",
@@ -560,6 +631,76 @@ def test_control_auth_proxy_shape_default_off_and_no_runtime_import(monkeypatch)
     monkeypatch.undo()
 
 
+def test_control_prepare_is_strict_authenticated_server_bound_and_nonactivating(tmp_path, monkeypatch):
+    store = open_store(str(tmp_path / "control-prepare.db"))
+    store.upsert_risk_config(
+        capital=D("10000"), risk_per_trade_pct=D("1"), max_daily_loss_pct=D("5"),
+    )
+    with store.tx() as cur:
+        store._exec(
+            cur,
+            "INSERT INTO risk_control_policy "
+            "(id,risk_config_id,currency,warning_threshold_pct,max_portfolio_exposure_pct,"
+            "max_drawdown_pct,config_version,updated_at,updated_by) VALUES (?,?,?,?,?,?,?,?,?)",
+            ("policy", 1, "USD", "80.00000000", "50.00000000", "20.00000000", 1,
+             datetime.now(UTC).isoformat(), "test"),
+        )
+    store.transition(new_status="DISABLED", actor="test", reason="prepare")
+    md_now = NOW.isoformat()
+    store.upsert_md_health(
+        symbol="AAPL", source="MASSIVE", status="READY", latency_ms=1,
+        ts=md_now, quote_ts=md_now,
+    )
+    monkeypatch.setenv("ATP_CONTROL_TOKEN", "external")
+    monkeypatch.setattr(control, "resolve_commit_sha", lambda: COMMIT)
+    monkeypatch.setattr(control.ctx, "store", store)
+    monkeypatch.setattr(control.ctx, "life", LifecycleManager(store))
+    monkeypatch.setattr(control.ctx, "lock", threading.Lock())
+    monkeypatch.setattr(control.ctx, "paper_lock", threading.RLock())
+    monkeypatch.setattr(
+        control, "_paper_owner_request",
+        lambda *_args, **_kwargs: pytest.fail("prepare must not call the runtime owner"),
+    )
+    body = control.PaperCanaryPrepareBody(
+        expected_commit_sha=COMMIT,
+        expected_config_checksum=_config().checksum,
+        expected_risk_version_token=store.current_paper_risk_config_checksum(),
+        reason="bounded service test",
+    )
+    try:
+        with pytest.raises(HTTPException) as unauthorized:
+            control.paper_canary_prepare(body, authorization=None)
+        assert unauthorized.value.status_code == 401
+        result = control.paper_canary_prepare(body, authorization="Bearer external")
+        assert result["ok"] is True and result["status"] == "READY_FOR_ARM"
+        assert result["commit_sha"] == COMMIT and result["instrument"] == "AAPL"
+        assert store.get_runtime_state().status == "READY_FOR_ARM"
+        assert store.get_risk_state() is not None
+        assert store.list_orders() == [] and store.list_fills() == []
+        with pytest.raises(ValidationError):
+            control.PaperCanaryPrepareBody(
+                expected_commit_sha=COMMIT,
+                expected_config_checksum=_config().checksum,
+                expected_risk_version_token="a" * 20,
+                capital="10000",
+            )
+    finally:
+        store.close()
+
+
+def test_control_prepare_requires_literal_double_opt_in_before_store(tmp_path, monkeypatch):
+    monkeypatch.setenv("ATP_CONTROL_TOKEN", "external")
+    monkeypatch.setenv("ATP_DURABLE_PAPER_CANARY_ENABLED", "TRUE")
+    body = control.PaperCanaryPrepareBody(
+        expected_commit_sha=COMMIT,
+        expected_config_checksum=_config().checksum,
+        expected_risk_version_token="a" * 20,
+    )
+    with pytest.raises(HTTPException) as disabled:
+        control.paper_canary_prepare(body, authorization="Bearer external")
+    assert disabled.value.status_code == 404
+
+
 def test_control_proxy_is_loopback_fixed_and_fails_closed_when_disabled_or_down(monkeypatch):
     monkeypatch.setenv("ATP_PAPER_CANARY_INTERNAL_TOKEN", TOKEN)
     monkeypatch.setenv("ATP_PAPER_CANARY_OWNER_PORT", "1")
@@ -581,7 +722,9 @@ def test_global_recovery_is_owner_first_read_only_in_control_and_legacy_and_pape
 ):
     store = _seed(tmp_path / "control-recovery.db")
     canary = DurablePaperCanary(store, clock=lambda: NOW)
-    canary.create_run(run_id="run-1", config=_config(), commit_sha=COMMIT)
+    canary.create_run(
+        run_id="run-1", config=_config(), commit_sha=COMMIT, require_prepared=True,
+    )
     canary.activate(run_id="run-1", confirm=CONFIRM_PHRASE)
     store.upsert_md_health(
         symbol="AAPL",
@@ -657,7 +800,9 @@ def test_submit_model_forbids_client_quote_config_commit_and_token():
 def test_control_status_reads_db_and_kill_notifies_owner_only_after_durable_kill(tmp_path, monkeypatch):
     store = _seed(tmp_path / "control-status.db")
     canary = DurablePaperCanary(store, clock=lambda: NOW)
-    canary.create_run(run_id="run-1", config=_config(), commit_sha=COMMIT)
+    canary.create_run(
+        run_id="run-1", config=_config(), commit_sha=COMMIT, require_prepared=True,
+    )
     monkeypatch.setenv("ATP_CONTROL_TOKEN", "external")
     monkeypatch.setattr(control.ctx, "store", store)
     monkeypatch.setattr(
@@ -670,31 +815,290 @@ def test_control_status_reads_db_and_kill_notifies_owner_only_after_durable_kill
     assert status["account"]["starting_cash"] == "10000.00000000"
 
     events = []
-
-    class Life:
-        @staticmethod
-        def kill(**_kwargs):
-            events.append("durable-kill")
-            return SimpleNamespace(value="KILLED")
+    cleanup_done = threading.Event()
 
     class ActiveStore:
         @staticmethod
         def list_paper_runs(*, status, limit):
             assert limit == 2
             events.append(f"read-{status}")
-            return [SimpleNamespace(run_id="run-1")] if status == "RUNNING" else []
+            return [SimpleNamespace(run_id="run-1", status="RUNNING")] if status == "RUNNING" else []
 
-    monkeypatch.setattr(control.ctx, "life", Life())
     monkeypatch.setattr(control.ctx, "store", ActiveStore())
+    monkeypatch.setattr(control, "_emergency_kill", lambda: events.append("durable-kill") or "KILLED")
     monkeypatch.setattr(
         control,
         "_paper_owner_request",
-        lambda command, payload: events.append((command, payload)) or {},
+        lambda command, payload: events.append((command, payload)) or cleanup_done.set() or {},
     )
     assert control.ctl_kill(authorization="Bearer external") == {"status": "KILLED"}
+    assert cleanup_done.wait(timeout=1)
     assert events[0] == "durable-kill"
     assert events[-1][0] == "recover"
     store.close()
+
+
+def test_control_disable_requires_clean_paper_proof_then_is_idempotently_disabled(tmp_path, monkeypatch):
+    store = _seed(tmp_path / "control-disable.db")
+    canary = DurablePaperCanary(store, clock=lambda: NOW)
+    canary.create_run(
+        run_id="run-1", config=_config(), commit_sha=COMMIT, require_prepared=True,
+    )
+    canary.activate(run_id="run-1", confirm=CONFIRM_PHRASE)
+    stopped = canary.stop(run_id="run-1", reason="test complete")
+    assert stopped.ok is True and stopped.run.status == "STOPPED"
+    monkeypatch.setenv("ATP_CONTROL_TOKEN", "external")
+    monkeypatch.setattr(control.ctx, "store", store)
+    monkeypatch.setattr(control.ctx, "life", LifecycleManager(store))
+    monkeypatch.setattr(control.ctx, "lock", threading.Lock())
+    monkeypatch.setattr(control.ctx, "paper_lock", threading.RLock())
+    monkeypatch.setattr(
+        control, "_paper_owner_request",
+        lambda *_args, **_kwargs: pytest.fail("already STOPPED retry must not call owner"),
+    )
+    body = control.PaperCanaryDisableBody(run_id="run-1", reason="bounded test complete")
+    try:
+        result = control.paper_canary_disable(body, authorization="Bearer external")
+        assert result["ok"] is True and result["status"] == "DISABLED"
+        assert result["run"]["status"] == "STOPPED"
+        assert result["reconciliation"]["status"] == "PASS"
+        assert LifecycleManager(store).status is RuntimeStatus.DISABLED
+        actions = [event.action for event in store.recent_audit(10)]
+        assert "PAPER_CANARY_DISABLE" in actions
+        retry = control.paper_canary_disable(body, authorization="Bearer external")
+        assert retry["status"] == "DISABLED"
+        assert LifecycleManager(store).recover() is RuntimeStatus.DISABLED
+    finally:
+        store.close()
+
+
+def test_control_disable_can_close_a_clean_never_activated_run(tmp_path, monkeypatch):
+    store = _seed(tmp_path / "control-disable-never-started.db")
+    canary = DurablePaperCanary(store, clock=lambda: NOW)
+    run = canary.create_run(
+        run_id="run-1", config=_config(), commit_sha=COMMIT, require_prepared=True,
+    )
+    assert run.status == "READY_FOR_ARM" and run.started_at is None
+    stopped = canary.stop(run_id="run-1", reason="abort before first activation")
+    assert stopped.ok is True
+    assert stopped.run.status == "STOPPED"
+    assert stopped.reconciliation.status == "PASS"
+
+    monkeypatch.setenv("ATP_CONTROL_TOKEN", "external")
+    monkeypatch.setattr(control.ctx, "store", store)
+    monkeypatch.setattr(control.ctx, "life", LifecycleManager(store))
+    monkeypatch.setattr(control.ctx, "lock", threading.Lock())
+    monkeypatch.setattr(control.ctx, "paper_lock", threading.RLock())
+    monkeypatch.setattr(
+        control,
+        "_paper_owner_request",
+        lambda *_args, **_kwargs: pytest.fail("already STOPPED retry must not call owner"),
+    )
+    try:
+        result = control.paper_canary_disable(
+            control.PaperCanaryDisableBody(run_id="run-1"),
+            authorization="Bearer external",
+        )
+        assert result["ok"] is True and result["status"] == "DISABLED"
+        assert result["run"]["status"] == "STOPPED"
+    finally:
+        store.close()
+
+
+def test_control_disable_refuses_corrupt_reconciliation_without_global_transition(tmp_path, monkeypatch):
+    store = _seed(tmp_path / "control-disable-corrupt.db")
+    canary = DurablePaperCanary(store, clock=lambda: NOW)
+    canary.create_run(
+        run_id="run-1", config=_config(), commit_sha=COMMIT, require_prepared=True,
+    )
+    canary.activate(run_id="run-1", confirm=CONFIRM_PHRASE)
+    assert canary.stop(run_id="run-1", reason="test complete").ok is True
+    with store.tx() as cur:
+        store._exec(
+            cur,
+            "UPDATE paper_reconciliations SET breaks_json=? WHERE run_id=?",
+            ('["LEDGER_BREAK"]', "run-1"),
+        )
+    monkeypatch.setenv("ATP_CONTROL_TOKEN", "external")
+    monkeypatch.setattr(control.ctx, "store", store)
+    monkeypatch.setattr(control.ctx, "life", LifecycleManager(store))
+    monkeypatch.setattr(control.ctx, "lock", threading.Lock())
+    monkeypatch.setattr(control.ctx, "paper_lock", threading.RLock())
+    body = control.PaperCanaryDisableBody(run_id="run-1")
+    try:
+        with pytest.raises(HTTPException) as blocked:
+            control.paper_canary_disable(body, authorization="Bearer external")
+        assert blocked.value.status_code == 409
+        assert LifecycleManager(store).status is RuntimeStatus.RUNNING
+    finally:
+        store.close()
+
+
+def test_control_disable_refuses_stopped_pass_with_open_paper_position(tmp_path, monkeypatch):
+    store = _seed(tmp_path / "control-disable-open-position.db")
+    canary = DurablePaperCanary(store, clock=lambda: NOW)
+    canary.create_run(
+        run_id="run-1", config=_config(), commit_sha=COMMIT, require_prepared=True,
+    )
+    canary.activate(run_id="run-1", confirm=CONFIRM_PHRASE)
+    canary.submit(
+        run_id="run-1",
+        decision_id="buy-only",
+        instrument="AAPL",
+        side="BUY",
+        quantity=D("1"),
+        quote_bid=D("99.99"),
+        quote_ask=D("100"),
+        quote_ts=QUOTE,
+        risk_config_checksum=store.current_paper_risk_config_checksum(),
+    )
+    stopped = canary.stop(run_id="run-1", reason="test must remain visibly non-flat")
+    assert stopped.ok is True and stopped.reconciliation.status == "PASS"
+    assert store.list_paper_positions(run_id="run-1")[0].quantity == D("1")
+
+    monkeypatch.setenv("ATP_CONTROL_TOKEN", "external")
+    monkeypatch.setattr(control.ctx, "store", store)
+    monkeypatch.setattr(control.ctx, "life", LifecycleManager(store))
+    monkeypatch.setattr(control.ctx, "lock", threading.Lock())
+    monkeypatch.setattr(control.ctx, "paper_lock", threading.RLock())
+    monkeypatch.setattr(
+        control, "_paper_owner_request",
+        lambda *_args, **_kwargs: pytest.fail("already STOPPED run must not call owner"),
+    )
+    try:
+        with pytest.raises(HTTPException) as blocked:
+            control.paper_canary_disable(
+                control.PaperCanaryDisableBody(run_id="run-1"),
+                authorization="Bearer external",
+            )
+        assert blocked.value.status_code == 409
+        with pytest.raises(HTTPException) as runless_bypass:
+            control.paper_canary_disable(
+                control.PaperCanaryDisableBody(),
+                authorization="Bearer external",
+            )
+        assert runless_bypass.value.status_code == 409
+        assert LifecycleManager(store).status is RuntimeStatus.RUNNING
+    finally:
+        store.close()
+
+
+def test_control_disable_remains_risk_reducing_when_broker_flag_drifted(tmp_path, monkeypatch):
+    store = _seed(tmp_path / "control-disable-broker-drift.db")
+    canary = DurablePaperCanary(store, clock=lambda: NOW)
+    canary.create_run(
+        run_id="run-1", config=_config(), commit_sha=COMMIT, require_prepared=True,
+    )
+    canary.activate(run_id="run-1", confirm=CONFIRM_PHRASE)
+    assert canary.stop(run_id="run-1", reason="flat bounded run complete").ok is True
+
+    monkeypatch.setenv("ATP_CONTROL_TOKEN", "external")
+    monkeypatch.setenv("BROKER_EXECUTION_ENABLED", "true")
+    monkeypatch.setattr(control.ctx, "store", store)
+    monkeypatch.setattr(control.ctx, "life", LifecycleManager(store))
+    monkeypatch.setattr(control.ctx, "lock", threading.Lock())
+    monkeypatch.setattr(control.ctx, "paper_lock", threading.RLock())
+    monkeypatch.setattr(
+        control, "_paper_owner_request",
+        lambda *_args, **_kwargs: pytest.fail("already STOPPED run must not call owner or broker"),
+    )
+    try:
+        result = control.paper_canary_disable(
+            control.PaperCanaryDisableBody(run_id="run-1"),
+            authorization="Bearer external",
+        )
+        assert result["ok"] is True and result["status"] == "DISABLED"
+        assert LifecycleManager(store).status is RuntimeStatus.DISABLED
+    finally:
+        store.close()
+
+
+def test_control_kill_latches_durably_before_waiting_for_paper_lock(monkeypatch):
+    durable_kill = threading.Event()
+    finished = threading.Event()
+    paper_lock = threading.Lock()
+    control_lock = threading.Lock()
+    outcome = {}
+
+    class Store:
+        @staticmethod
+        def list_paper_runs(*, status, limit):
+            assert status in set(control._PAPER_RECOVERY_STATUSES) and limit == 2
+            return []
+
+    def invoke_kill():
+        try:
+            outcome["result"] = control.ctl_kill(authorization="Bearer external")
+        except BaseException as exc:  # pragma: no cover - asserted in the parent thread
+            outcome["error"] = exc
+        finally:
+            finished.set()
+
+    monkeypatch.setenv("ATP_CONTROL_TOKEN", "external")
+    monkeypatch.setattr(control.ctx, "store", Store())
+    monkeypatch.setattr(control.ctx, "lock", control_lock)
+    monkeypatch.setattr(control.ctx, "paper_lock", paper_lock)
+    monkeypatch.setattr(
+        control,
+        "_emergency_kill",
+        lambda: durable_kill.set() or "KILLED",
+    )
+    monkeypatch.setattr(
+        control, "_paper_owner_request",
+        lambda *_args, **_kwargs: pytest.fail("no active run means no owner recovery"),
+    )
+
+    paper_lock.acquire()
+    control_lock.acquire()
+    worker = threading.Thread(target=invoke_kill, daemon=True)
+    try:
+        worker.start()
+        latched_before_unlock = durable_kill.wait(timeout=1.0)
+        returned_before_unlock = finished.wait(timeout=1.0)
+    finally:
+        paper_lock.release()
+        control_lock.release()
+        worker.join(timeout=2.0)
+
+    assert latched_before_unlock is True
+    assert returned_before_unlock is True
+    assert finished.is_set() and "error" not in outcome
+    assert outcome["result"] == {"status": "KILLED"}
+
+
+@pytest.mark.parametrize("active_run", [False, True])
+def test_control_disable_without_run_id_aborts_only_when_no_active_paper_run(
+    tmp_path, monkeypatch, active_run,
+):
+    store = _seed(tmp_path / f"control-abort-no-run-{active_run}.db")
+    if active_run:
+        DurablePaperCanary(store, clock=lambda: NOW).create_run(
+            run_id="active-run", config=_config(), commit_sha=COMMIT,
+            require_prepared=True,
+        )
+
+    monkeypatch.setenv("ATP_CONTROL_TOKEN", "external")
+    monkeypatch.setattr(control.ctx, "store", store)
+    monkeypatch.setattr(control.ctx, "life", LifecycleManager(store))
+    monkeypatch.setattr(control.ctx, "lock", threading.Lock())
+    monkeypatch.setattr(control.ctx, "paper_lock", threading.RLock())
+    monkeypatch.setattr(
+        control, "_paper_owner_request",
+        lambda *_args, **_kwargs: pytest.fail("run-less abort must never call the owner"),
+    )
+    body = control.PaperCanaryDisableBody(reason="abort before Paper run creation")
+    try:
+        if active_run:
+            with pytest.raises(HTTPException) as blocked:
+                control.paper_canary_disable(body, authorization="Bearer external")
+            assert blocked.value.status_code == 409
+            assert LifecycleManager(store).status is RuntimeStatus.RUNNING
+        else:
+            result = control.paper_canary_disable(body, authorization="Bearer external")
+            assert result["ok"] is True and result["status"] == "DISABLED"
+            assert LifecycleManager(store).status is RuntimeStatus.DISABLED
+    finally:
+        store.close()
 
 
 @pytest.mark.asyncio

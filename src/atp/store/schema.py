@@ -958,6 +958,83 @@ def _migration_022(dialect: str) -> list[str]:
     return tables + indexes + triggers
 
 
+def _migration_023(dialect: str) -> list[str]:
+    """§ Phase P2.1 — durable pre-arm bindings and exact market-event freshness.
+
+    The singleton runtime row carries the exact commit/config/risk tuple that passed the atomic
+    pre-arm checks and the one run_id allowed to consume it. Normal ARM/START transitions preserve
+    it; DISABLED/KILLED/recovery transitions clear it. Trading Core requires and atomically consumes
+    the tuple in the run-creation transaction, preventing a staggered deploy, Risk Control update, or
+    second sequential run from silently replacing what the operator prepared.
+    """
+    t = _types(dialect)
+    txt, ts = t["TXT"], t["TS"]
+    return [
+        f"ALTER TABLE runtime_state ADD COLUMN paper_commit_sha {txt}",
+        f"ALTER TABLE runtime_state ADD COLUMN paper_config_checksum {txt}",
+        f"ALTER TABLE runtime_state ADD COLUMN paper_risk_config_checksum {txt}",
+        f"ALTER TABLE runtime_state ADD COLUMN paper_prepared_at {ts}",
+        f"ALTER TABLE runtime_state ADD COLUMN paper_run_id {txt}",
+        f"ALTER TABLE market_data_health ADD COLUMN quote_ts {ts}",
+    ]
+
+
+def _migration_024(dialect: str) -> list[str]:
+    """§ Phase P2.2 — one durable Paper daily-loss aggregate per UTC trading day.
+
+    A new canary run starts with a fresh account, so account-relative loss cannot be the daily
+    authority across sequential runs.  This row accumulates every committed Paper account-equity
+    delta for the UTC day and pins the canonical Risk capital that defined that day's loss budget.
+    """
+    t = _types(dialect)
+    ts, txt, i, m = t["TS"], t["TXT"], t["INT"], t["MONEY"]
+    return [
+        f"""CREATE TABLE IF NOT EXISTS paper_daily_loss_state (
+            trade_date {txt} PRIMARY KEY,
+            risk_capital_baseline {m} NOT NULL,
+            cumulative_equity_delta {m} NOT NULL,
+            version {i} NOT NULL DEFAULT 0,
+            updated_at {ts} NOT NULL,
+            CHECK (CAST(risk_capital_baseline AS NUMERIC) > 0))""",
+    ]
+
+
+def _migration_025(dialect: str) -> list[str]:
+    """§ Phase P2.3 — Paper accounts may honestly record insolvency while flattening.
+
+    Migration 22's ``cash >= 0`` check accidentally made a long-reducing SELL impossible when a
+    gap down plus commission exhausted the remaining Paper cash.  Starting capital must still be
+    positive and gross exposure must still be non-negative, but cash (and the already-unconstrained
+    equity/PnL fields) are signed ledger values.
+
+    PostgreSQL can drop the generated v22 constraint in place.  SQLite cannot drop one CHECK from
+    an existing table, so rebuild only this projection table inside the migration transaction and
+    copy every row losslessly.  No Paper child table references ``paper_accounts``.
+    """
+    if dialect == "postgres":
+        return [
+            "ALTER TABLE paper_accounts "
+            "DROP CONSTRAINT IF EXISTS paper_accounts_cash_check",
+        ]
+    t = _types(dialect)
+    ts, txt, i, m = t["TS"], t["TXT"], t["INT"], t["MONEY"]
+    return [
+        f"""CREATE TABLE paper_accounts_v25 (
+            run_id {txt} PRIMARY KEY REFERENCES paper_canary_runs(run_id),
+            starting_cash {m} NOT NULL, cash {m} NOT NULL, equity {m} NOT NULL,
+            realized_pnl {m} NOT NULL, gross_exposure {m} NOT NULL, net_exposure {m} NOT NULL,
+            version {i} NOT NULL DEFAULT 0, updated_at {ts} NOT NULL,
+            CHECK (CAST(starting_cash AS NUMERIC) > 0),
+            CHECK (CAST(gross_exposure AS NUMERIC) >= 0))""",
+        "INSERT INTO paper_accounts_v25 "
+        "(run_id,starting_cash,cash,equity,realized_pnl,gross_exposure,net_exposure,version,updated_at) "
+        "SELECT run_id,starting_cash,cash,equity,realized_pnl,gross_exposure,net_exposure,version,updated_at "
+        "FROM paper_accounts",
+        "DROP TABLE paper_accounts",
+        "ALTER TABLE paper_accounts_v25 RENAME TO paper_accounts",
+    ]
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -982,6 +1059,9 @@ MIGRATIONS = [
     (20, "research_datasets", _migration_020),
     (21, "research_intel_validation", _migration_021),
     (22, "durable_paper_canary", _migration_022),
+    (23, "paper_canary_operator_bindings", _migration_023),
+    (24, "paper_canary_daily_loss_aggregate", _migration_024),
+    (25, "paper_canary_signed_account_ledger", _migration_025),
 ]
 
 

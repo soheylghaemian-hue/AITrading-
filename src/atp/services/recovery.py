@@ -36,6 +36,16 @@ def market_data_fresh(store, *, max_age_s: float = 15.0, now: datetime | None = 
     return all(str(r[2]) == "READY" and age_seconds(r[4], now) <= max_age_s for r in rows)
 
 
+def verify_paper_stopped(store, *, run_id: str):
+    """Verify a terminal Paper proof without constructing or mutating the owner runtime."""
+    from ..runtime.paper_canary import PaperCanaryError, verify_paper_stopped as verify
+
+    try:
+        return verify(store, run_id=run_id)
+    except PaperCanaryError as exc:
+        raise ValueError(str(exc)) from exc
+
+
 def build_recovery_checks(
     store,
     *,
