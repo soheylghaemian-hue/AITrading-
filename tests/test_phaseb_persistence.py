@@ -3,6 +3,7 @@
 Backend under test is SQLite (file-backed, real transactions); a "restart" is a fresh Store opened
 over the SAME file. Every safety-critical guarantee the spec names is proven here."""
 
+import sqlite3
 from decimal import Decimal
 
 import pytest
@@ -38,7 +39,7 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
     s = _db(tmp_path)
     assert s.ping()
     applied = sorted(r[0] for r in s._all("SELECT version FROM schema_migrations"))
-    assert applied == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+    assert applied == list(range(1, 23))
     # tables exist
     for t in ("runtime_state", "orders", "fills", "positions", "kill_switch", "daily_pnl",
               "audit_events", "service_heartbeats", "market_data_health", "ohlc_bars", "news_items",
@@ -53,7 +54,9 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
               "backtest_metrics", "backtest_events",
               "research_intel_snapshots", "research_intel_snapshot_inputs", "research_intel_outcomes",
               "research_intel_collection_events", "research_validation_runs", "research_validation_metrics",
-              "research_datasets", "research_ohlc_bars", "research_dataset_events"):
+              "research_datasets", "research_ohlc_bars", "research_dataset_events",
+              "paper_canary_runs", "paper_accounts", "paper_orders", "paper_fills",
+              "paper_positions", "paper_order_events", "paper_reconciliations"):
         s._one(f"SELECT COUNT(*) FROM {t}")
     # migration 002 money columns exist
     s._one("SELECT notional, stop, target, monetary_risk, risk_pct FROM orders")
@@ -95,15 +98,123 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
     # migration 017 risk-control columns exist
     s._one("SELECT id, risk_config_id, currency, warning_threshold_pct, max_portfolio_exposure_pct, max_drawdown_pct, config_version, updated_at, updated_by FROM risk_control_policy")
     s._one("SELECT id, timestamp, event_type, severity, description, reason_code, observed_value, configured_limit, configuration_version, details_json, created_at FROM risk_events")
+    # migration 022 durable Paper Canary tables/columns (dedicated; legacy ledger untouched)
+    s._one("SELECT run_id,status,active_slot,version,config_json,config_checksum,risk_config_checksum,"
+           "commit_sha,reason,created_at,started_at,heartbeat_at,ended_at,updated_at FROM paper_canary_runs")
+    s._one("SELECT run_id,starting_cash,cash,equity,realized_pnl,gross_exposure,net_exposure,version,"
+           "updated_at FROM paper_accounts")
+    s._one("SELECT client_order_id,run_id,idempotency_key,decision_id,instrument,side,quantity,order_type,"
+           "state,request_checksum,risk_config_checksum,quote_bid,quote_ask,quote_ts,broker_order_id,reason,"
+           "version,correlation_id,created_at,authorized_at,terminal_at,updated_at FROM paper_orders")
+    s._one("SELECT fill_id,client_order_id,broker_fill_id,ledger_seq,instrument,side,quantity,price,commission,"
+           "multiplier,quote_ts,ts FROM paper_fills")
+    s._one("SELECT run_id,instrument,quantity,avg_price,mark_price,realized_pnl,version,updated_at "
+           "FROM paper_positions")
+    s._one("SELECT event_id,client_order_id,seq,ts,event_type,previous_state,new_state,reason "
+           "FROM paper_order_events")
+    s._one("SELECT reconciliation_id,run_id,status,fills_checksum,positions_checksum,account_checksum,"
+           "open_order_count,breaks_json,checked_at FROM paper_reconciliations")
     s2 = _reopen(tmp_path, s)                     # re-open re-runs migrator → no-op
-    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == list(range(1, 23))
+
+
+def test_paper_canary_migration_constraints_and_append_only_events(tmp_path):
+    s = _db(tmp_path)
+    now = "2026-08-31T12:00:00+00:00"
+
+    def insert_run(run_id: str, *, status: str = "RUNNING", active_slot=1):
+        with s.tx() as cur:
+            s._exec(
+                cur,
+                "INSERT INTO paper_canary_runs "
+                "(run_id,status,active_slot,version,config_json,config_checksum,risk_config_checksum,"
+                "commit_sha,reason,created_at,started_at,heartbeat_at,ended_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (run_id, status, active_slot, 0, "{}", "cfg", "risk", "commit", None,
+                 now, now, now, None, now),
+            )
+
+    insert_run("run-1")
+    with pytest.raises(sqlite3.IntegrityError):
+        insert_run("run-2")                              # one active_slot=1 only
+    with pytest.raises(sqlite3.IntegrityError):
+        insert_run("run-bad-slot", status="CREATED", active_slot=2)
+    with pytest.raises(sqlite3.IntegrityError):
+        insert_run("run-active-without-slot", status="RUNNING", active_slot=None)
+    with pytest.raises(sqlite3.IntegrityError):
+        insert_run("run-bad-status", status="ARMED", active_slot=None)
+
+    with s.tx() as cur:
+        s._exec(
+            cur,
+            "INSERT INTO paper_orders "
+            "(client_order_id,run_id,idempotency_key,decision_id,instrument,side,quantity,order_type,state,"
+            "request_checksum,risk_config_checksum,quote_bid,quote_ask,quote_ts,broker_order_id,reason,"
+            "version,correlation_id,created_at,authorized_at,terminal_at,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("order-1", "run-1", "idem-1", "decision-1", "AAPL:equity", "BUY", "1.00000000",
+             "MARKET", "INTENT", "request", "risk", "100.00000000", "100.01000000", now,
+             None, None, 0, "corr-1", now, None, None, now),
+        )
+        s._exec(
+            cur,
+            "INSERT INTO paper_order_events "
+            "(event_id,client_order_id,seq,ts,event_type,previous_state,new_state,reason) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            ("event-1", "order-1", 1, now, "INTENT_CREATED", None, "INTENT", None),
+        )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        with s.tx() as cur:
+            s._exec(cur, "UPDATE paper_order_events SET reason=? WHERE event_id=?", ("changed", "event-1"))
+    with pytest.raises(sqlite3.IntegrityError):
+        with s.tx() as cur:
+            s._exec(cur, "DELETE FROM paper_order_events WHERE event_id=?", ("event-1",))
+    assert s._one("SELECT event_type,new_state FROM paper_order_events WHERE event_id=?", ("event-1",)) == (
+        "INTENT_CREATED", "INTENT",
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        with s.tx() as cur:
+            s._exec(cur, "UPDATE paper_orders SET decision_id=? WHERE client_order_id=?",
+                    ("changed", "order-1"))
+    with pytest.raises(sqlite3.IntegrityError):
+        with s.tx() as cur:
+            s._exec(cur, "UPDATE paper_orders SET state=? WHERE client_order_id=?", ("FILLED", "order-1"))
+
+    with s.tx() as cur:
+        s._exec(cur, "UPDATE paper_orders SET state=?,version=?,authorized_at=?,updated_at=? "
+                     "WHERE client_order_id=?", ("AUTHORIZED", 1, now, now, "order-1"))
+        s._exec(
+            cur,
+            "INSERT INTO paper_fills "
+            "(fill_id,client_order_id,broker_fill_id,ledger_seq,instrument,side,quantity,price,commission,"
+            "multiplier,quote_ts,ts) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("fill-1", "order-1", "broker-fill-1", 1, "AAPL:equity", "BUY", "1.00000000",
+             "100.01000000", "1.00000000", "1.00000000", now, now),
+        )
+        s._exec(cur, "UPDATE paper_orders SET state=?,broker_order_id=?,version=?,terminal_at=?,updated_at=? "
+                     "WHERE client_order_id=?", ("FILLED", "broker-order-1", 2, now, now, "order-1"))
+
+    with pytest.raises(sqlite3.IntegrityError):
+        with s.tx() as cur:
+            s._exec(cur, "UPDATE paper_orders SET state=? WHERE client_order_id=?", ("CANCELLED", "order-1"))
+    with pytest.raises(sqlite3.IntegrityError):
+        with s.tx() as cur:
+            s._exec(cur, "DELETE FROM paper_orders WHERE client_order_id=?", ("order-1",))
+    with pytest.raises(sqlite3.IntegrityError):
+        with s.tx() as cur:
+            s._exec(cur, "UPDATE paper_fills SET commission=? WHERE fill_id=?", ("2.00000000", "fill-1"))
+    with pytest.raises(sqlite3.IntegrityError):
+        with s.tx() as cur:
+            s._exec(cur, "DELETE FROM paper_fills WHERE fill_id=?", ("fill-1",))
 
 
 def test_postgres_ddl_declares_numeric_money():
     """Static (no live PG): every authoritative money field is NUMERIC(20,8) in the PG schema —
     never binary float. SQLite stores the same values as canonical decimal TEXT."""
-    from atp.store.schema import _migration_002, _statements
-    ddl = _statements("postgres") + _migration_002("postgres")
+    from atp.store.schema import _migration_002, _migration_022, _statements
+    ddl = _statements("postgres") + _migration_002("postgres") + _migration_022("postgres")
     money_columns = ["capital", "cash", "equity", "notional", "stop", "target", "monetary_risk",
                      "realized_pnl", "unrealized_pnl", "avg_price", "price", "commission",
                      "slippage", "fees", "quantity", "day_start_equity", "entry_price", "exit_price"]
@@ -114,12 +225,17 @@ def test_postgres_ddl_declares_numeric_money():
     import re
     for s in ddl:
         assert not re.search(r"\b(FLOAT|DOUBLE\s+PRECISION|REAL)\b", s, re.IGNORECASE)
+    paper_ddl = "\n".join(_migration_022("postgres"))
+    for col in ("starting_cash", "cash", "equity", "realized_pnl", "gross_exposure",
+                "net_exposure", "quantity", "quote_bid", "quote_ask", "price", "commission",
+                "multiplier", "avg_price", "mark_price"):
+        assert col in paper_ddl and "NUMERIC(20,8)" in paper_ddl
 
 
 def test_money_is_exact_decimal(tmp_path):
     s = _db(tmp_path)
-    s.upsert_risk_config(capital=D("1000000.00"), risk_per_trade_pct=D("0.01"),
-                         max_daily_loss_pct=D("0.03"))
+    s.upsert_risk_config(capital=D("1000000.00"), risk_per_trade_pct=D("1"),
+                         max_daily_loss_pct=D("3"))
     cfg = s.get_risk_config()
     assert cfg.capital == Decimal("1000000.00000000")
     assert isinstance(cfg.capital, Decimal)
@@ -154,8 +270,8 @@ def test_kill_switch_survives_restart(tmp_path):
 # ------------------------------------------------------------------ DAILY LOSS durability
 def test_daily_loss_survives_restart(tmp_path):
     s = _db(tmp_path)
-    s.upsert_risk_config(capital=D("1000000"), risk_per_trade_pct=D("0.01"),
-                         max_daily_loss_pct=D("0.03"))
+    s.upsert_risk_config(capital=D("1000000"), risk_per_trade_pct=D("1"),
+                         max_daily_loss_pct=D("3"))
     s.upsert_daily_pnl(trade_date="2026-08-14", day_start_equity=D("1000000"),
                        realized_pnl=D("-28000"), unrealized_pnl=D("0"))
     assert remaining_daily_budget(s, trade_date="2026-08-14") == Decimal("2000")

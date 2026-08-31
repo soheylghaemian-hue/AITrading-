@@ -12,6 +12,11 @@ User=atp
 Group=atp
 WorkingDirectory=/opt/atp/app
 Environment=PYTHONPATH=/opt/atp/app/src
+# Mirrors Trading Core's fail-closed Paper Canary defaults. Mutations are proxied only to the
+# loopback owner; Control never owns execution state.
+Environment=ATP_DURABLE_PAPER_CANARY_ENABLED=false
+Environment=BROKER_EXECUTION_ENABLED=false
+Environment=ATP_PAPER_CANARY_OWNER_PORT=9112
 EnvironmentFile=/opt/atp/atp.env
 ExecStart=/opt/atp/app/.venv/bin/python -m atp.services.control
 Restart=on-failure

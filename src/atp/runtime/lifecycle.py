@@ -98,7 +98,7 @@ class LifecycleManager:
             ok = False
             try:
                 ok = bool(fn()) if fn is not None else False
-            except Exception:
+            except Exception:  # noqa: BLE001 - every injected checker is a fail-closed boundary
                 ok = False
             results.append((step, ok))
             if not ok:
@@ -136,7 +136,10 @@ class LifecycleManager:
 
     def start(self, *, confirm, actor: str = "user") -> RuntimeStatus:
         st = self._require({RuntimeStatus.ARMED}, "start")
-        if confirm is not True and confirm != CONFIRM_PHRASE:
+        confirmed = confirm is True or (
+            type(confirm) is str and confirm == CONFIRM_PHRASE
+        )
+        if not confirmed:
             self._store.audit(actor=actor, action="START_REJECTED", previous_state=st.value,
                               new_state=st.value, reason="confirmation required (two-step activation)")
             raise LifecycleError("start requires explicit confirmation")

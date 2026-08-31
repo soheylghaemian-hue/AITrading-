@@ -23,9 +23,25 @@ pytestmark = pytest.mark.skipif(not DSN, reason="set ATP_TEST_POSTGRES_DSN to ru
 from atp.runtime import LifecycleManager, OrderManager, RuntimeStatus, TradingGate, reconstruct_positions
 from atp.store import D, open_store
 
-_TABLES = ["schema_migrations", "accounts", "runtime_state", "risk_config", "risk_state",
-           "kill_switch", "daily_pnl", "daily_loss_lock", "positions", "orders", "fills",
-           "trades", "decisions", "audit_events", "service_heartbeats", "market_data_health"]
+_TABLES = [
+    "paper_reconciliations", "paper_order_events", "paper_fills", "paper_positions",
+    "paper_orders", "paper_accounts", "paper_canary_runs",
+    "research_validation_metrics", "research_validation_runs",
+    "research_intel_collection_events", "research_intel_outcomes",
+    "research_intel_snapshot_inputs", "research_intel_snapshots",
+    "research_dataset_events", "research_ohlc_bars", "research_datasets",
+    "backtest_events", "backtest_metrics", "backtest_equity_points", "backtest_trades",
+    "backtest_decisions", "backtest_runs", "risk_events", "risk_control_policy",
+    "insider_clusters", "insider_transactions", "institutional_position_changes",
+    "macro_snapshots", "data_completeness_snapshots", "ai_governance_results",
+    "ai_prediction_outcomes", "ai_predictions", "ai_assessment_components", "ai_assessments",
+    "options_flow", "options_snapshot", "analyst_estimates", "valuation",
+    "financial_metrics", "companies", "trader_positions", "trader_performance", "traders",
+    "news_items", "ohlc_bars", "market_data_health", "service_heartbeats", "audit_events",
+    "decisions", "trades", "fills", "orders", "positions", "daily_loss_lock", "daily_pnl",
+    "kill_switch", "risk_state", "risk_config", "runtime_state", "accounts",
+    "schema_migrations",
+]
 
 
 def _reset():

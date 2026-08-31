@@ -19,13 +19,32 @@ echo "[deploy] 2/6 python deps into venv"
     "psycopg[binary]>=3.1" "redis>=5.0" "fastapi>=0.110" "uvicorn>=0.29" "pytest>=8" \
     "websockets>=12" "certifi" "ib_async>=2.0"
 
-echo "[deploy] 3/6 control token"
+echo "[deploy] 3/6 control + internal Paper Canary identity"
 if ! grep -q '^ATP_CONTROL_TOKEN=' "$ENVF"; then
     echo "ATP_CONTROL_TOKEN=$(openssl rand -hex 24)" >> "$ENVF"
     echo "  generated ATP_CONTROL_TOKEN"
 else
     echo "  ATP_CONTROL_TOKEN present"
 fi
+if ! grep -q '^ATP_PAPER_CANARY_INTERNAL_TOKEN=' "$ENVF"; then
+    echo "ATP_PAPER_CANARY_INTERNAL_TOKEN=$(openssl rand -hex 32)" >> "$ENVF"
+    echo "  generated ATP_PAPER_CANARY_INTERNAL_TOKEN"
+else
+    echo "  ATP_PAPER_CANARY_INTERNAL_TOKEN present"
+fi
+if ! grep -q '^ATP_DURABLE_PAPER_CANARY_ENABLED=' "$ENVF"; then
+    echo "ATP_DURABLE_PAPER_CANARY_ENABLED=false" >> "$ENVF"
+fi
+if ! grep -q '^BROKER_EXECUTION_ENABLED=' "$ENVF"; then
+    echo "BROKER_EXECUTION_ENABLED=false" >> "$ENVF"
+fi
+DEPLOY_COMMIT_SHA="$(git -C "$APP" rev-parse HEAD)"
+if grep -q '^ATP_COMMIT_REF=' "$ENVF"; then
+    sed -i "s/^ATP_COMMIT_REF=.*/ATP_COMMIT_REF=$DEPLOY_COMMIT_SHA/" "$ENVF"
+else
+    echo "ATP_COMMIT_REF=$DEPLOY_COMMIT_SHA" >> "$ENVF"
+fi
+echo "  bound ATP_COMMIT_REF=$DEPLOY_COMMIT_SHA"
 
 echo "[deploy] 4/6 migrate atp_prod (as app user = owner)"
 set -a; . "$ENVF"; set +a

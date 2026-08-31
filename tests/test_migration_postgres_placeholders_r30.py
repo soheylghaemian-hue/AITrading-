@@ -17,7 +17,13 @@ from pathlib import Path
 
 from atp.store import open_store
 from atp.store.postgres_store import PostgresStore
-from atp.store.schema import _migration_018, _migration_019, _migration_020, _migration_021
+from atp.store.schema import (
+    _migration_018,
+    _migration_019,
+    _migration_020,
+    _migration_021,
+    _migration_022,
+)
 
 PG_PLACEHOLDER = PostgresStore.PLACEHOLDER          # "%s"
 
@@ -60,7 +66,13 @@ def _psycopg_convert_or_none(sql: str):
 
 
 def test_postgres_migration_placeholders_are_psycopg_safe():
-    stmts = _migration_018("postgres") + _migration_019("postgres") + _migration_020("postgres") + _migration_021("postgres")
+    stmts = (
+        _migration_018("postgres")
+        + _migration_019("postgres")
+        + _migration_020("postgres")
+        + _migration_021("postgres")
+        + _migration_022("postgres")
+    )
     psycopg_ran = False
     for raw in stmts:
         q = _q_postgres(raw)
@@ -95,17 +107,22 @@ def test_postgres_functions_use_escaped_percent_and_sqlite_uses_none():
     assert "'%%: rows are immutable'" in pg21
     assert "'%:" not in pg21
     assert "%" not in "\n".join(_migration_021("sqlite"))
+    pg22 = "\n".join(_migration_022("postgres"))
+    assert "'%%: rows are immutable'" in pg22
+    assert "'%:" not in pg22
+    assert "%" not in "\n".join(_migration_022("sqlite"))
 
 
 def test_migrations_18_19_apply_sequentially_after_1_17():
     s = open_store(str(Path(tempfile.mkdtemp()) / "atp.db"))   # applies 1..20 in order
     rows = s._all("SELECT version, name FROM schema_migrations ORDER BY version")
     versions = [int(r[0]) for r in rows]
-    assert versions == list(range(1, 22))          # 1..21 all applied, in order
+    assert versions == list(range(1, 23))          # 1..22 all applied, in order
     names = {int(r[0]): r[1] for r in rows}
     assert names[18] == "research_backtesting" and names[19] == "backtest_actual_risk"
     assert names[20] == "research_datasets"        # R3.0A immutable dataset tables
     assert names[21] == "research_intel_validation"   # R3.1A intel/validation tables
+    assert names[22] == "durable_paper_canary"     # P2 dedicated durable paper ledger
     s._one("SELECT snapshot_id FROM research_intel_snapshots")  # 21 tables exist
     # 18 created the trigger + table; 19 added columns ON TOP of 18's table → both applied sequentially
     trigs = {r[0] for r in s._all("SELECT name FROM sqlite_master WHERE type='trigger'")}
@@ -117,7 +134,7 @@ def test_migrations_18_19_apply_sequentially_after_1_17():
     same_path = str(Path(tempfile.mkdtemp()) / "atp.db")
     a = _open(same_path)
     b = _open(same_path)                                    # migrate again over an already-migrated db
-    assert [int(r[0]) for r in b._all("SELECT version FROM schema_migrations ORDER BY version")] == list(range(1, 22))
+    assert [int(r[0]) for r in b._all("SELECT version FROM schema_migrations ORDER BY version")] == list(range(1, 23))
 
 
 def test_failed_migration_version_is_not_recorded_and_retry_is_safe():

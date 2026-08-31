@@ -1,14 +1,13 @@
 """Trading Core + Execution Service (§ Phase C — service B).
 
-Owns regime / agents / opportunity / portfolio / position-sizing / the (authoritative) Risk Engine,
-plus the PaperBroker + execution lifecycle (orders/fills/idempotency/reconciliation). It consumes
-validated quotes from the bus and is the ONLY place a TRADE INTENT can be produced — but it may never
-submit to a broker on its own, and every decision is persisted before any execution.
+Owns regime / agents / opportunity / portfolio / position-sizing / the authoritative Risk Engine and
+the default-off durable Paper Canary owner. It consumes validated quotes from the bus and is the ONLY
+place a canary intent can be processed; every decision is persisted atomically and no live broker is
+ever called.
 
-Phase C acceptance constraints (ABSOLUTE SCOPE): NO autonomous start, NO paper execution, NO live.
-The live loop therefore only CONSUMES quotes, tracks freshness, and evaluates the fail-closed input
-gate; it never executes. Trading can only ever run after a human ARM + START via the Control API —
-never automatically, and never after a crash (recover() lands in RECOVERY_REQUIRED).
+The normal loop only consumes quotes and evaluates the fail-closed input gate. Paper fills exist only
+behind the literal double opt-in, explicit owner commands and human activation; there is NO live
+execution and NO autonomous start. After a crash, recovery never resumes RUNNING automatically.
 """
 from __future__ import annotations
 
@@ -16,8 +15,9 @@ import asyncio
 import os
 
 from ..runtime.gate import TradingGate
-from .base import Service
+from .base import LoopbackCommandServer, Service
 from .marketdata import QUOTES_CHANNEL
+from .paper_canary_owner import PAPER_CANARY_OWNER_PATHS, PaperCanaryOwner
 from .recovery import market_data_fresh
 
 
@@ -31,6 +31,13 @@ class TradingCoreService(Service):
         self.md_max_age = float(os.environ.get("ATP_MD_MAX_AGE_S", "15"))
         self._quotes: dict[str, dict] = {}
         self._sub_task: asyncio.Task | None = None
+        self._paper_owner: PaperCanaryOwner | None = None
+        self._paper_commands: LoopbackCommandServer | None = None
+
+    def _latest_paper_quote(self, symbol: str) -> dict | None:
+        """Return a same-loop snapshot; the owner performs the full quote + DB-health re-attestation."""
+        quote = self._quotes.get(symbol)
+        return dict(quote) if type(quote) is dict else None
 
     # -- fail-closed input decision -------------------------------------
     def can_accept_trade_input(self) -> tuple[bool, str]:
@@ -62,7 +69,38 @@ class TradingCoreService(Service):
                     pass
 
     async def on_start(self) -> None:
+        if self._paper_owner is not None:
+            raise RuntimeError("Trading Core Paper Canary owner already started")
         self._detail = f"state={self.life.status.value}"
+        owner = PaperCanaryOwner(
+            quote_getter=self._latest_paper_quote,
+            trade_gate=self.can_accept_trade_input,
+        )
+        await owner.start()  # dedicated Store; recovers an active run once and never auto-activates
+        self._paper_owner = owner
+        token = os.environ.get("ATP_PAPER_CANARY_INTERNAL_TOKEN")
+        if token:
+            try:
+                port = int(os.environ.get("ATP_PAPER_CANARY_OWNER_PORT", "9112"))
+                commands = LoopbackCommandServer(
+                    owner_loop=asyncio.get_running_loop(),
+                    handler=owner.command,
+                    token=token,
+                    paths=PAPER_CANARY_OWNER_PATHS,
+                    port=port,
+                )
+                commands.start()
+                self._paper_commands = commands
+            except Exception:
+                await owner.close()
+                self._paper_owner = None
+                raise
+        elif os.environ.get("ATP_DURABLE_PAPER_CANARY_ENABLED") == "true":
+            await owner.close()
+            self._paper_owner = None
+            raise RuntimeError(
+                "ATP_PAPER_CANARY_INTERNAL_TOKEN is required when Durable Paper Canary is enabled",
+            )
         self._sub_task = asyncio.create_task(self._consume_quotes())
 
     async def main(self) -> None:
@@ -70,21 +108,30 @@ class TradingCoreService(Service):
             ok, reason = self.can_accept_trade_input()
             self._detail = (f"state={self.life.status.value} "
                             f"inputs={'OPEN' if ok else 'BLOCKED'} ({reason}) "
-                            f"quotes={len(self._quotes)}")
-            # No execution. Paper execution stays OFF; trading only ever runs after a human
-            # ARM+START via Control — never automatically and never after a crash.
+                            f"quotes={len(self._quotes)} "
+                            f"paper_owner={'UP' if self._paper_owner else 'OFF'}")
+            # No autonomous execution: only explicit, authenticated owner commands can enqueue a
+            # default-off durable paper fill; live broker execution remains absent.
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=self.heartbeat_interval)
             except asyncio.TimeoutError:
                 pass
 
     async def on_stop(self) -> None:
+        commands = self._paper_commands
+        self._paper_commands = None
+        if commands is not None:
+            commands.close()
         if self._sub_task is not None:
             self._sub_task.cancel()
             try:
                 await self._sub_task
             except (asyncio.CancelledError, Exception):
                 pass
+        owner = self._paper_owner
+        self._paper_owner = None
+        if owner is not None:
+            await owner.close()
 
 
 def main() -> None:
