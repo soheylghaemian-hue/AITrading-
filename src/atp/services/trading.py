@@ -50,6 +50,15 @@ class TradingCoreService(Service):
             return (False, "market data stale/unavailable -> NO NEW TRADE")
         return (True, "ok")
 
+    def can_accept_risk_reduction_input(self) -> tuple[bool, str]:
+        """Gate an explicit SELL while allowing the durable daily-loss latch to stay engaged."""
+        g = self.gate.can_reduce_risk()
+        if not g.allowed:
+            return (False, g.reason)
+        if not market_data_fresh(self.store, max_age_s=self.md_max_age):
+            return (False, "market data stale/unavailable -> NO RISK REDUCTION")
+        return (True, "ok")
+
     # -- quote consumption ----------------------------------------------
     async def _consume_quotes(self) -> None:
         # Re-subscribe across bus hiccups: a Redis outage never crashes the process and never loses
@@ -75,6 +84,7 @@ class TradingCoreService(Service):
         owner = PaperCanaryOwner(
             quote_getter=self._latest_paper_quote,
             trade_gate=self.can_accept_trade_input,
+            risk_reduction_gate=self.can_accept_risk_reduction_input,
         )
         await owner.start()  # dedicated Store; recovers an active run once and never auto-activates
         self._paper_owner = owner

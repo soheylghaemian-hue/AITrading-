@@ -30,7 +30,7 @@ class TradingGate:
         self._store = store
         self._life = lifecycle
 
-    def can_trade(self, *, trade_date: str | None = None) -> GateResult:
+    def _base(self) -> GateResult:
         # 1) database is the source of truth — if it is unreachable, block.
         if not self._store.ping():
             return GateResult(False, "database unavailable → NO NEW TRADE")
@@ -46,11 +46,25 @@ class TradingGate:
         # 4) risk state must load — if not, block.
         if self._store.get_risk_state() is None:
             return GateResult(False, "risk state unavailable → NO NEW TRADE")
+        return GateResult(True, "ok")
+
+    def can_trade(self, *, trade_date: str | None = None) -> GateResult:
+        base = self._base()
+        if not base.allowed:
+            return base
         # 5) daily-loss lock (durable) for today.
         d = trade_date or today_utc()
         if self._store.get_daily_loss_lock(d).engaged:
             return GateResult(False, "daily loss limit reached → HALT")
         return GateResult(True, "ok")
+
+    def can_reduce_risk(self) -> GateResult:
+        """Permit only a downstream-proven exposure reduction past the daily-loss latch.
+
+        Kill, runtime, database, and risk-state checks remain mandatory. The Paper Store is the
+        final atomic authority that proves a SELL cannot exceed the durable long position.
+        """
+        return self._base()
 
 
 def remaining_daily_budget(store, *, trade_date: str | None = None):

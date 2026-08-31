@@ -11,8 +11,10 @@ Bring up a disposable Postgres with `docker compose -f docker-compose.postgres.y
 (see docs/POSTGRES_VALIDATION.md). We NEVER fake these with SQLite.
 """
 
+import json
 import os
 import threading
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -22,11 +24,17 @@ DSN = os.environ.get("ATP_TEST_POSTGRES_DSN")
 pytestmark = pytest.mark.skipif(not DSN, reason="set ATP_TEST_POSTGRES_DSN to run Postgres tests")
 
 from atp.runtime import LifecycleManager, OrderManager, RuntimeStatus, TradingGate, reconstruct_positions
-from atp.store import D, open_store
-from atp.store.base import FillRow, utcnow_iso
+from atp.store import D, open_store, paper_canary_config_checksum
+from atp.store.base import (
+    FillRow,
+    PaperCanarySafetyError,
+    PaperCanaryStateError,
+    utcnow_iso,
+)
 from atp.store.postgres_store import PostgresStore
 
 _TABLES = [
+    "paper_daily_loss_state",
     "paper_reconciliations", "paper_order_events", "paper_fills", "paper_positions",
     "paper_orders", "paper_accounts", "paper_canary_runs",
     "research_validation_metrics", "research_validation_runs",
@@ -67,10 +75,66 @@ def _new_store():
     return open_store(DSN, migrate=False)           # a second/"restart" connection
 
 
+def _paper_config_json():
+    return json.dumps(
+        {
+            "asset_class": "EQUITY",
+            "commission_per_unit": "0.01000000",
+            "instrument": "AAPL",
+            "max_daily_turnover": "2.00000000",
+            "max_gross_notional": "1.00000000",
+            "max_order_notional": "1.00000000",
+            "max_orders": 2,
+            "min_commission": "0.01000000",
+            "mode": "paper",
+            "quote_max_age_s": "60.00000000",
+            "slippage_bps": "0.00000000",
+            "starting_cash": "10.00000000",
+            "tag": "atp.paper-canary.config.v1",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _prepare_running_paper_runtime(store):
+    store.upsert_risk_config(
+        capital=D("10"), risk_per_trade_pct=D("1"), max_daily_loss_pct=D("5"),
+    )
+    now = datetime.now(timezone.utc).isoformat()
+    with store.tx() as cur:
+        store._exec(
+            cur,
+            "INSERT INTO risk_control_policy "
+            "(id,risk_config_id,currency,warning_threshold_pct,max_portfolio_exposure_pct,"
+            "max_drawdown_pct,config_version,updated_at,updated_by) VALUES (?,?,?,?,?,?,?,?,?)",
+            ("policy", 1, "USD", D("80"), D("50"), D("20"), 1, now, "test"),
+        )
+    store.transition(new_status="DISABLED", actor="test", reason="postgres paper race")
+    store.upsert_md_health(
+        symbol="AAPL", source="MASSIVE", status="READY", latency_ms=1,
+        ts=now, quote_ts=now,
+    )
+    config_json = _paper_config_json()
+    risk_token = store.current_paper_risk_config_checksum()
+    store.prepare_paper_runtime(
+        config_json=config_json,
+        commit_sha="a" * 40,
+        expected_config_checksum=paper_canary_config_checksum(config_json),
+        expected_risk_config_checksum=risk_token,
+        actor="operator",
+        reason="postgres create versus disable race",
+    )
+    life = LifecycleManager(store)
+    life.arm(actor="operator")
+    life.start(confirm=True, actor="operator")
+    return config_json, risk_token
+
+
 # ---------------------------------------------------------------- migrations + NUMERIC precision
 def test_migrations_applied(store):
     versions = sorted(r[0] for r in store._all("SELECT version FROM schema_migrations"))
-    assert versions == list(range(1, 23))
+    assert versions == list(range(1, 26))
 
 
 def test_numeric_types_in_information_schema(store):
@@ -83,6 +147,18 @@ def test_numeric_types_in_information_schema(store):
     assert rows, "expected money columns present"
     for _, col, dtype in rows:
         assert dtype == "numeric", f"{col} is {dtype}, expected numeric"
+
+
+def test_postgres_paper_account_checks_allow_signed_cash_after_v25(store):
+    rows = store._all(
+        "SELECT conname FROM pg_constraint c "
+        "JOIN pg_class t ON t.oid=c.conrelid "
+        "WHERE t.relname='paper_accounts' AND c.contype='c' ORDER BY conname"
+    )
+    names = {row[0] for row in rows}
+    assert "paper_accounts_cash_check" not in names
+    assert "paper_accounts_starting_cash_check" in names
+    assert "paper_accounts_gross_exposure_check" in names
 
 
 def test_numeric_precision_exact(store):
@@ -125,6 +201,223 @@ def test_concurrent_same_idempotency_key_one_survives(store):
     n = store._one("SELECT COUNT(*) FROM orders WHERE idempotency_key=?", (key,))[0]
     assert n == 1                                     # exactly one intent survived
     assert len(ok) == 1 and len(errors) == 1
+
+
+def test_owner_create_and_atomic_disable_serialize_on_the_runtime_binding(store):
+    config_json, risk_token = _prepare_running_paper_runtime(store)
+    barrier = threading.Barrier(2)
+    outcomes = {}
+
+    def create_run():
+        connection = _new_store()
+        try:
+            barrier.wait(timeout=10)
+            outcomes["create"] = connection.create_paper_run(
+                run_id="postgres-race-run",
+                config_json=config_json,
+                risk_config_checksum=risk_token,
+                commit_sha="a" * 40,
+                starting_cash=D("10"),
+                status="READY_FOR_ARM",
+                require_prepared=True,
+            )
+        except BaseException as exc:  # pragma: no cover - asserted after both threads join
+            outcomes["create_error"] = exc
+        finally:
+            connection.close()
+
+    def disable_runtime():
+        connection = _new_store()
+        try:
+            barrier.wait(timeout=10)
+            outcomes["disable"] = connection.disable_paper_runtime_if_no_active(
+                actor="operator", reason="postgres owner-create race",
+            )
+        except BaseException as exc:  # pragma: no cover - asserted after both threads join
+            outcomes["disable_error"] = exc
+        finally:
+            connection.close()
+
+    create_thread = threading.Thread(target=create_run, daemon=True)
+    disable_thread = threading.Thread(target=disable_runtime, daemon=True)
+    create_thread.start()
+    disable_thread.start()
+    create_thread.join(timeout=20)
+    disable_thread.join(timeout=20)
+    assert not create_thread.is_alive() and not disable_thread.is_alive(), "runtime row lock deadlocked"
+
+    create_won = "create" in outcomes
+    disable_won = "disable" in outcomes
+    assert create_won is not disable_won, outcomes
+    binding = store.get_paper_runtime_binding()
+    run = store.get_paper_run("postgres-race-run")
+    if create_won:
+        assert isinstance(outcomes.get("disable_error"), PaperCanarySafetyError)
+        assert run is not None and run.active_slot == 1
+        assert binding["status"] == "RUNNING" and binding["run_id"] == run.run_id
+        assert (binding["commit_sha"], binding["config_checksum"],
+                binding["risk_config_checksum"]) == (
+            "a" * 40, paper_canary_config_checksum(config_json), risk_token,
+        )
+    else:
+        assert isinstance(outcomes.get("create_error"), PaperCanarySafetyError)
+        assert outcomes["disable"] == {
+            "status": "DISABLED", "previous_status": "RUNNING", "changed": True,
+        }
+        assert run is None
+        assert binding == {
+            "status": "DISABLED",
+            "commit_sha": None,
+            "config_checksum": None,
+            "risk_config_checksum": None,
+            "prepared_at": None,
+            "run_id": None,
+        }
+
+
+def test_atomic_fill_and_disable_share_one_postgres_lock_order(store):
+    config_json, risk_token = _prepare_running_paper_runtime(store)
+    run = store.create_paper_run(
+        run_id="postgres-fill-disable-run",
+        config_json=config_json,
+        risk_config_checksum=risk_token,
+        commit_sha="a" * 40,
+        starting_cash=D("10"),
+        status="READY_FOR_ARM",
+        require_prepared=True,
+    )
+    run = store.transition_paper_run(
+        run_id=run.run_id,
+        expected_status="READY_FOR_ARM",
+        expected_version=run.version,
+        new_status="RUNNING",
+    )
+    quote_ts = datetime.now(timezone.utc).isoformat()
+    store.upsert_md_health(
+        symbol="AAPL", source="MASSIVE", status="READY", latency_ms=1,
+        ts=quote_ts, quote_ts=quote_ts,
+    )
+    order = store.get_or_create_paper_intent(
+        run_id=run.run_id,
+        idempotency_key="postgres-fill-disable-idempotency",
+        decision_id="postgres-fill-disable-decision",
+        client_order_id="postgres-fill-disable-order",
+        instrument="AAPL",
+        side="BUY",
+        quantity=D("0.01"),
+        quote_bid=D("99.99"),
+        quote_ask=D("100"),
+        quote_ts=quote_ts,
+        risk_config_checksum=risk_token,
+    )
+    order = store.transition_paper_order(
+        client_order_id=order.client_order_id,
+        expected_status="INTENT",
+        expected_version=order.version,
+        new_status="AUTHORIZED",
+    )
+    barrier = threading.Barrier(2)
+    outcomes = {}
+
+    def fill_order():
+        connection = _new_store()
+        try:
+            barrier.wait(timeout=10)
+            fill_ts = datetime.now(timezone.utc).isoformat()
+            outcomes["fill"] = connection.commit_paper_fill_atomic(
+                run_id=run.run_id,
+                client_order_id=order.client_order_id,
+                expected_order_version=order.version,
+                fill_id="postgres-fill-disable-fill",
+                broker_order_id="postgres-fill-disable-broker-order",
+                broker_fill_id="postgres-fill-disable-broker-fill",
+                instrument="AAPL",
+                side="BUY",
+                quantity=D("0.01"),
+                price=D("100"),
+                commission=D("0.01"),
+                multiplier=D("1"),
+                quote_ts=quote_ts,
+                ts=fill_ts,
+            )
+        except BaseException as exc:  # pragma: no cover - asserted after join
+            outcomes["fill_error"] = exc
+        finally:
+            connection.close()
+
+    def disable_runtime():
+        connection = _new_store()
+        try:
+            barrier.wait(timeout=10)
+            outcomes["disable"] = connection.disable_paper_runtime_if_no_active(
+                actor="operator",
+                reason="postgres fill versus disable race",
+                expected_run_id=run.run_id,
+            )
+        except BaseException as exc:  # pragma: no cover - asserted after join
+            outcomes["disable_error"] = exc
+        finally:
+            connection.close()
+
+    threads = [
+        threading.Thread(target=fill_order, daemon=True),
+        threading.Thread(target=disable_runtime, daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+    assert all(not thread.is_alive() for thread in threads), "fill/disable row locks deadlocked"
+    assert "fill" in outcomes and "fill_error" not in outcomes, outcomes
+    assert isinstance(outcomes.get("disable_error"), PaperCanaryStateError), outcomes
+    assert store.get_paper_fill(order.client_order_id) is not None
+    assert store.get_runtime_state().status == "RUNNING"
+
+
+def test_emergency_kill_cannot_be_overwritten_by_concurrent_start(store):
+    life = LifecycleManager(store)
+    life.recover(actor="test")
+    life.mark_ready(actor="test")
+    life.arm(actor="test")
+    barrier = threading.Barrier(2)
+    outcomes = {}
+
+    def start_runtime():
+        connection = _new_store()
+        try:
+            barrier.wait(timeout=10)
+            outcomes["start"] = LifecycleManager(connection).start(
+                confirm=True, actor="operator",
+            )
+        except BaseException as exc:  # pragma: no cover - either race result is valid
+            outcomes["start_error"] = exc
+        finally:
+            connection.close()
+
+    def kill_runtime():
+        connection = _new_store()
+        try:
+            barrier.wait(timeout=10)
+            outcomes["kill"] = LifecycleManager(connection).kill(
+                actor="operator", reason="postgres start versus kill race",
+            )
+        except BaseException as exc:  # pragma: no cover - asserted after join
+            outcomes["kill_error"] = exc
+        finally:
+            connection.close()
+
+    threads = [
+        threading.Thread(target=start_runtime, daemon=True),
+        threading.Thread(target=kill_runtime, daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+    assert all(not thread.is_alive() for thread in threads), "start/kill row locks deadlocked"
+    assert outcomes.get("kill") is RuntimeStatus.KILLED and "kill_error" not in outcomes, outcomes
+    assert store.get_kill_switch().engaged is True
+    assert store.get_runtime_state().status == "KILLED"
 
 
 # ---------------------------------------------------------------- concurrent fills consistent

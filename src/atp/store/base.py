@@ -17,6 +17,7 @@ from __future__ import annotations
 import abc
 import hashlib
 import json
+import re
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -1080,18 +1081,70 @@ class SqlStore(Store):
     def transition(self, *, new_status: str, actor: str, reason: str | None,
                    correlation_id: str | None = None, previous: str | None = None,
                    action: str | None = None) -> AuditEventRow:
-        """Persist runtime_state AND an audit_event in ONE transaction."""
+        """Persist one compare-and-swap runtime transition and its audit event atomically.
+
+        Risk-increasing states re-check the durable kill latch while the runtime singleton is
+        locked.  This closes the gap between a LifecycleManager read and the write: an emergency
+        KILL that wins that race can never be overwritten by a stale ARM/START/READY transition.
+        """
         cid = correlation_id or new_id()
         now = utcnow_iso()
-        prev = previous if previous is not None else (self.get_runtime_state().status
-                                                      if self.get_runtime_state() else None)
-        evt = AuditEventRow(new_id(), now, actor, action or f"TRANSITION:{new_status}",
-                            prev, new_status, reason, cid)
         with self.tx() as cur:
+            # SQLite has no FOR UPDATE.  A value-preserving DML takes its writer lock before the
+            # read that drives this write; PostgreSQL locks the singleton row explicitly below.
+            if self.MONEY_AS_TEXT:
+                self._exec(cur, "UPDATE runtime_state SET updated_at=updated_at WHERE id=1")
+            self._exec(
+                cur,
+                f"SELECT status FROM runtime_state WHERE id=1{self.LOCK_CLAUSE}",
+            )
+            row = cur.fetchone()
+            actual_previous = row[0] if row else None
+            if previous is not None and actual_previous != previous:
+                raise PaperCanaryStateError(
+                    f"runtime transition lost compare-and-swap: expected {previous}, "
+                    f"found {actual_previous}",
+                )
+
+            if new_status in {"READY_FOR_ARM", "ARMED", "RUNNING"}:
+                self._exec(
+                    cur,
+                    "INSERT INTO kill_switch (id,engaged,actor,reason,updated_at) "
+                    "VALUES (1,0,NULL,NULL,?) ON CONFLICT(id) DO NOTHING",
+                    (now,),
+                )
+                self._exec(
+                    cur,
+                    f"SELECT engaged FROM kill_switch WHERE id=1{self.LOCK_CLAUSE}",
+                )
+                kill = cur.fetchone()
+                if not kill or bool(kill[0]):
+                    raise PaperCanarySafetyError(
+                        "runtime transition blocked: kill switch is engaged",
+                    )
+
+            evt = AuditEventRow(
+                new_id(), now, actor, action or f"TRANSITION:{new_status}",
+                actual_previous, new_status, reason, cid,
+            )
             self._exec(cur,
                 "INSERT INTO runtime_state (id,status,updated_at,correlation_id,reason) VALUES (1,?,?,?,?) "
                 "ON CONFLICT(id) DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at, "
-                "correlation_id=excluded.correlation_id, reason=excluded.reason",
+                "correlation_id=excluded.correlation_id, reason=excluded.reason, "
+                "paper_commit_sha=CASE WHEN excluded.status IN ('DISABLED','KILLED','RECOVERY_REQUIRED') "
+                "THEN NULL ELSE runtime_state.paper_commit_sha END, "
+                "paper_config_checksum=CASE WHEN excluded.status IN "
+                "('DISABLED','KILLED','RECOVERY_REQUIRED') THEN NULL "
+                "ELSE runtime_state.paper_config_checksum END, "
+                "paper_risk_config_checksum=CASE WHEN excluded.status IN "
+                "('DISABLED','KILLED','RECOVERY_REQUIRED') THEN NULL "
+                "ELSE runtime_state.paper_risk_config_checksum END, "
+                "paper_prepared_at=CASE WHEN excluded.status IN "
+                "('DISABLED','KILLED','RECOVERY_REQUIRED') THEN NULL "
+                "ELSE runtime_state.paper_prepared_at END, "
+                "paper_run_id=CASE WHEN excluded.status IN "
+                "('DISABLED','KILLED','RECOVERY_REQUIRED') THEN NULL "
+                "ELSE runtime_state.paper_run_id END",
                 (new_status, now, cid, reason))
             self._insert_audit(cur, evt)
         return evt
@@ -2158,13 +2211,15 @@ class SqlStore(Store):
     def list_heartbeats(self) -> list[tuple]:
         return self._all("SELECT service,status,detail,updated_at FROM service_heartbeats ORDER BY service")
 
-    def upsert_md_health(self, *, symbol: str, source: str, status: str, latency_ms, ts: str) -> None:
+    def upsert_md_health(self, *, symbol: str, source: str, status: str, latency_ms, ts: str,
+                         quote_ts: str | None = None) -> None:
         with self.tx() as cur:
             self._exec(cur,
-                "INSERT INTO market_data_health (symbol,source,status,latency_ms,updated_at) "
-                "VALUES (?,?,?,?,?) ON CONFLICT(symbol) DO UPDATE SET source=excluded.source, "
-                "status=excluded.status, latency_ms=excluded.latency_ms, updated_at=excluded.updated_at",
-                (symbol, source, status, latency_ms, ts))
+                "INSERT INTO market_data_health (symbol,source,status,latency_ms,updated_at,quote_ts) "
+                "VALUES (?,?,?,?,?,?) ON CONFLICT(symbol) DO UPDATE SET source=excluded.source, "
+                "status=excluded.status, latency_ms=excluded.latency_ms, "
+                "updated_at=excluded.updated_at, quote_ts=excluded.quote_ts",
+                (symbol, source, status, latency_ms, ts, quote_ts))
 
     def list_md_health(self) -> list[tuple]:
         return self._all("SELECT symbol,source,status,latency_ms,updated_at FROM market_data_health "
@@ -3112,13 +3167,418 @@ class SqlStore(Store):
         with self.tx() as cur:
             return self._paper_risk_checksum_in_tx(cur)
 
+    def prepare_paper_runtime(
+        self,
+        *,
+        config_json: str,
+        commit_sha: str,
+        expected_config_checksum: str,
+        expected_risk_config_checksum: str,
+        actor: str,
+        reason: str,
+    ) -> dict:
+        """Atomically validate the PAPER-only pre-arm boundary and move DISABLED -> READY_FOR_ARM.
+
+        This is deliberately narrower than the generic lifecycle primitive.  It binds the transition
+        to the exact deployed commit, canonical Paper Canary config and full Risk Control token; proves
+        the kill/risk/daily-loss/market-data boundary; initializes only a missing healthy risk baseline;
+        and writes the transition plus its audit event in the same transaction.  It never arms, starts,
+        creates a run, writes P&L, or touches an order/fill/broker path.
+        """
+        if type(commit_sha) is not str or re.fullmatch(r"[0-9a-f]{40}", commit_sha) is None:
+            raise PaperCanarySafetyError("deployed commit must be an exact 40-lowerhex SHA")
+        if type(expected_config_checksum) is not str or re.fullmatch(
+            r"sha256:[0-9a-f]{64}", expected_config_checksum,
+        ) is None:
+            raise PaperCanarySafetyError("expected Paper Canary config checksum is invalid")
+        if type(expected_risk_config_checksum) is not str or re.fullmatch(
+            r"[0-9a-f]{20}", expected_risk_config_checksum,
+        ) is None:
+            raise PaperCanarySafetyError("expected Risk Control checksum is invalid")
+        if type(actor) is not str or not actor or type(reason) is not str or not reason:
+            raise PaperCanarySafetyError("prepare actor and reason must be non-empty strings")
+
+        config, canonical_config, config_checksum = self._paper_config(config_json)
+        if canonical_config != config_json or config_checksum != expected_config_checksum:
+            raise PaperCanarySafetyError("Paper Canary server config binding changed")
+        started_at = datetime.fromisoformat(
+            _paper_timestamp(utcnow_iso(), field="paper prepare time"),
+        )
+        today = started_at.date().isoformat()
+
+        with self.tx() as cur:
+            # SQLite has no FOR UPDATE.  Take its single-writer lock before any read that drives a write.
+            self._paper_serialize_sqlite_write(cur)
+
+            self._exec(
+                cur,
+                f"SELECT status FROM runtime_state WHERE id=1{self.LOCK_CLAUSE}",
+            )
+            runtime = cur.fetchone()
+            if not runtime or runtime[0] != "DISABLED":
+                raise PaperCanaryStateError("Paper Canary prepare requires global DISABLED")
+
+            self._exec(
+                cur,
+                "SELECT run_id,status FROM paper_canary_runs WHERE active_slot=1"
+                + self.LOCK_CLAUSE,
+            )
+            if cur.fetchall():
+                raise PaperCanaryStateError("an active Paper Canary run requires recovery or stop")
+
+            # Materialize the default-off latch before locking it.  On PostgreSQL, SELECT FOR UPDATE
+            # cannot lock a missing row; this insert makes a concurrent first-ever KILL serialize on
+            # the singleton instead of racing the READY transition.
+            self._exec(
+                cur,
+                "INSERT INTO kill_switch (id,engaged,actor,reason,updated_at) "
+                "VALUES (1,0,NULL,NULL,?) ON CONFLICT(id) DO NOTHING",
+                (started_at.isoformat(),),
+            )
+            self._exec(
+                cur,
+                f"SELECT engaged FROM kill_switch WHERE id=1{self.LOCK_CLAUSE}",
+            )
+            kill = cur.fetchone()
+            if not kill or bool(kill[0]):
+                raise PaperCanarySafetyError("kill switch is engaged")
+
+            risk_checksum = self._paper_risk_checksum_in_tx(cur)
+            if risk_checksum != expected_risk_config_checksum:
+                raise PaperCanarySafetyError("Risk Control configuration changed before prepare")
+            risk_capital = self._paper_risk_capital_in_tx(cur)
+            starting_cash = self._paper_config_amount(
+                config["starting_cash"], field="starting_cash", positive=True,
+            )
+            if starting_cash > risk_capital:
+                raise PaperCanarySafetyError(
+                    "Paper Canary starting_cash exceeds canonical risk capital",
+                )
+
+            self._exec(
+                cur,
+                "INSERT INTO risk_state (id,day_start_equity,peak_equity,halted,killed,updated_at) "
+                "VALUES (1,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
+                (self._m(risk_capital), self._m(risk_capital), 0, 0, started_at.isoformat()),
+            )
+            initialized = cur.rowcount == 1
+            self._exec(
+                cur,
+                "SELECT day_start_equity,peak_equity,halted,killed,updated_at FROM risk_state WHERE id=1"
+                + self.LOCK_CLAUSE,
+            )
+            risk_state = cur.fetchone()
+            if risk_state is None:
+                raise PaperCanarySafetyError("durable risk state is missing")
+            try:
+                day_start = _paper_exact_money(
+                    to_decimal(risk_state[0]), field="risk_state.day_start_equity", positive=True,
+                )
+                peak = _paper_exact_money(
+                    to_decimal(risk_state[1]), field="risk_state.peak_equity", positive=True,
+                )
+            except (TypeError, ValueError) as exc:
+                raise PaperCanarySafetyError("durable risk state is invalid") from exc
+            if bool(risk_state[2]) or bool(risk_state[3]) or peak < day_start:
+                raise PaperCanarySafetyError("durable risk state is halted, killed, or inconsistent")
+            try:
+                risk_ts = datetime.fromisoformat(str(risk_state[4]).replace("Z", "+00:00"))
+                if risk_ts.tzinfo is None:
+                    raise ValueError
+                risk_day = risk_ts.astimezone(timezone.utc).date().isoformat()
+            except Exception as exc:
+                raise PaperCanarySafetyError("durable risk-state timestamp is invalid") from exc
+            if risk_day != today:
+                raise PaperCanarySafetyError("durable risk state is not from the current UTC day")
+
+            self._exec(
+                cur,
+                "INSERT INTO daily_loss_lock (trade_date,engaged,reason,updated_at) "
+                "VALUES (?,?,?,?) ON CONFLICT(trade_date) DO NOTHING",
+                (today, 0, "Paper Canary pre-arm baseline", started_at.isoformat()),
+            )
+            self._exec(
+                cur,
+                "SELECT engaged FROM daily_loss_lock WHERE trade_date=?" + self.LOCK_CLAUSE,
+                (today,),
+            )
+            daily_lock = cur.fetchone()
+            if not daily_lock or bool(daily_lock[0]):
+                raise PaperCanarySafetyError("daily loss lock is engaged")
+
+            # A canary account is reset for every run; the loss budget is not.  Materialize and
+            # lock the one UTC-day aggregate while the canonical Risk row is locked, then require
+            # its immutable capital baseline to match that canonical authority.  This makes a
+            # second run inherit the first run's loss instead of silently receiving a fresh budget.
+            self._exec(
+                cur,
+                "INSERT INTO paper_daily_loss_state "
+                "(trade_date,risk_capital_baseline,cumulative_equity_delta,version,updated_at) "
+                "VALUES (?,?,?,0,?) ON CONFLICT(trade_date) DO NOTHING",
+                (today, self._m(risk_capital), self._m(Decimal("0")), started_at.isoformat()),
+            )
+            self._exec(
+                cur,
+                "SELECT risk_capital_baseline,cumulative_equity_delta,version "
+                "FROM paper_daily_loss_state WHERE trade_date=?" + self.LOCK_CLAUSE,
+                (today,),
+            )
+            paper_daily = cur.fetchone()
+            if not paper_daily:
+                raise PaperCanarySafetyError("durable Paper daily-loss aggregate is missing")
+            try:
+                paper_daily_capital = _paper_exact_money(
+                    to_decimal(paper_daily[0]),
+                    field="paper_daily_loss_state.risk_capital_baseline",
+                    positive=True,
+                )
+                paper_daily_delta = _paper_exact_money(
+                    to_decimal(paper_daily[1]),
+                    field="paper_daily_loss_state.cumulative_equity_delta",
+                )
+            except (TypeError, ValueError) as exc:
+                raise PaperCanarySafetyError("durable Paper daily-loss aggregate is invalid") from exc
+            if paper_daily_capital != risk_capital:
+                raise PaperCanarySafetyError(
+                    "durable Paper daily-loss capital baseline changed during the UTC day",
+                )
+            self._exec(
+                cur,
+                f"SELECT max_daily_loss_pct FROM risk_config WHERE id=1{self.LOCK_CLAUSE}",
+            )
+            max_loss_row = cur.fetchone()
+            try:
+                max_loss_pct = _paper_exact_money(
+                    to_decimal(max_loss_row[0]) if max_loss_row else None,
+                    field="max_daily_loss_pct",
+                    positive=True,
+                )
+            except (TypeError, ValueError) as exc:
+                raise PaperCanarySafetyError("canonical daily loss limit is invalid") from exc
+            paper_daily_limit = paper_daily_capital * max_loss_pct / Decimal(100)
+            if max(Decimal("0"), -paper_daily_delta) >= paper_daily_limit:
+                raise PaperCanarySafetyError("durable Paper daily loss limit is exhausted")
+
+            self._exec(
+                cur,
+                "SELECT day_start_equity,realized_pnl,unrealized_pnl FROM daily_pnl WHERE trade_date=?"
+                + self.LOCK_CLAUSE,
+                (today,),
+            )
+            pnl = cur.fetchone()
+            pnl_observed = pnl is not None
+            if pnl is not None:
+                try:
+                    observed_equity = _paper_exact_money(
+                        to_decimal(pnl[0]), field="daily_pnl.day_start_equity", positive=True,
+                    )
+                    realized = _paper_exact_money(
+                        to_decimal(pnl[1]), field="daily_pnl.realized_pnl",
+                    )
+                    unrealized = _paper_exact_money(
+                        to_decimal(pnl[2]), field="daily_pnl.unrealized_pnl",
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise PaperCanarySafetyError("daily P&L state is invalid") from exc
+                if observed_equity <= 0:  # defensive after exact validation
+                    raise PaperCanarySafetyError("daily P&L equity is invalid")
+                if observed_equity != day_start:
+                    raise PaperCanarySafetyError(
+                        "daily P&L and durable risk-state baselines are inconsistent",
+                    )
+                daily_limit = risk_capital * max_loss_pct / Decimal(100)
+                if max(Decimal(0), -(realized + unrealized)) >= daily_limit:
+                    raise PaperCanarySafetyError("daily loss limit is exhausted")
+
+            instrument = config["instrument"]
+            self._exec(
+                cur,
+                "SELECT source,status,updated_at,quote_ts FROM market_data_health WHERE symbol=?"
+                + self.LOCK_CLAUSE,
+                (instrument,),
+            )
+            md = cur.fetchone()
+            if not md or md[0] != "MASSIVE" or md[1] != "READY":
+                raise PaperCanarySafetyError("Paper Canary market data is not MASSIVE/READY")
+            checked_at = datetime.fromisoformat(
+                _paper_timestamp(utcnow_iso(), field="paper prepare checked_at"),
+            )
+            if checked_at.date().isoformat() != today:
+                raise PaperCanarySafetyError("UTC trading day changed during Paper Canary prepare")
+            try:
+                health_ts = datetime.fromisoformat(str(md[2]).replace("Z", "+00:00"))
+                quote_ts = datetime.fromisoformat(str(md[3]).replace("Z", "+00:00"))
+                if health_ts.tzinfo is None or quote_ts.tzinfo is None:
+                    raise ValueError
+                health_ts = health_ts.astimezone(timezone.utc)
+                quote_ts = quote_ts.astimezone(timezone.utc)
+                health_age = Decimal(str((checked_at - health_ts).total_seconds()))
+                quote_age = Decimal(str((checked_at - quote_ts).total_seconds()))
+            except Exception as exc:
+                raise PaperCanarySafetyError("Paper Canary market-data timestamps are invalid") from exc
+            max_age = self._paper_config_amount(
+                config["quote_max_age_s"], field="quote_max_age_s", positive=True,
+            )
+            if (
+                health_age < 0
+                or health_age > max_age
+                or quote_age < 0
+                or quote_age > max_age
+                or health_ts < quote_ts
+            ):
+                raise PaperCanarySafetyError(
+                    "Paper Canary quote/health is stale, future-dated, or inconsistent",
+                )
+
+            cid = new_id()
+            prepared_at = checked_at.isoformat()
+            audit_reason = (
+                f"{reason}; commit={commit_sha}; config={config_checksum}; risk={risk_checksum}; "
+                f"daily_pnl={'observed' if pnl_observed else 'no-data'}"
+            )
+            event = AuditEventRow(
+                new_id(), prepared_at, actor, "PAPER_CANARY_READY", "DISABLED", "READY_FOR_ARM",
+                audit_reason, cid,
+            )
+            self._exec(
+                cur,
+                "UPDATE runtime_state SET status=?,updated_at=?,correlation_id=?,reason=?,"
+                "paper_commit_sha=?,paper_config_checksum=?,paper_risk_config_checksum=?,"
+                "paper_prepared_at=?,paper_run_id=NULL "
+                "WHERE id=1 AND status='DISABLED'",
+                (
+                    "READY_FOR_ARM", prepared_at, cid, audit_reason, commit_sha, config_checksum,
+                    risk_checksum, prepared_at,
+                ),
+            )
+            if cur.rowcount != 1:
+                raise PaperCanaryStateError("Paper Canary prepare lost the runtime state race")
+            self._insert_audit(cur, event)
+            return {
+                "status": "READY_FOR_ARM",
+                "commit_sha": commit_sha,
+                "config_checksum": config_checksum,
+                "risk_config_checksum": risk_checksum,
+                "risk_state_initialized": initialized,
+                "daily_pnl_observed": pnl_observed,
+                "market_data_symbol": instrument,
+            }
+
+    def get_paper_runtime_binding(self) -> dict | None:
+        row = self._one(
+            "SELECT status,paper_commit_sha,paper_config_checksum,paper_risk_config_checksum,"
+            "paper_prepared_at,paper_run_id FROM runtime_state WHERE id=1",
+        )
+        if row is None:
+            return None
+        return {
+            "status": row[0],
+            "commit_sha": row[1],
+            "config_checksum": row[2],
+            "risk_config_checksum": row[3],
+            "prepared_at": row[4],
+            "run_id": row[5],
+        }
+
+    def disable_paper_runtime_if_no_active(
+        self, *, actor: str, reason: str, expected_run_id: str | None = None,
+    ) -> dict:
+        """Atomically move the safe global runtime to DISABLED only when no Paper run is active.
+
+        The runtime singleton is the serialization point shared with prepared run creation. On
+        PostgreSQL this row lock prevents an owner create from committing between the active-run
+        check and disable; SQLite takes its writer lock before the check. KILLED and recovery states
+        remain explicit and cannot be reset through this risk-reducing endpoint.
+        """
+        if type(actor) is not str or not actor or type(reason) is not str or not reason:
+            raise PaperCanarySafetyError("disable actor and reason must be non-empty strings")
+        if expected_run_id is not None and (
+            type(expected_run_id) is not str or not expected_run_id
+        ):
+            raise PaperCanarySafetyError("expected_run_id must be None or a non-empty string")
+        now = utcnow_iso()
+        with self.tx() as cur:
+            if self.MONEY_AS_TEXT:
+                self._exec(
+                    cur,
+                    "UPDATE runtime_state SET updated_at=updated_at WHERE id=1",
+                )
+                if cur.rowcount != 1:
+                    raise PaperCanaryStateError("global runtime state is missing")
+            self._exec(
+                cur,
+                "SELECT status,paper_run_id FROM runtime_state WHERE id=1"
+                + self.LOCK_CLAUSE,
+            )
+            runtime = cur.fetchone()
+            if not runtime:
+                raise PaperCanaryStateError("global runtime state is missing")
+            previous = runtime[0]
+            bound_run_id = runtime[1]
+            if previous not in {"DISABLED", "READY_FOR_ARM", "ARMED", "RUNNING", "HALTED"}:
+                raise PaperCanaryStateError(
+                    f"global Paper disable is not allowed from {previous}",
+                )
+            if not (previous == "DISABLED" and bound_run_id is None):
+                if expected_run_id is None:
+                    if bound_run_id is not None:
+                        raise PaperCanarySafetyError(
+                            "run-less disable is allowed only before any Paper run consumed the binding",
+                        )
+                elif bound_run_id != expected_run_id:
+                    raise PaperCanarySafetyError(
+                        "Paper disable proof does not match the run bound to this runtime",
+                    )
+
+            self._exec(
+                cur,
+                "INSERT INTO kill_switch (id,engaged,actor,reason,updated_at) "
+                "VALUES (1,0,NULL,NULL,?) ON CONFLICT(id) DO NOTHING",
+                (now,),
+            )
+            self._exec(
+                cur,
+                f"SELECT engaged FROM kill_switch WHERE id=1{self.LOCK_CLAUSE}",
+            )
+            kill = cur.fetchone()
+            if not kill or bool(kill[0]):
+                raise PaperCanarySafetyError("kill switch is engaged; manual RESET is required")
+
+            self._exec(
+                cur,
+                "SELECT run_id FROM paper_canary_runs WHERE active_slot=1" + self.LOCK_CLAUSE,
+            )
+            if cur.fetchall():
+                raise PaperCanaryStateError("an active Paper Canary run prevents global disable")
+            if previous == "DISABLED":
+                return {"status": "DISABLED", "previous_status": previous, "changed": False}
+
+            cid = new_id()
+            event = AuditEventRow(
+                new_id(), now, actor, "PAPER_CANARY_DISABLE", previous, "DISABLED", reason, cid,
+            )
+            self._exec(
+                cur,
+                "UPDATE runtime_state SET status='DISABLED',updated_at=?,correlation_id=?,reason=?,"
+                "paper_commit_sha=NULL,paper_config_checksum=NULL,paper_risk_config_checksum=NULL,"
+                "paper_prepared_at=NULL,paper_run_id=NULL WHERE id=1 AND status=?",
+                (now, cid, reason, previous),
+            )
+            if cur.rowcount != 1:
+                raise PaperCanaryStateError("global Paper disable lost the runtime state race")
+            self._insert_audit(cur, event)
+            return {"status": "DISABLED", "previous_status": previous, "changed": True}
+
     def create_paper_run(self, *, run_id: str, config_json, risk_config_checksum: str,
                          commit_sha: str, starting_cash: Decimal,
-                         status: str = "CREATED", reason: str | None = None) -> PaperCanaryRunRow:
+                         status: str = "CREATED", reason: str | None = None,
+                         require_prepared: bool = False) -> PaperCanaryRunRow:
         if not all(type(value) is str and value for value in (run_id, risk_config_checksum, commit_sha)):
             raise ValueError("run_id, risk_config_checksum, and commit_sha must be non-empty strings")
         if status not in {"CREATED", "READY_FOR_ARM"}:
             raise PaperCanaryStateError("new run must start CREATED or READY_FOR_ARM")
+        if type(require_prepared) is not bool:
+            raise TypeError("require_prepared must be an exact bool")
         cash = _paper_exact_money(starting_cash, field="starting_cash", positive=True)
         _, canonical, config_checksum = self._paper_config(config_json)
         config, _, _ = self._paper_config(canonical)
@@ -3129,27 +3589,112 @@ class SqlStore(Store):
         now = utcnow_iso()
         with self.tx() as cur:
             self._paper_serialize_sqlite_write(cur)
+            # Every creation path serializes on the runtime singleton first. This is the common
+            # PostgreSQL lock order shared with prepare/disable/fill and also prevents an
+            # unprepared direct Store caller from appearing after a successful no-active disable.
+            self._exec(
+                cur,
+                "SELECT status,paper_commit_sha,paper_config_checksum,"
+                "paper_risk_config_checksum,paper_prepared_at,paper_run_id "
+                "FROM runtime_state WHERE id=1"
+                + self.LOCK_CLAUSE,
+            )
+            prepared = cur.fetchone()
+            if not prepared or prepared[0] != "RUNNING":
+                raise PaperCanarySafetyError("global runtime is not RUNNING")
+
+            self._exec(
+                cur,
+                "INSERT INTO kill_switch (id,engaged,actor,reason,updated_at) "
+                "VALUES (1,0,NULL,NULL,?) ON CONFLICT(id) DO NOTHING",
+                (now,),
+            )
+            self._exec(
+                cur,
+                f"SELECT engaged FROM kill_switch WHERE id=1{self.LOCK_CLAUSE}",
+            )
+            kill = cur.fetchone()
+            if not kill or bool(kill[0]):
+                raise PaperCanarySafetyError("kill switch is engaged")
+
+            if require_prepared:
+                if (
+                    prepared[1] != commit_sha
+                    or prepared[2] != config_checksum
+                    or prepared[3] != risk_config_checksum
+                    or not prepared[4]
+                ):
+                    raise PaperCanarySafetyError(
+                        "global runtime is not RUNNING with the exact prepared Paper binding",
+                    )
+                try:
+                    prepared_dt = datetime.fromisoformat(
+                        str(prepared[4]).replace("Z", "+00:00"),
+                    )
+                    if prepared_dt.tzinfo is None:
+                        raise ValueError
+                    prepared_day = prepared_dt.astimezone(timezone.utc).date()
+                except (TypeError, ValueError) as exc:
+                    raise PaperCanarySafetyError(
+                        "prepared Paper binding timestamp is invalid",
+                    ) from exc
+                if prepared_day != datetime.fromisoformat(now).date():
+                    raise PaperCanarySafetyError(
+                        "prepared Paper binding is from another UTC trading day",
+                    )
+            elif any(prepared[index] is not None for index in range(1, 5)):
+                raise PaperCanarySafetyError(
+                    "a prepared Paper runtime requires the exact prepared creation path",
+                )
+
+            if prepared[5] not in {None, run_id}:
+                raise PaperCanarySafetyError("Paper runtime binding was consumed by another run")
+            self._exec(
+                cur,
+                "UPDATE runtime_state SET paper_run_id=? "
+                "WHERE id=1 AND (paper_run_id IS NULL OR paper_run_id=?)",
+                (run_id, run_id),
+            )
+            if cur.rowcount != 1:
+                raise PaperCanarySafetyError("Paper runtime binding was consumed by another run")
+
+            # A retry locks its existing run before risk rows. Intent and fill use the same
+            # run-before-risk order, eliminating the run/risk cycle while the runtime singleton
+            # continues to serialize create/disable/fill globally.
+            self._exec(
+                cur,
+                f"SELECT {self._PAPER_RUN_COLS} FROM paper_canary_runs "
+                f"WHERE run_id=?{self.LOCK_CLAUSE}",
+                (run_id,),
+            )
+            raw_run = cur.fetchone()
             if self._paper_risk_checksum_in_tx(cur) != risk_config_checksum:
                 raise PaperCanarySafetyError("risk configuration changed before run creation")
             if cash > self._paper_risk_capital_in_tx(cur):
                 raise PaperCanarySafetyError(
                     "Paper Canary starting_cash exceeds canonical risk capital",
                 )
-            self._exec(
-                cur,
-                "INSERT INTO paper_canary_runs "
-                "(run_id,status,active_slot,version,config_json,config_checksum,risk_config_checksum,"
-                "commit_sha,reason,created_at,started_at,heartbeat_at,ended_at,updated_at) "
-                "VALUES (?,?,1,0,?,?,?,?,?,?,NULL,NULL,NULL,?) ON CONFLICT DO NOTHING",
-                (run_id, status, canonical, config_checksum, risk_config_checksum, commit_sha, reason, now, now),
-            )
-            created = cur.rowcount == 1
-            self._exec(
-                cur,
-                f"SELECT {self._PAPER_RUN_COLS} FROM paper_canary_runs WHERE run_id=?{self.LOCK_CLAUSE}",
-                (run_id,),
-            )
-            raw_run = cur.fetchone()
+            created = False
+            if raw_run is None:
+                self._exec(
+                    cur,
+                    "INSERT INTO paper_canary_runs "
+                    "(run_id,status,active_slot,version,config_json,config_checksum,risk_config_checksum,"
+                    "commit_sha,reason,created_at,started_at,heartbeat_at,ended_at,updated_at) "
+                    "VALUES (?,?,1,0,?,?,?,?,?,?,NULL,NULL,NULL,?) ON CONFLICT DO NOTHING",
+                    (
+                        run_id, status, canonical, config_checksum, risk_config_checksum,
+                        commit_sha, reason, now, now,
+                    ),
+                )
+                created = cur.rowcount == 1
+                self._exec(
+                    cur,
+                    f"SELECT {self._PAPER_RUN_COLS} FROM paper_canary_runs "
+                    f"WHERE run_id=?{self.LOCK_CLAUSE}",
+                    (run_id,),
+                )
+                raw_run = cur.fetchone()
             if not raw_run:
                 raise PaperCanaryConflict("another active Paper Canary run already owns the slot")
             run = self._paper_run_row(raw_run)
@@ -3557,6 +4102,26 @@ class SqlStore(Store):
         transaction_started_at = utcnow_iso()
         with self.tx() as cur:
             self._paper_serialize_sqlite_write(cur)
+            # The global runtime singleton is the first PostgreSQL row lock for every fill,
+            # create, prepare, and disable transaction. Keeping this one common root removes the
+            # runtime/run inversion that could otherwise deadlock a direct concurrent Store call.
+            self._exec(
+                cur,
+                "SELECT status,paper_prepared_at,paper_run_id FROM runtime_state WHERE id=1"
+                + self.LOCK_CLAUSE,
+            )
+            runtime = cur.fetchone()
+            self._exec(
+                cur,
+                "INSERT INTO kill_switch (id,engaged,actor,reason,updated_at) "
+                "VALUES (1,0,NULL,NULL,?) ON CONFLICT(id) DO NOTHING",
+                (transaction_started_at,),
+            )
+            self._exec(
+                cur,
+                f"SELECT engaged FROM kill_switch WHERE id=1{self.LOCK_CLAUSE}",
+            )
+            kill = cur.fetchone()
             self._exec(
                 cur,
                 f"SELECT {self._PAPER_RUN_COLS} FROM paper_canary_runs WHERE run_id=?{self.LOCK_CLAUSE}",
@@ -3601,6 +4166,26 @@ class SqlStore(Store):
                     quote_ts=quote_time,
                     ts=fill_time,
                 )
+            if not runtime or runtime[0] != "RUNNING":
+                raise PaperCanarySafetyError("global runtime is not RUNNING")
+            if runtime[2] != run_id:
+                raise PaperCanarySafetyError("Paper run does not own the global runtime binding")
+            if not kill or bool(kill[0]):
+                raise PaperCanarySafetyError("kill switch is engaged")
+            # The prepared-day attestation is an admission gate for risk-increasing BUYs.  A
+            # durable long-reducing SELL must remain available after UTC midnight (and even if
+            # old prepared metadata is malformed), otherwise an overnight run can be stranded.
+            # The SELL is still proven against the locked durable position below.
+            prepared_dt = None
+            if side == "BUY" and runtime[1] is not None:
+                try:
+                    prepared_dt = datetime.fromisoformat(
+                        _paper_timestamp(runtime[1], field="paper_prepared_at"),
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise PaperCanarySafetyError(
+                        "Paper runtime prepared timestamp is invalid",
+                    ) from exc
             if run.status != "RUNNING" or run.active_slot != 1:
                 raise PaperCanarySafetyError("Paper Canary run is not active RUNNING")
             if order.run_id != run_id:
@@ -3649,26 +4234,6 @@ class SqlStore(Store):
 
             self._exec(
                 cur,
-                f"SELECT status FROM runtime_state WHERE id=1{self.LOCK_CLAUSE}",
-            )
-            runtime = cur.fetchone()
-            if not runtime or runtime[0] != "RUNNING":
-                raise PaperCanarySafetyError("global runtime is not RUNNING")
-            self._exec(
-                cur,
-                "INSERT INTO kill_switch (id,engaged,actor,reason,updated_at) "
-                "VALUES (1,0,NULL,NULL,?) ON CONFLICT(id) DO NOTHING",
-                (transaction_started_at,),
-            )
-            self._exec(
-                cur,
-                f"SELECT engaged FROM kill_switch WHERE id=1{self.LOCK_CLAUSE}",
-            )
-            kill = cur.fetchone()
-            if not kill or bool(kill[0]):
-                raise PaperCanarySafetyError("kill switch is engaged")
-            self._exec(
-                cur,
                 f"SELECT halted,killed FROM risk_state WHERE id=1{self.LOCK_CLAUSE}",
             )
             risk_state = cur.fetchone()
@@ -3680,12 +4245,27 @@ class SqlStore(Store):
                 or order.risk_config_checksum != run.risk_config_checksum
             ):
                 raise PaperCanarySafetyError("risk configuration changed after authorization")
-            if self._paper_config_amount(
+            configured_starting_cash = self._paper_config_amount(
                 config["starting_cash"], field="starting_cash", positive=True,
-            ) > self._paper_risk_capital_in_tx(cur):
+            )
+            risk_capital = self._paper_risk_capital_in_tx(cur)
+            if configured_starting_cash > risk_capital:
                 raise PaperCanarySafetyError(
                     "Paper Canary starting_cash exceeds canonical risk capital",
                 )
+            self._exec(
+                cur,
+                f"SELECT max_daily_loss_pct FROM risk_config WHERE id=1{self.LOCK_CLAUSE}",
+            )
+            max_loss_row = cur.fetchone()
+            try:
+                paper_max_loss_pct = _paper_exact_money(
+                    to_decimal(max_loss_row[0]) if max_loss_row else None,
+                    field="max_daily_loss_pct",
+                    positive=True,
+                )
+            except (TypeError, ValueError) as exc:
+                raise PaperCanarySafetyError("canonical daily loss limit is invalid") from exc
 
             self._exec(
                 cur,
@@ -3697,9 +4277,7 @@ class SqlStore(Store):
             if not raw_account:
                 raise PaperCanarySafetyError("Paper Canary account is missing")
             account = self._paper_account_row(raw_account)
-            if account.starting_cash != self._paper_config_amount(
-                config["starting_cash"], field="starting_cash", positive=True,
-            ):
+            if account.starting_cash != configured_starting_cash:
                 raise PaperCanarySafetyError("account capital does not match the immutable run config")
             self._exec(
                 cur,
@@ -3728,8 +4306,47 @@ class SqlStore(Store):
                 (trade_date,),
             )
             daily_lock = cur.fetchone()
-            if not daily_lock or bool(daily_lock[0]):
+            if not daily_lock:
+                raise PaperCanarySafetyError("daily loss lock is missing")
+            daily_lock_engaged = bool(daily_lock[0])
+            # The loss latch blocks risk-increasing BUYs, but it must never strand a long Paper
+            # position.  A valid long-reducing SELL remains available so the canary can flatten.
+            if daily_lock_engaged and side == "BUY":
                 raise PaperCanarySafetyError("daily loss lock is engaged")
+
+            self._exec(
+                cur,
+                "INSERT INTO paper_daily_loss_state "
+                "(trade_date,risk_capital_baseline,cumulative_equity_delta,version,updated_at) "
+                "VALUES (?,?,?,0,?) ON CONFLICT(trade_date) DO NOTHING",
+                (trade_date, self._m(risk_capital), self._m(Decimal("0")), candidate_now),
+            )
+            self._exec(
+                cur,
+                "SELECT risk_capital_baseline,cumulative_equity_delta,version "
+                "FROM paper_daily_loss_state WHERE trade_date=?" + self.LOCK_CLAUSE,
+                (trade_date,),
+            )
+            paper_daily = cur.fetchone()
+            if not paper_daily:
+                raise PaperCanarySafetyError("durable Paper daily-loss aggregate is missing")
+            try:
+                paper_daily_capital = _paper_exact_money(
+                    to_decimal(paper_daily[0]),
+                    field="paper_daily_loss_state.risk_capital_baseline",
+                    positive=True,
+                )
+                paper_daily_delta = _paper_exact_money(
+                    to_decimal(paper_daily[1]),
+                    field="paper_daily_loss_state.cumulative_equity_delta",
+                )
+                paper_daily_version = int(paper_daily[2])
+            except (TypeError, ValueError) as exc:
+                raise PaperCanarySafetyError("durable Paper daily-loss aggregate is invalid") from exc
+            if paper_daily_capital != risk_capital:
+                raise PaperCanarySafetyError(
+                    "durable Paper daily-loss capital baseline changed during the UTC day",
+                )
 
             # Re-attest the authoritative symbol row only after every safety row governing this
             # commit is locked. PostgreSQL holds it through commit; SQLite's early writer lock
@@ -3737,7 +4354,7 @@ class SqlStore(Store):
             # only by the REALTIME quality gate, so MASSIVE/READY is the database-side attestation.
             self._exec(
                 cur,
-                "SELECT symbol,source,status,updated_at FROM market_data_health "
+                "SELECT symbol,source,status,updated_at,quote_ts FROM market_data_health "
                 f"WHERE symbol=?{self.LOCK_CLAUSE}",
                 (instrument,),
             )
@@ -3751,9 +4368,17 @@ class SqlStore(Store):
                 raise PaperCanarySafetyError(
                     "market-data health is not exact MASSIVE/READY/REALTIME for the fill symbol",
                 )
-            health_time = _paper_timestamp(
-                raw_health[3], field="market-data health updated_at",
-            )
+            try:
+                health_time = _paper_timestamp(
+                    raw_health[3], field="market-data health updated_at",
+                )
+                durable_quote_time = _paper_timestamp(
+                    raw_health[4], field="market-data health quote_ts",
+                )
+            except (TypeError, ValueError) as exc:
+                raise PaperCanarySafetyError(
+                    "market-data health updated_at/quote_ts timestamps are invalid or missing",
+                ) from exc
 
             # Capture the authoritative time only after the daily and health locks. The candidate
             # time above never authorizes freshness or a day rollover.
@@ -3762,17 +4387,32 @@ class SqlStore(Store):
             fill_dt = datetime.fromisoformat(fill_time)
             commit_dt = datetime.fromisoformat(now)
             health_dt = datetime.fromisoformat(health_time)
-            if quote_dt > commit_dt or fill_dt > commit_dt or health_dt > commit_dt:
+            durable_quote_dt = datetime.fromisoformat(durable_quote_time)
+            if (
+                quote_dt > commit_dt
+                or fill_dt > commit_dt
+                or health_dt > commit_dt
+                or durable_quote_dt > commit_dt
+                or (prepared_dt is not None and prepared_dt > commit_dt)
+            ):
                 raise PaperCanarySafetyError(
-                    "quote/fill/market-data health timestamp is in the future at atomic fill commit"
+                    "prepared/quote/fill/market-data timestamp is in the future at atomic fill commit"
                 )
             if commit_dt.date() != candidate_dt.date() or fill_dt.date() != commit_dt.date():
                 raise PaperCanarySafetyError(
                     "candidate, fill evidence, and atomic commit must share one UTC trading day",
                 )
-            if health_dt < quote_dt:
+            if prepared_dt is not None and prepared_dt.date() != commit_dt.date():
                 raise PaperCanarySafetyError(
-                    "market-data health predates the bound REALTIME quote",
+                    "Paper run cannot fill outside its prepared UTC trading day",
+                )
+            if durable_quote_dt < quote_dt:
+                raise PaperCanarySafetyError(
+                    "durable current quote predates the bound order quote",
+                )
+            if health_dt < durable_quote_dt:
+                raise PaperCanarySafetyError(
+                    "market-data health predates its durable current REALTIME quote",
                 )
             health_age = commit_dt - health_dt
             health_age_us = (
@@ -3784,6 +4424,17 @@ class SqlStore(Store):
             ):
                 raise PaperCanarySafetyError(
                     "market-data health became stale before the atomic fill commit",
+                )
+            durable_quote_age = commit_dt - durable_quote_dt
+            durable_quote_age_us = (
+                (durable_quote_age.days * 86_400 + durable_quote_age.seconds) * 1_000_000
+                + durable_quote_age.microseconds
+            )
+            if Decimal(durable_quote_age_us) / Decimal(1_000_000) > self._paper_config_amount(
+                config["quote_max_age_s"], field="quote_max_age_s", positive=True,
+            ):
+                raise PaperCanarySafetyError(
+                    "durable current quote became stale before the atomic fill commit",
                 )
             commit_age = commit_dt - quote_dt
             commit_age_us = (
@@ -3818,16 +4469,30 @@ class SqlStore(Store):
             notional = self._paper_require_ledger_money(
                 qty * px * mult, field="order notional", nonnegative=True,
             )
-            if notional > self._paper_cap(config["max_order_notional"], field="max_order_notional"):
+            # Admission caps constrain BUYs.  A SELL proven against the locked durable long
+            # position is an exit, so activity/notional limits must never strand it.
+            if side == "BUY" and notional > self._paper_cap(
+                config["max_order_notional"], field="max_order_notional",
+            ):
                 raise PaperCanarySafetyError("max_order_notional exceeded")
             new_quantity = old_quantity + qty if side == "BUY" else old_quantity - qty
             projected_gross = self._paper_require_ledger_money(
                 abs(new_quantity) * px * mult, field="projected gross exposure", nonnegative=True,
             )
-            if projected_gross > self._paper_cap(
+            if side == "BUY" and projected_gross > self._paper_cap(
                 config["max_gross_notional"], field="max_gross_notional",
             ):
                 raise PaperCanarySafetyError("max_gross_notional exceeded")
+            if side == "SELL":
+                pre_sell_gross_at_fill_price = self._paper_require_ledger_money(
+                    old_quantity * px * mult,
+                    field="pre-sell gross exposure at fill price",
+                    nonnegative=True,
+                )
+                if projected_gross >= pre_sell_gross_at_fill_price:
+                    raise PaperCanarySafetyError(
+                        "SELL must strictly reduce the locked long exposure",
+                    )
             self._exec(
                 cur,
                 "SELECT f.quantity,f.price,f.multiplier,f.ts FROM paper_fills f "
@@ -3844,12 +4509,12 @@ class SqlStore(Store):
             turnover = self._paper_require_ledger_money(
                 turnover + notional, field="daily turnover", nonnegative=True,
             )
-            if turnover > self._paper_cap(
+            if side == "BUY" and turnover > self._paper_cap(
                 config["max_daily_turnover"], field="max_daily_turnover",
             ):
                 raise PaperCanarySafetyError("max_daily_turnover exceeded")
             daily_fill_count = sum(1 for row in prior_fills if row[3][:10] == trade_date)
-            if daily_fill_count + 1 > int(config["max_orders"]):
+            if side == "BUY" and daily_fill_count + 1 > int(config["max_orders"]):
                 raise PaperCanarySafetyError("max_orders exceeded")
 
             if side == "BUY":
@@ -3861,7 +4526,9 @@ class SqlStore(Store):
                 new_cash = account.cash + notional - fee
                 new_average = Decimal("0") if new_quantity == 0 else old_average
                 realized_delta = (px - old_average) * qty * mult - fee
-            new_cash = self._paper_require_ledger_money(new_cash, field="cash", nonnegative=True)
+            new_cash = self._paper_require_ledger_money(
+                new_cash, field="cash", nonnegative=side == "BUY",
+            )
             new_average = self._paper_require_ledger_money(
                 new_average, field="average price", nonnegative=True,
             )
@@ -3870,7 +4537,49 @@ class SqlStore(Store):
             )
             new_net = projected_gross
             new_equity = self._paper_require_ledger_money(
-                new_cash + new_net, field="equity", nonnegative=True,
+                new_cash + new_net, field="equity",
+            )
+            # Apply this fill's exact account-equity delta to the UTC-day aggregate shared by every
+            # run.  BUY is risk-increasing and cannot start or cross the canonical loss boundary.
+            # SELL is risk-reducing and may flatten even when its commission/slippage crosses the
+            # boundary; in that case the durable daily latch is engaged in this same transaction.
+            account_equity_delta = self._paper_require_ledger_money(
+                new_equity - account.equity,
+                field="Paper account equity delta",
+            )
+            projected_daily_delta = self._paper_require_ledger_money(
+                paper_daily_delta + account_equity_delta,
+                field="Paper cumulative daily equity delta",
+            )
+            paper_loss_limit = paper_daily_capital * paper_max_loss_pct / Decimal(100)
+            current_daily_loss = max(Decimal("0"), -paper_daily_delta)
+            projected_daily_loss = max(Decimal("0"), -projected_daily_delta)
+            # Keep the stricter per-run account drawdown boundary as well.  Without it, a tiny
+            # canary account could spend the much larger shared Risk-capital budget in one run.
+            # The shared aggregate prevents sequential-run resets; this bound limits each account.
+            run_loss_limit = (
+                min(risk_capital, account.starting_cash)
+                * paper_max_loss_pct
+                / Decimal(100)
+            )
+            current_run_loss = max(
+                Decimal("0"), account.starting_cash - account.equity,
+            )
+            projected_run_loss = max(
+                Decimal("0"), account.starting_cash - new_equity,
+            )
+            if side == "BUY" and (
+                current_daily_loss >= paper_loss_limit
+                or projected_daily_loss >= paper_loss_limit
+                or current_run_loss >= run_loss_limit
+                or projected_run_loss >= run_loss_limit
+            ):
+                raise PaperCanarySafetyError("durable Paper daily loss limit would be reached")
+            engage_daily_loss = side == "SELL" and (
+                current_daily_loss >= paper_loss_limit
+                or projected_daily_loss >= paper_loss_limit
+                or current_run_loss >= run_loss_limit
+                or projected_run_loss >= run_loss_limit
             )
 
             self._exec(cur, "SELECT COALESCE(MAX(ledger_seq),0) FROM paper_fills")
@@ -3919,6 +4628,31 @@ class SqlStore(Store):
             )
             if cur.rowcount != 1:
                 raise PaperCanaryStateError("account version compare-and-swap failed")
+            self._exec(
+                cur,
+                "UPDATE paper_daily_loss_state SET cumulative_equity_delta=?,version=version+1,"
+                "updated_at=? WHERE trade_date=? AND version=?",
+                (self._m(projected_daily_delta), now, trade_date, paper_daily_version),
+            )
+            if cur.rowcount != 1:
+                raise PaperCanaryStateError("Paper daily-loss aggregate compare-and-swap failed")
+            if engage_daily_loss and not daily_lock_engaged:
+                loss_reason = "Paper Canary daily loss limit reached"
+                self._exec(
+                    cur,
+                    "UPDATE daily_loss_lock SET engaged=1,reason=?,updated_at=? "
+                    "WHERE trade_date=? AND engaged=0",
+                    (loss_reason, now, trade_date),
+                )
+                if cur.rowcount != 1:
+                    raise PaperCanaryStateError("Paper daily-loss latch compare-and-swap failed")
+                self._insert_audit(
+                    cur,
+                    AuditEventRow(
+                        new_id(), now, "paper-canary", "DAILY_LOSS_LOCK", None, "HALTED",
+                        f"{loss_reason}; trade_date={trade_date}; run_id={run_id}", new_id(),
+                    ),
+                )
             self._paper_append_order_event(
                 cur,
                 client_order_id=client_order_id,

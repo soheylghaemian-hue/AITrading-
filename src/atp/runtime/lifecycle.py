@@ -170,11 +170,12 @@ class LifecycleManager:
 
     # -- kill switch (durable) ----------------------------------------------
     def kill(self, *, actor: str = "user", reason: str = "kill switch") -> RuntimeStatus:
-        prev = self.status
         # Latch first (durable), then reflect in runtime_state — both survive restart.
+        # The status write intentionally reads its previous state after the latch commits: a
+        # concurrent transition may have won just before KILL, but KILL must still win last.
         self._store.set_kill_switch(engaged=True, actor=actor, reason=reason)
         self._store.transition(new_status=RuntimeStatus.KILLED.value, actor=actor,
-                               reason=reason, action="KILL", previous=prev.value)
+                               reason=reason, action="KILL")
         return RuntimeStatus.KILLED
 
     def reset_kill(self, *, actor: str = "user", reason: str = "manual reset") -> RuntimeStatus:

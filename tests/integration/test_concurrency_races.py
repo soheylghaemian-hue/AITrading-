@@ -29,6 +29,7 @@ from atp.store import D, open_store
 from atp.store.base import FillRow, utcnow_iso
 
 _TABLES = [
+    "paper_daily_loss_state",
     "paper_reconciliations", "paper_order_events", "paper_fills", "paper_positions",
     "paper_orders", "paper_accounts", "paper_canary_runs",
     "research_validation_metrics", "research_validation_runs",

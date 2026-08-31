@@ -1,8 +1,9 @@
 """Control / Observability Service (§ Phase C — service C).
 
 A standalone FastAPI process: dashboard read-model + health/heartbeat aggregation + authenticated
-control commands (recover / arm / start / kill / reset) that drive the durable LifecycleManager. It
-holds no trading runtime. Paper Canary status is read directly from PostgreSQL and its fixed mutation
+control commands (prepare / recover / arm / start / disable / kill / reset) that drive the durable
+LifecycleManager. It holds no trading runtime. Paper Canary status is read directly from PostgreSQL and
+its fixed mutation
 commands are proxied only to Trading Core's private loopback owner. A Control/API outage has zero
 impact on the Trading Core's already durable state.
 Vercel/browser dashboards are downstream of this API and are never in the execution chain.
@@ -18,6 +19,7 @@ import hmac
 import http.client
 import json
 import os
+import re
 import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -43,13 +45,14 @@ from ..optflow.readmodel import build_options
 from ..persistence.state import RedisStateStore
 from ..research import backfill as bf
 from ..research import readmodel as bt_read
+from ..research.intel.commit import CommitVerificationError, resolve_commit_sha
 from ..research.intel.legacy_diag import reconcile_legacy
 from ..research.runner import OneActiveRunError, run_backtest
 from ..research.runner import ValidationError as BtValidationError
 from ..research.validation import readmodel as val_read
 from ..riskcontrol import build_risk_config_view, build_risk_events, build_risk_status, validate_config
 from ..runtime.lifecycle import LifecycleManager, RuntimeStatus
-from ..store import open_store
+from ..store import PaperCanaryError, open_store
 from ..traders.diagnostics import audit_trader_providers
 from ..traders.readmodel import build_symbol_consensus, build_trader_profile
 from .base import (
@@ -58,7 +61,7 @@ from .base import (
     build_dsn,
     redis_url,
 )
-from .recovery import age_seconds, build_recovery_checks
+from .recovery import age_seconds, build_recovery_checks, verify_paper_stopped
 
 SERVICE = "control"
 HEARTBEAT_INTERVAL = 5.0
@@ -71,6 +74,7 @@ class _Ctx:
     life: LifecycleManager | None = None
     snap = None                      # Redis read-model for live quotes (best-effort; never authoritative)
     lock = threading.Lock()          # psycopg connection is not thread-safe across the uvicorn pool
+    paper_lock = threading.RLock()   # serialize Control's full Paper operator command surface
     ready = False
     hb_task = None
     backfill_provider = None         # test-injected MinuteAggregatesProvider; real provider is env-gated
@@ -261,6 +265,18 @@ class PaperCanarySubmitBody(_PaperBody):
 
 class PaperCanaryRecoveryBody(_PaperBody):
     run_id: str
+    reason: str | None = None
+
+
+class PaperCanaryPrepareBody(_PaperBody):
+    expected_commit_sha: str
+    expected_config_checksum: str
+    expected_risk_version_token: str
+    reason: str | None = None
+
+
+class PaperCanaryDisableBody(_PaperBody):
+    run_id: str | None = None
     reason: str | None = None
 
 
@@ -927,13 +943,69 @@ def paper_canary_status(run_id: str, authorization: str | None = Header(default=
     )
 
 
+@app.post("/control/paper-canary/prepare")
+def paper_canary_prepare(
+    body: PaperCanaryPrepareBody,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    """Validate the complete server-owned PAPER boundary and stop at global READY_FOR_ARM.
+
+    The Store performs the decisive checks, missing risk-baseline initialization, runtime CAS and audit
+    write in one transaction.  This endpoint never arms/starts, creates a run, or touches a broker.
+    """
+    _auth(authorization)
+    if not _paper_offensive_enabled():
+        raise HTTPException(404, "durable Paper Canary is disabled")
+    if re.fullmatch(r"[0-9a-f]{40}", body.expected_commit_sha) is None:
+        raise HTTPException(422, "expected_commit_sha must be an exact 40-lowerhex SHA")
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", body.expected_config_checksum) is None:
+        raise HTTPException(422, "expected_config_checksum must be sha256 plus 64 lowercase hex digits")
+    if re.fullmatch(r"[0-9a-f]{20}", body.expected_risk_version_token) is None:
+        raise HTTPException(422, "expected_risk_version_token must be 20 lowercase hex digits")
+    try:
+        deployed_commit = resolve_commit_sha()
+    except CommitVerificationError as exc:
+        raise HTTPException(409, f"deployed commit verification failed: {exc.code}") from exc
+    if deployed_commit != body.expected_commit_sha:
+        raise HTTPException(409, "expected commit does not match the deployed commit")
+    config_json = os.environ.get("ATP_PAPER_CANARY_CONFIG_JSON")
+    if type(config_json) is not str or not config_json:
+        raise HTTPException(503, "Paper Canary server config is not configured")
+    reason = body.reason or "bounded Paper Canary pre-arm validation passed"
+    try:
+        with ctx.paper_lock, ctx.lock:
+            result = ctx.store.prepare_paper_runtime(
+                config_json=config_json,
+                commit_sha=deployed_commit,
+                expected_config_checksum=body.expected_config_checksum,
+                expected_risk_config_checksum=body.expected_risk_version_token,
+                actor="operator",
+                reason=reason,
+            )
+    except PaperCanaryError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(409, "Paper Canary server configuration is invalid") from exc
+    return {
+        "ok": True,
+        "status": result["status"],
+        "commit_sha": result["commit_sha"],
+        "config_checksum": result["config_checksum"],
+        "risk_version_token": result["risk_config_checksum"],
+        "instrument": result["market_data_symbol"],
+        "risk_state_initialized": result["risk_state_initialized"],
+        "daily_pnl_observed": result["daily_pnl_observed"],
+    }
+
+
 @app.post("/control/paper-canary/create")
 def paper_canary_create(
     body: PaperCanaryCreateBody,
     authorization: str | None = Header(default=None),
 ) -> dict:
     _auth(authorization)
-    return _paper_owner_request("create", body.model_dump(exclude_none=True))
+    with ctx.paper_lock:
+        return _paper_owner_request("create", body.model_dump(exclude_none=True))
 
 
 @app.post("/control/paper-canary/activate")
@@ -942,7 +1014,8 @@ def paper_canary_activate(
     authorization: str | None = Header(default=None),
 ) -> dict:
     _auth(authorization)
-    return _paper_owner_request("activate", body.model_dump(exclude_none=True))
+    with ctx.paper_lock:
+        return _paper_owner_request("activate", body.model_dump(exclude_none=True))
 
 
 @app.post("/control/paper-canary/submit")
@@ -951,7 +1024,8 @@ def paper_canary_submit(
     authorization: str | None = Header(default=None),
 ) -> dict:
     _auth(authorization)
-    return _paper_owner_request("submit", body.model_dump())
+    with ctx.paper_lock:
+        return _paper_owner_request("submit", body.model_dump())
 
 
 @app.post("/control/paper-canary/recover")
@@ -960,7 +1034,8 @@ def paper_canary_recover(
     authorization: str | None = Header(default=None),
 ) -> dict:
     _auth(authorization)
-    return _paper_owner_request("recover", body.model_dump(exclude_none=True))
+    with ctx.paper_lock:
+        return _paper_owner_request("recover", body.model_dump(exclude_none=True))
 
 
 @app.post("/control/paper-canary/stop")
@@ -969,13 +1044,100 @@ def paper_canary_stop(
     authorization: str | None = Header(default=None),
 ) -> dict:
     _auth(authorization)
-    return _paper_owner_request("stop", body.model_dump(exclude_none=True))
+    with ctx.paper_lock:
+        return _paper_owner_request("stop", body.model_dump(exclude_none=True))
+
+
+def _paper_stopped_proof(run_id: str) -> dict:
+    """Recompute and verify the terminal proof required before global disable.
+
+    A persisted PASS is only evidence, not authority by itself: re-run the deterministic ledger
+    replay against the current immutable fills/orders and mutable projections, then additionally
+    require a flat account and positions.  No supported writer can mutate a terminal STOPPED run.
+    """
+    try:
+        verified = verify_paper_stopped(ctx.store, run_id=run_id)
+    except (PaperCanaryError, TypeError, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if not verified.ok:
+        raise HTTPException(
+            409,
+            "Paper Canary is not durably STOPPED, flat, and cleanly reconciled",
+        )
+    active = [
+        item
+        for status in _PAPER_RECOVERY_STATUSES
+        for item in ctx.store.list_paper_runs(status=status, limit=2)
+    ]
+    if active:
+        raise HTTPException(409, "another active Paper Canary run prevents global disable")
+    return {
+        "run": _paper_jsonable(verified.run),
+        "reconciliation": _paper_jsonable(verified.reconciliation),
+    }
+
+
+def _require_no_active_paper_run() -> None:
+    active = [
+        item
+        for status in _PAPER_RECOVERY_STATUSES
+        for item in ctx.store.list_paper_runs(status=status, limit=2)
+    ]
+    if active:
+        raise HTTPException(409, "an active Paper Canary run prevents run-less global disable")
+
+
+@app.post("/control/paper-canary/disable")
+def paper_canary_disable(
+    body: PaperCanaryDisableBody,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    """Stop/reconcile one run, then risk-reduce the global runtime all the way to DISABLED.
+
+    This operation is retryable after partial progress.  It refuses to reset a kill or bypass recovery,
+    and it is available even after the offensive feature flag has been turned off.
+    """
+    _auth(authorization)
+    reason = body.reason or "bounded Paper Canary complete"
+    with ctx.paper_lock:
+        if body.run_id is None:
+            with ctx.lock:
+                _require_no_active_paper_run()
+            proof = {"run": None, "reconciliation": None}
+        else:
+            with ctx.lock:
+                existing = ctx.store.get_paper_run(body.run_id)
+            if existing is None:
+                raise HTTPException(404, "Paper Canary run not found")
+            if existing.status != "STOPPED":
+                result = _paper_owner_request(
+                    "stop", {"run_id": body.run_id, "reason": reason},
+                )
+                if result.get("ok") is not True:
+                    raise HTTPException(409, "Paper Canary stop/reconciliation did not pass")
+            with ctx.lock:
+                proof = _paper_stopped_proof(body.run_id)
+        with ctx.lock:
+            try:
+                disabled = ctx.store.disable_paper_runtime_if_no_active(
+                    actor="operator",
+                    reason=reason,
+                    expected_run_id=body.run_id,
+                )
+            except (PaperCanaryError, TypeError, ValueError) as exc:
+                raise HTTPException(409, str(exc)) from exc
+        return {"ok": True, "status": disabled["status"], **proof}
 
 
 # ---------------------------------------------------------------- control commands (authenticated)
 @app.post("/control/recover")
 def ctl_recover(authorization: str | None = Header(default=None)) -> dict:
     _auth(authorization)
+    with ctx.paper_lock:
+        return _ctl_recover_locked()
+
+
+def _ctl_recover_locked() -> dict:
     paper_run = None
     with ctx.lock:
         ctx.life.recover()
@@ -1027,7 +1189,7 @@ def ctl_recover(authorization: str | None = Header(default=None)) -> dict:
 def ctl_arm(authorization: str | None = Header(default=None)) -> dict:
     _auth(authorization)
     try:
-        with ctx.lock:
+        with ctx.paper_lock, ctx.lock:
             return {"status": ctx.life.arm(actor="operator").value}
     except Exception as e:
         raise HTTPException(409, str(e))
@@ -1037,7 +1199,7 @@ def ctl_arm(authorization: str | None = Header(default=None)) -> dict:
 def ctl_start(body: Confirm, authorization: str | None = Header(default=None)) -> dict:
     _auth(authorization)
     try:
-        with ctx.lock:
+        with ctx.paper_lock, ctx.lock:
             return {"status": ctx.life.start(confirm=body.confirm, actor="operator").value}
     except Exception as e:
         raise HTTPException(409, str(e))
@@ -1046,30 +1208,67 @@ def ctl_start(body: Confirm, authorization: str | None = Header(default=None)) -
 @app.post("/control/kill")
 def ctl_kill(authorization: str | None = Header(default=None)) -> dict:
     _auth(authorization)
-    with ctx.lock:
-        status = ctx.life.kill(actor="operator", reason="control kill").value
-        active = [
-            *ctx.store.list_paper_runs(status="RUNNING", limit=2),
-            *ctx.store.list_paper_runs(status="RECOVERY_REQUIRED", limit=2),
-        ]
-    # The durable global kill is committed first. Owner notification is risk-reducing best effort and
-    # deliberately outside the Control DB lock / HTTP worker's Store transaction.
-    for run in active[:1]:
-        try:
-            _paper_owner_request(
-                "recover",
-                {"run_id": run.run_id, "reason": "global kill: reconcile and cancel pending work"},
-            )
-        except HTTPException:
-            pass
+    # Emergency KILL must never wait behind a slow owner HTTP command. Commit the durable latch
+    # on its own short-lived Store connection. Paper cleanup is deliberately detached: a stuck
+    # owner lock or broken primary Control connection cannot delay acknowledgement of the latch.
+    status = _emergency_kill()
+    threading.Thread(
+        target=_best_effort_paper_cleanup_after_kill,
+        name="paper-kill-cleanup",
+        daemon=True,
+    ).start()
     return {"status": status}
+
+
+def _best_effort_paper_cleanup_after_kill() -> None:
+    try:
+        with ctx.paper_lock:
+            try:
+                with ctx.lock:
+                    active = [
+                        item
+                        for run_status in _PAPER_RECOVERY_STATUSES
+                        for item in ctx.store.list_paper_runs(status=run_status, limit=2)
+                    ]
+            except Exception:  # noqa: BLE001 - KILL is already durable; cleanup is best effort only
+                return
+            # Owner notification is risk-reducing best effort and deliberately outside the
+            # Control DB lock / Store transaction.
+            for run in active[:1]:
+                try:
+                    command = (
+                        "recover" if run.status in {"RUNNING", "RECOVERY_REQUIRED"} else "stop"
+                    )
+                    _paper_owner_request(
+                        command,
+                        {
+                            "run_id": run.run_id,
+                            "reason": "global kill: reconcile and cancel pending work",
+                        },
+                    )
+                except Exception:  # noqa: BLE001 - never weaken or obscure the committed KILL
+                    pass
+    except Exception:  # noqa: BLE001 - locks/context may be unavailable during process failure
+        return
+
+
+def _emergency_kill() -> str:
+    """Latch KILL through a dedicated DB connection, independent of long Control reads/research."""
+    emergency_store = open_store(build_dsn(), migrate=False)
+    try:
+        return LifecycleManager(emergency_store).kill(
+            actor="operator",
+            reason="control kill",
+        ).value
+    finally:
+        emergency_store.close()
 
 
 @app.post("/control/reset")
 def ctl_reset(authorization: str | None = Header(default=None)) -> dict:
     _auth(authorization)
     try:
-        with ctx.lock:
+        with ctx.paper_lock, ctx.lock:
             return {"status": ctx.life.reset_kill(actor="operator").value}
     except Exception as e:
         raise HTTPException(409, str(e))

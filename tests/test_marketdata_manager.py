@@ -84,6 +84,13 @@ def test_stale_timestamp_rejected():
     assert status is QualityStatus.STALE
 
 
+def test_missing_or_future_quote_timestamp_rejected():
+    missing, _ = quality_gate(_q(timestamp=None), now=NOW)
+    future, _ = quality_gate(_q(timestamp=NOW + timedelta(seconds=1)), now=NOW)
+    assert missing is QualityStatus.INVALID
+    assert future is QualityStatus.INVALID
+
+
 def test_no_data_at_all():
     status, _ = quality_gate(_q(bid=None, ask=None, last=None), now=NOW)
     assert status is QualityStatus.DATA_NOT_AVAILABLE

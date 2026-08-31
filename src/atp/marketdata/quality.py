@@ -71,11 +71,18 @@ def quality_gate(q, *, now: datetime | None = None, max_age_s: float = 30.0) -> 
     if float(q.ask) < float(q.bid):
         return (QualityStatus.INVALID, f"crossed quote (ask {q.ask} < bid {q.bid})")
 
-    # 5) staleness
-    if q.timestamp is not None:
+    # 5) exact source time + staleness. A price without an aware timestamp is not realtime
+    # evidence, and a future-dated source event must not pass as fresh.
+    if q.timestamp is None:
+        return (QualityStatus.INVALID, "missing quote timestamp")
+    try:
         age = (now - q.timestamp).total_seconds()
-        if age > max_age_s:
-            return (QualityStatus.STALE, f"stale quote ({age:.0f}s old)")
+    except (TypeError, ValueError):
+        return (QualityStatus.INVALID, "invalid quote timestamp")
+    if age < 0:
+        return (QualityStatus.INVALID, "future-dated quote timestamp")
+    if age > max_age_s:
+        return (QualityStatus.STALE, f"stale quote ({age:.0f}s old)")
 
     # 6) unknown source
     if not (q.source or q.exchange):

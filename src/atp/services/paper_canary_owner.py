@@ -26,6 +26,7 @@ from ..runtime.paper_canary import (
     PaperCanaryStateError,
     paper_canary_order_ids,
 )
+from ..research.intel.commit import CommitVerificationError, resolve_commit_sha
 from ..store import PaperCanaryError as StorePaperCanaryError
 from ..store import open_store
 from ..store.money import QUANT
@@ -133,6 +134,7 @@ class PaperCanaryOwner:
         *,
         quote_getter: Callable[[str], dict[str, Any] | None],
         trade_gate: Callable[[], tuple[bool, str]],
+        risk_reduction_gate: Callable[[], tuple[bool, str]] | None = None,
         store_factory: Callable[[], Any] | None = None,
         clock: Callable[[], datetime] | None = None,
         queue_limit: int = 32,
@@ -141,10 +143,13 @@ class PaperCanaryOwner:
             raise TypeError("quote_getter must be callable")
         if not callable(trade_gate):
             raise TypeError("trade_gate must be callable")
+        if risk_reduction_gate is not None and not callable(risk_reduction_gate):
+            raise TypeError("risk_reduction_gate must be callable or None")
         if type(queue_limit) is not int or queue_limit <= 0:
             raise ValueError("queue_limit must be a positive integer")
         self._quote_getter = quote_getter
         self._trade_gate = trade_gate
+        self._risk_reduction_gate = risk_reduction_gate or trade_gate
         self._store_factory = store_factory or (lambda: open_store(build_dsn(), migrate=False))
         self._clock = clock or (lambda: datetime.now(UTC))
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=queue_limit)
@@ -300,14 +305,13 @@ class PaperCanaryOwner:
                 optional=frozenset({"reason"}),
             )
             config = self._server_config()
-            commit_sha = os.environ.get("ATP_COMMIT_REF")
-            if type(commit_sha) is not str:
-                raise PaperCanaryConfigurationError("ATP_COMMIT_REF is required for run creation")
+            commit_sha = self._deployed_commit()
             return canary.create_run(
                 run_id=body["run_id"],
                 config=config,
                 commit_sha=commit_sha,
                 reason=body.get("reason"),
+                require_prepared=True,
             )
         if name == "activate":
             body = _exact_shape(
@@ -353,7 +357,9 @@ class PaperCanaryOwner:
                     order_type="MARKET",
                 )
             self._require_server_binding(run)
-            gate = self._trade_gate()
+            gate = (
+                self._risk_reduction_gate() if body["side"] == "SELL" else self._trade_gate()
+            )
             if (
                 type(gate) is not tuple
                 or len(gate) != 2
@@ -447,11 +453,20 @@ class PaperCanaryOwner:
             )
         return PaperCanaryConfig.from_canonical_json(raw)
 
+    @staticmethod
+    def _deployed_commit() -> str:
+        try:
+            return resolve_commit_sha()
+        except CommitVerificationError as exc:
+            raise PaperCanaryConfigurationError(
+                f"deployed commit verification failed: {exc.code}",
+            ) from exc
+
     @classmethod
     def _require_server_binding(cls, run) -> None:
-        commit_sha = os.environ.get("ATP_COMMIT_REF")
-        if type(commit_sha) is not str or _COMMIT_SHA.fullmatch(commit_sha) is None:
-            raise PaperCanaryConfigurationError("ATP_COMMIT_REF must be an exact 40-lowerhex SHA")
+        commit_sha = cls._deployed_commit()
+        if _COMMIT_SHA.fullmatch(commit_sha) is None:  # defensive after fail-closed resolver
+            raise PaperCanaryConfigurationError("deployed commit must be an exact 40-lowerhex SHA")
         if run.commit_sha != commit_sha:
             raise PaperCanarySafetyError("Paper Canary run is bound to a different deployed commit")
         config = cls._server_config()

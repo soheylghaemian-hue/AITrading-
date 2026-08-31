@@ -148,13 +148,14 @@ class MarketDataService(Service):
                 status = q.status or QualityStatus.DATA_NOT_AVAILABLE.value
                 src = q.source or ("MASSIVE" if self.kind == "massive" else "FIXTURE")
                 realtime = (q.market_data_type or "").upper() == "REALTIME"
-                try:
-                    self.store.upsert_md_health(symbol=q.symbol, source=src, status=status,
-                                                latency_ms=q.latency_ms, ts=ts)
-                except Exception:
-                    pass
                 tradable = status == "READY" and realtime and q.bid and q.ask and (
                     src == "MASSIVE" or self.kind == "fixture")
+                quote_ts = q.timestamp.isoformat() if tradable and q.timestamp else None
+                try:
+                    self.store.upsert_md_health(symbol=q.symbol, source=src, status=status,
+                                                latency_ms=q.latency_ms, ts=ts, quote_ts=quote_ts)
+                except Exception:
+                    pass
                 if tradable:
                     ready += 1
                     try:

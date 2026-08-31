@@ -39,7 +39,7 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
     s = _db(tmp_path)
     assert s.ping()
     applied = sorted(r[0] for r in s._all("SELECT version FROM schema_migrations"))
-    assert applied == list(range(1, 23))
+    assert applied == list(range(1, 26))
     # tables exist
     for t in ("runtime_state", "orders", "fills", "positions", "kill_switch", "daily_pnl",
               "audit_events", "service_heartbeats", "market_data_health", "ohlc_bars", "news_items",
@@ -114,8 +114,85 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
            "FROM paper_order_events")
     s._one("SELECT reconciliation_id,run_id,status,fills_checksum,positions_checksum,account_checksum,"
            "open_order_count,breaks_json,checked_at FROM paper_reconciliations")
+    s._one("SELECT paper_commit_sha,paper_config_checksum,paper_risk_config_checksum,paper_prepared_at,"
+           "paper_run_id "
+           "FROM runtime_state")
+    s._one("SELECT quote_ts FROM market_data_health")
     s2 = _reopen(tmp_path, s)                     # re-open re-runs migrator → no-op
-    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == list(range(1, 23))
+    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == list(range(1, 26))
+
+
+def test_migration_025_upgrades_existing_sqlite_accounts_without_losing_rows(
+    tmp_path, monkeypatch,
+):
+    """The append-only migration upgrades an already-applied v22-v24 database in place."""
+    from atp.store import schema as store_schema
+
+    path = tmp_path / "existing-v24.db"
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            store_schema,
+            "MIGRATIONS",
+            [entry for entry in store_schema.MIGRATIONS if entry[0] <= 24],
+        )
+        old = open_store(str(path))
+        now = "2026-08-31T12:00:00+00:00"
+        with old.tx() as cur:
+            old._exec(
+                cur,
+                "INSERT INTO paper_canary_runs "
+                "(run_id,status,active_slot,version,config_json,config_checksum,"
+                "risk_config_checksum,commit_sha,reason,created_at,started_at,heartbeat_at,"
+                "ended_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    "migration-run", "STOPPED", None, 3, "{}", "cfg", "risk", "commit",
+                    "preserve", now, now, now, now, now,
+                ),
+            )
+            old._exec(
+                cur,
+                "INSERT INTO paper_accounts "
+                "(run_id,starting_cash,cash,equity,realized_pnl,gross_exposure,net_exposure,"
+                "version,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (
+                    "migration-run", "10.00000000", "1.00000000", "1.00000000",
+                    "-9.00000000", "0.00000000", "0.00000000", 7, now,
+                ),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            with old.tx() as cur:
+                old._exec(
+                    cur, "UPDATE paper_accounts SET cash=? WHERE run_id=?",
+                    ("-0.50000000", "migration-run"),
+                )
+        old.close()
+
+    upgraded = open_store(str(path))
+    try:
+        assert upgraded._one(
+            "SELECT starting_cash,cash,equity,realized_pnl,gross_exposure,net_exposure,"
+            "version,updated_at FROM paper_accounts WHERE run_id=?",
+            ("migration-run",),
+        ) == (
+            "10.00000000", "1.00000000", "1.00000000", "-9.00000000",
+            "0.00000000", "0.00000000", 7, now,
+        )
+        with upgraded.tx() as cur:
+            upgraded._exec(
+                cur, "UPDATE paper_accounts SET cash=?,equity=? WHERE run_id=?",
+                ("-0.50000000", "-0.50000000", "migration-run"),
+            )
+        assert upgraded.get_paper_account("migration-run").cash == D("-0.5")
+        assert upgraded.get_paper_account("migration-run").equity == D("-0.5")
+        for column in ("starting_cash", "gross_exposure"):
+            with pytest.raises(sqlite3.IntegrityError):
+                with upgraded.tx() as cur:
+                    upgraded._exec(
+                        cur, f"UPDATE paper_accounts SET {column}=? WHERE run_id=?",
+                        ("-0.00000001", "migration-run"),
+                    )
+    finally:
+        upgraded.close()
 
 
 def test_paper_canary_migration_constraints_and_append_only_events(tmp_path):
@@ -479,9 +556,12 @@ def test_gate_blocks_on_daily_loss_and_kill(tmp_path):
                         halted=False, killed=False)
     d = "2026-08-14"
     s.set_daily_loss_lock(trade_date=d, engaged=True, reason="limit")
-    assert TradingGate(s, life).can_trade(trade_date=d).allowed is False
+    gate = TradingGate(s, life)
+    assert gate.can_trade(trade_date=d).allowed is False
+    assert gate.can_reduce_risk().allowed is True
     life.kill(actor="user", reason="panic")
-    assert TradingGate(s, life).can_trade(trade_date=d).allowed is False
+    assert gate.can_trade(trade_date=d).allowed is False
+    assert gate.can_reduce_risk().allowed is False
 
 
 # ------------------------------------------------------------------ POSITIONS + RECONCILE
