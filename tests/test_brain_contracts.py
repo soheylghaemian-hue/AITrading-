@@ -2,25 +2,30 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from atp.brain import Belief, BrainProposal, Constitution, Evidence, Scenario
+from atp.brain import (Belief, BrainProposal, Constitution, Evidence, InvalidationCondition,
+                       Scenario, Stance)
 from atp.brain.contracts import EvidenceQuality, ProposalAction
 
 NOW = datetime(2026, 8, 18, tzinfo=UTC)
 
 
-def test_temporal_evidence_rejects_future_leakage():
+def test_evidence_rejects_impossible_timestamp_order():
     with pytest.raises(ValueError):
         Evidence("e1", "source", NOW, NOW, NOW - timedelta(seconds=1),
                  EvidenceQuality.VERIFIED, "sha256:x")
 
 
 def test_scenarios_are_falsifiable_and_proposals_are_stable():
-    scenario = Scenario("s1", "expectations exceed reality", 0.6, ("guidance improves",))
+    condition = InvalidationCondition("s1:guidance", "GUIDANCE_IMPROVES", Stance.SUPPORTS)
+    scenario = Scenario("s1", "expectations exceed reality", 0.6, (condition,))
     proposal = BrainProposal("p1", NOW, ProposalAction.STUDY, "study surprise", (scenario,),
                              ("point-in-time expectations",), "HIGH")
     assert proposal.checksum() == proposal.checksum()
     with pytest.raises(ValueError):
         Scenario("bad", "story only", 0.8, ())
+    # Prose is not a falsifier: only typed, machine-checkable conditions are admitted.
+    with pytest.raises(ValueError):
+        Scenario("bad", "story only", 0.8, ("guidance improves",))
 
 
 def test_research_constitution_cannot_enable_trading_or_leverage():
