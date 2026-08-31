@@ -226,21 +226,23 @@ class AutonomousTradingDesk:
                 if not decision.approved:
                     report.blocked.append(ExecutionResult(order, decision))
                 else:
-                    self._scheduler.submit_parent(
-                        order, price=price, stop_distance=opp.signal.stop_distance,
-                        adv=self._liquidity(key), context=self._context_for(opp),
-                    )
+                    with self._scheduler._authorize_parent(order):  # noqa: SLF001
+                        self._scheduler.submit_parent(
+                            order, price=price, stop_distance=opp.signal.stop_distance,
+                            adv=self._liquidity(key), context=self._context_for(opp),
+                        )
                 continue
 
-            exec_result = await self._execution.submit(
-                order,
-                account,
-                price=price,
-                current_qty=current_qty,
-                stop_distance=opp.signal.stop_distance,
-                adv=self._liquidity(key),
-                urgency="high" if order.reduce_only else "normal",
-            )
+            with self._execution._authorize_submit(order):  # noqa: SLF001
+                exec_result = await self._execution.submit(
+                    order,
+                    account,
+                    price=price,
+                    current_qty=current_qty,
+                    stop_distance=opp.signal.stop_distance,
+                    adv=self._liquidity(key),
+                    urgency="high" if order.reduce_only else "normal",
+                )
             if exec_result.filled:
                 report.executed.append(exec_result)
                 self._journal_fill(exec_result, self._context_for(opp))
@@ -278,10 +280,11 @@ class AutonomousTradingDesk:
                 order_type=OrderType.MARKET,
                 reduce_only=True,
             )
-            exec_result = await self._execution.submit(
-                order, account, price=price, current_qty=pos.quantity,
-                adv=self._liquidity(key), urgency="high",
-            )
+            with self._execution._authorize_submit(order):  # noqa: SLF001
+                exec_result = await self._execution.submit(
+                    order, account, price=price, current_qty=pos.quantity,
+                    adv=self._liquidity(key), urgency="high",
+                )
             if exec_result.filled:
                 report.executed.append(exec_result)
                 # Exits are reductions; the assembler folds them into the open episode's record
@@ -369,15 +372,19 @@ class AutonomousTradingDesk:
             monetary_risk = qty * stop_dist * mult
             notional = qty * price * mult
             equity = account.equity
-            max_allowed_risk = self._risk.limits.max_trade_risk_pct * equity
-            daily_budget = self._risk.limits.max_daily_loss_pct * self._risk.state.day_start_equity
+            effective_capital = self._risk.effective_capital(equity)
+            daily_capital = self._risk.effective_capital(self._risk.state.day_start_equity)
+            max_allowed_risk = self._risk.limits.max_trade_risk_pct * effective_capital
+            daily_budget = self._risk.limits.max_daily_loss_pct * daily_capital
             daily_loss_so_far = max(0.0, self._risk.state.day_start_equity - equity)
             remaining_daily = max(0.0, daily_budget - daily_loss_so_far)
             decisions.append({
                 "position_notional": notional,
                 "stop_distance": stop_dist * mult,       # per-unit distance in account currency
                 "monetary_risk": monetary_risk,
-                "risk_pct_capital": (monetary_risk / equity) if equity > 0 else None,
+                "risk_pct_capital": (
+                    monetary_risk / effective_capital if effective_capital > 0 else None
+                ),
                 "max_allowed_risk": max_allowed_risk,
                 "remaining_daily_budget": remaining_daily,
                 "instrument": opp.instrument.symbol, "agent": sig.strategy,

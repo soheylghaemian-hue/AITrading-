@@ -79,6 +79,7 @@ class TradingPolicy:
     def to_risk_limits(self) -> RiskLimits:
         """Project the policy onto the independent Risk Engine's limit set (§14)."""
         return RiskLimits(
+            max_capital=self.capital,
             max_daily_loss_pct=self.daily_loss_limit,
             max_drawdown_pct=max(self.daily_loss_limit * 3, 0.15),
             max_position_pct=self.max_position_pct,

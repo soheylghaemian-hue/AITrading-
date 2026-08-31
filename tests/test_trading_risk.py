@@ -14,6 +14,8 @@ from atp.core.enums import AssetClass, OrderType, Side
 from atp.core.events import Instrument
 from atp.dashboard.api import DashboardContext
 from atp.dashboard.snapshot import build_snapshot
+from atp.opportunity.sizing import PositionSizer
+from atp.policy import TradingPolicy
 from atp.risk.config import TradingRiskConfig, trading_risk_view
 from atp.risk.engine import RiskEngine, RiskLimits, RiskState
 
@@ -45,6 +47,9 @@ def test_validation_rejects_nonsense():
         TradingRiskConfig(capital=1_000, risk_per_trade_pct=1.5, max_daily_loss_pct=0.02)
     with pytest.raises(ValueError):  # one trade can't risk more than the whole day
         TradingRiskConfig(capital=1_000, risk_per_trade_pct=0.05, max_daily_loss_pct=0.02)
+    for value in (float("nan"), float("inf"), float("-inf"), True):
+        with pytest.raises(ValueError):
+            TradingRiskConfig(capital=value, risk_per_trade_pct=0.01, max_daily_loss_pct=0.02)
 
 
 # --------------------------------------------------------------------------- status view
@@ -81,6 +86,33 @@ def test_per_trade_risk_is_enforced():
     assert r.check_order(ok, _acct(), price=100.0, current_qty=0.0, stop_distance=40.0).approved
 
 
+def test_capital_mandate_caps_risk_even_when_account_is_larger():
+    r = _risk(1_000_000.0)
+    r.update_limits(max_capital=100_000.0, max_position_pct=0.20,
+                    max_gross_leverage=1.0, max_trade_risk_pct=0.01)
+    # The $1m account may not expand a $100k mandate: $30k > 20% of configured capital.
+    oversized = Order(AAPL, Side.BUY, 300, OrderType.MARKET)
+    decision = r.check_order(
+        oversized, _acct(), price=100.0, current_qty=0.0, stop_distance=1.0)
+    assert decision.approved is False and "position" in decision.reason
+
+    # Sizing uses the same effective capital, so 1% / $10 stop => 100 units, not 1,000.
+    units = PositionSizer().target_units(
+        price=100.0,
+        stop_distance=10.0,
+        equity=1_000_000.0,
+        policy=TradingPolicy(capital=100_000.0, max_position_pct=1.0),
+    )
+    assert units == 100.0
+
+
+def test_daily_loss_uses_configured_capital_mandate():
+    r = _risk(1_000_000.0)
+    r.update_limits(max_capital=100_000.0, max_daily_loss_pct=0.02)
+    r.mark_equity(997_000.0)  # $3k is only 0.3% of account, but 3% of the mandate.
+    assert r.state.halted
+
+
 def test_daily_loss_limit_blocks_all_new_trades():
     r = _risk(1_000_000.0)
     r.update_limits(max_daily_loss_pct=0.02)          # 2% daily-loss budget
@@ -111,6 +143,7 @@ def test_dashboard_control_applies_config_to_engine():
     assert result["max_daily_loss"] == 20_000.0       # 1% of 2M
     assert r.limits.max_trade_risk_pct == 0.005        # engine actually updated
     assert r.limits.max_daily_loss_pct == 0.01
+    assert r.limits.max_capital == 2_000_000.0
     assert ctx.risk_config is not None and ctx.risk_config.capital == 2_000_000.0
 
 

@@ -51,6 +51,7 @@ def test_settings_survive_restart():
     assert loaded is not None and loaded.capital == 500_000.0
     assert r2.limits.max_trade_risk_pct == 0.01        # engine limits restored after restart
     assert r2.limits.max_daily_loss_pct == 0.02
+    assert r2.limits.max_capital == 500_000.0
 
 
 def test_load_when_nothing_persisted():

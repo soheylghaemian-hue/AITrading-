@@ -15,9 +15,12 @@ Accounting notes (see docs/DECISIONS.md):
 
 from __future__ import annotations
 
+import math
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
-
+from threading import RLock
 from typing import TYPE_CHECKING
 
 from ..core.enums import OrderStatus, OrderType, Side
@@ -63,35 +66,62 @@ class PaperBroker(Broker):
         self._liquidity: dict[str, float] = {}   # per-instrument avg volume, for impact (§16)
         self._realized_pnl = 0.0
         self._connected = False
+        self._state_lock = RLock()
+        self._order_guard: Callable[[Order], AbstractContextManager[object | None]] | None = None
+        self._order_guard_bound = False
+
+    def bind_order_guard(
+        self, guard: Callable[[Order], AbstractContextManager[object | None]]
+    ) -> None:
+        """Bind the autonomous engine's final-send authorization once per broker instance."""
+        if not callable(guard):
+            raise ValueError("paper broker order guard must be callable")
+        with self._state_lock:
+            if self._order_guard_bound:
+                if self._order_guard is not guard:
+                    raise ValueError("paper broker order guard is already bound")
+                return
+            self._order_guard = guard
+            self._order_guard_bound = True
+
+    def is_connected(self) -> bool:
+        with self._state_lock:
+            return self._connected is True
 
     # ------------------------------------------------------------- lifecycle
     async def connect(self) -> None:
-        self._connected = True
+        with self._state_lock:
+            self._connected = True
 
     async def disconnect(self) -> None:
-        self._connected = False
+        with self._state_lock:
+            self._connected = False
 
     # ------------------------------------------------------------- market data
     def set_liquidity(self, instrument_key: str, adv: float) -> None:
         """Set the average volume used by the market-impact model for an instrument (§16)."""
-        self._liquidity[instrument_key] = adv
+        with self._state_lock:
+            self._liquidity[instrument_key] = adv
 
     def credit_cash(self, amount: float) -> None:
         """Credit (or debit, if negative) cash — used by dividends/adjustments (§3)."""
-        self._cash += amount
+        with self._state_lock:
+            self._cash += amount
 
     def adjust_position(self, instrument: Instrument, new_quantity: float, new_avg_price: float) -> None:
         """Set a position's quantity and average price directly — used by corporate actions
         (e.g. a stock split adjusts shares and basis) (§3)."""
-        key = instrument.key
-        self._instruments[key] = instrument
-        self._positions[key] = _Pos(qty=new_quantity, avg=new_avg_price)
+        with self._state_lock:
+            key = instrument.key
+            self._instruments[key] = instrument
+            self._positions[key] = _Pos(qty=new_quantity, avg=new_avg_price)
 
     def set_quote(self, quote: QuoteEvent) -> None:
         """Feed the latest top-of-book. Fills and marks use this (§16 execution)."""
-        key = quote.instrument.key
-        self._quotes[key] = quote
-        self._instruments[key] = quote.instrument
+        with self._state_lock:
+            key = quote.instrument.key
+            self._quotes[key] = quote
+            self._instruments[key] = quote.instrument
 
     def _mark(self, key: str) -> float:
         q = self._quotes.get(key)
@@ -100,7 +130,8 @@ class PaperBroker(Broker):
     # ------------------------------------------------------------- accounting
     @property
     def realized_pnl(self) -> float:
-        return self._realized_pnl
+        with self._state_lock:
+            return self._realized_pnl
 
     def _commission(self, qty: float, price: float = 0.0, multiplier: float = 1.0) -> float:
         if self._commission_model is not None:
@@ -108,6 +139,10 @@ class PaperBroker(Broker):
         return max(self._min_commission, self._commission_per_unit * qty)
 
     async def get_positions(self) -> dict[str, Position]:
+        with self._state_lock:
+            return self._get_positions_locked()
+
+    def _get_positions_locked(self) -> dict[str, Position]:
         out: dict[str, Position] = {}
         for key, p in self._positions.items():
             if p.qty == 0:
@@ -121,6 +156,10 @@ class PaperBroker(Broker):
         return out
 
     async def get_account(self) -> Account:
+        with self._state_lock:
+            return self._get_account_locked()
+
+    def _get_account_locked(self) -> Account:
         unrealized = 0.0
         gross = 0.0
         net = 0.0
@@ -144,7 +183,7 @@ class PaperBroker(Broker):
             unrealized_pnl=unrealized,
             gross_exposure=gross,
             net_exposure=net,
-            positions=await self.get_positions(),
+            positions=self._get_positions_locked(),
         )
 
     # ------------------------------------------------------------- execution
@@ -166,13 +205,57 @@ class PaperBroker(Broker):
         return base + adverse if order.side is Side.BUY else base - adverse
 
     async def place_order(self, order: Order) -> OrderResult:
+        # Read the init-only guard and disconnected state without holding the broker lock while
+        # entering the engine boundary (engine controls take boundary → broker-lock order).
+        with self._state_lock:
+            if self._connected is not True:
+                return OrderResult(order, OrderStatus.REJECTED, reason="paper broker disconnected")
+            if self._order_guard_bound and not callable(self._order_guard):
+                return OrderResult(
+                    order, OrderStatus.REJECTED, reason="paper broker order guard unavailable"
+                )
+            order_guard = self._order_guard
+        guard = order_guard(order) if order_guard is not None else nullcontext(None)
+        with guard as boundary_rejection:
+            if boundary_rejection is not None:
+                reason = getattr(
+                    boundary_rejection, "reason", "paper broker order guard rejected"
+                )
+                return OrderResult(order, OrderStatus.REJECTED, reason=str(reason))
+            with self._state_lock:
+                if self._connected is not True:
+                    return OrderResult(
+                        order, OrderStatus.REJECTED, reason="paper broker disconnected"
+                    )
+                return self._place_order_locked(order)
+
+    def _place_order_locked(self, order: Order) -> OrderResult:
+        if self._connected is not True:
+            return OrderResult(order, OrderStatus.REJECTED, reason="paper broker disconnected")
+        if (
+            isinstance(order.quantity, bool)
+            or not isinstance(order.quantity, (int, float))
+            or not math.isfinite(order.quantity)
+            or order.quantity <= 0
+        ):
+            return OrderResult(order, OrderStatus.REJECTED, reason="invalid order quantity")
         key = order.instrument.key
         quote = self._quotes.get(key)
         if quote is None:
             return OrderResult(order, OrderStatus.REJECTED, reason="no market data")
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+            for value in (quote.bid, quote.ask)
+        ):
+            return OrderResult(order, OrderStatus.REJECTED, reason="invalid market data")
 
         # Limit orders that aren't marketable at the current quote don't fill this step.
         fill_price = self._fill_price(order, quote)
+        if not math.isfinite(fill_price) or fill_price < 0:
+            return OrderResult(order, OrderStatus.REJECTED, reason="invalid fill price")
         if order.order_type in (OrderType.LIMIT, OrderType.STOP_LIMIT):
             assert order.limit_price is not None
             if order.side is Side.BUY and fill_price > order.limit_price:
@@ -184,6 +267,8 @@ class PaperBroker(Broker):
         self._instruments.setdefault(key, order.instrument)
         pos = self._positions.setdefault(key, _Pos())
         commission = self._commission(order.quantity, fill_price, order.instrument.multiplier)
+        if not math.isfinite(commission) or commission < 0:
+            return OrderResult(order, OrderStatus.REJECTED, reason="invalid commission")
         qd = order.signed_quantity
         q0, p0 = pos.qty, pos.avg
 
