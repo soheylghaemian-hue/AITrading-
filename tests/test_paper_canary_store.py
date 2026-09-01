@@ -193,7 +193,7 @@ def test_prepare_runtime_is_atomic_nonactivating_and_preserves_missing_pnl(tmp_p
         assert (risk.day_start_equity, risk.peak_equity, risk.halted, risk.killed) == (
             D("10000"), D("10000"), False, False,
         )
-        today = datetime.now(timezone.utc).date().isoformat()
+        today = FILL_TS[:10]
         assert store.get_daily_loss_lock(today).engaged is False
         row = store._one(
             "SELECT risk_capital_baseline,cumulative_equity_delta,version "
@@ -221,7 +221,7 @@ def test_prepare_runtime_failures_roll_back_every_baseline_write(tmp_path, failu
                 day_start_equity=D("10000"), peak_equity=D("10000"), halted=True, killed=False,
             )
         elif failure == "daily_loss":
-            today = datetime.now(timezone.utc).date().isoformat()
+            today = FILL_TS[:10]
             store.upsert_daily_pnl(
                 trade_date=today, day_start_equity=D("10000"),
                 realized_pnl=D("-500"), unrealized_pnl=D("0"),
@@ -245,7 +245,7 @@ def test_prepare_runtime_failures_roll_back_every_baseline_write(tmp_path, failu
         assert store.get_runtime_state().status == "DISABLED"
         if failure != "halted":
             assert store.get_risk_state() is None
-        today = datetime.now(timezone.utc).date().isoformat()
+        today = FILL_TS[:10]
         assert store.get_daily_loss_lock(today).updated_at is None
         assert len(store.recent_audit(100)) == before_audit
     finally:
@@ -690,7 +690,7 @@ def _prepared_running_run(store, config_json, risk_token, run_id):
 
 def test_prepare_rejects_drift_from_the_utc_day_risk_capital_baseline(tmp_path):
     store, config_json, risk_token = _prepare_seed(tmp_path / "paper-loss-baseline-drift.db")
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = FILL_TS[:10]
     try:
         with store.tx() as cur:
             store._exec(
