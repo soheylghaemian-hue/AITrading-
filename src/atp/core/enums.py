@@ -21,6 +21,10 @@ class AssetClass(str, Enum):
     FUTURE = "future"
     OPTION = "option"
     CRYPTO = "crypto"
+    FUND = "fund"
+    WARRANT = "warrant"
+    CERTIFICATE = "certificate"
+    CFD = "cfd"
 
 
 class Side(str, Enum):
@@ -33,7 +37,7 @@ class Side(str, Enum):
         return 1 if self is Side.BUY else -1
 
     @property
-    def opposite(self) -> "Side":
+    def opposite(self) -> Side:
         return Side.SELL if self is Side.BUY else Side.BUY
 
 
