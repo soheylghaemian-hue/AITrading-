@@ -1,0 +1,18 @@
+[Unit]
+Description=ATP official market catalogue refresh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=atp
+Group=atp
+WorkingDirectory=/opt/atp/app
+Environment=PYTHONPATH=/opt/atp/app/src
+EnvironmentFile=/opt/atp/atp.env
+ExecStart=/opt/atp/app/.venv/bin/python -m atp.instruments.catalog_sync
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/atp/data
+ProtectHome=true
+PrivateTmp=true

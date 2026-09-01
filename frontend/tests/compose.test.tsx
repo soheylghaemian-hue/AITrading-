@@ -25,6 +25,10 @@ const BROKER = {
 };
 const MARKET = {
   feed: "STREAMING", ts: "2026-08-16T07:37:13Z",
+  catalog: { status: "DISCOVERED", regions: { USA: {
+    discovered: 13149, ibkr_verified: 0, ready: 0,
+    by_type: { STK: 7500, ETF: 5649 }, sources: ["NASDAQ Trader nasdaqlisted"],
+  } } },
   market_data: ["AAPL", "NVDA", "SPY"].map((symbol) => ({
     symbol, source: "MASSIVE", status: "DATA_NOT_AVAILABLE", realtime: false,
     bid: null, ask: null, last: null, bid_size: null, ask_size: null, volume: null,
@@ -62,6 +66,12 @@ describe("composeSnapshot — maps observability API into the Snapshot (no fabri
     expect(nvda?.bid).toBeNull();
   });
 
+  it("maps discovered catalogue counts separately from verified and ready contracts", () => {
+    expect(snap.market_catalog?.regions?.USA.discovered).toBe(13149);
+    expect(snap.market_catalog?.regions?.USA.ibkr_verified).toBe(0);
+    expect(snap.market_catalog?.regions?.USA.ready).toBe(0);
+  });
+
   it("leaves unavailable domains as NO DATA (risk, positions, account equity)", () => {
     expect(snap.trading_risk).toBeNull();
     expect(snap.positions).toEqual([]);
@@ -94,6 +104,9 @@ describe("composed snapshot drives the real views with live values", () => {
     expect(h).toContain("NVDA");
     expect(h).toContain("AAPL");
     expect(h).toContain("SPY");
+    expect(h).toContain("Global Instrument Catalog");
+    expect(h).toContain("13,149");
+    expect(h).toContain("NOT YET TRADEABLE");
   });
 
   it("Overview shows PAPER account + DISABLED engine (no fabricated equity/PNL)", () => {

@@ -56,6 +56,7 @@ print("  migrated:", build_dsn().rsplit("@", 1)[-1])
 PY
 
 echo "[deploy] 5/6 ownership → atp"
+install -d -o atp -g atp -m 750 /opt/atp/data
 chown -R atp:atp "$APP"
 chown atp:atp "$ENVF"; chmod 600 "$ENVF"
 
@@ -64,8 +65,12 @@ install -m 644 "$APP/infra/systemd/atp-marketdata.service" /etc/systemd/system/
 install -m 644 "$APP/infra/systemd/atp-trading.service"    /etc/systemd/system/
 install -m 644 "$APP/infra/systemd/atp-control.service"    /etc/systemd/system/
 install -m 644 "$APP/infra/systemd/atp-broker.service"     /etc/systemd/system/
+install -m 644 "$APP/infra/systemd/atp-market-catalog.service" /etc/systemd/system/
+install -m 644 "$APP/infra/systemd/atp-market-catalog.timer"   /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable atp-marketdata atp-trading atp-control atp-broker
+systemctl enable --now atp-market-catalog.timer
+systemctl start atp-market-catalog.service
 systemctl restart atp-marketdata atp-trading atp-control atp-broker   # restart to load new code (enable --now won't)
 sleep 5
 systemctl is-active atp-marketdata atp-trading atp-control atp-broker

@@ -103,6 +103,7 @@ export function composeSnapshot(status: Raw, broker: Raw, market: Raw, dashboard
     positions: [],
     market_data,
     global_market_data,
+    market_catalog: M.catalog && typeof M.catalog === "object" ? M.catalog : null,
     system_health,
     autonomous,
     trading_risk: null, // filled from the /dashboard read-model below (else NO DATA)

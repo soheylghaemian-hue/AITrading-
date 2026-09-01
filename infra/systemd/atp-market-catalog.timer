@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh ATP official market catalogue daily
+
+[Timer]
+OnBootSec=2min
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=15min
+
+[Install]
+WantedBy=timers.target
