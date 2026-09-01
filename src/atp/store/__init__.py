@@ -30,6 +30,9 @@ from .base import (
     InsiderClusterRow,
     InsiderTransactionRow,
     InstitutionalChangeRow,
+    InstrumentImportEventRow,
+    InstrumentImportRunRow,
+    InstrumentRow,
     KillSwitchRow,
     MacroSnapshotRow,
     NewsItemRow,
@@ -97,6 +100,7 @@ __all__ = [
     "BacktestEventRow", "BacktestMetricsRow", "ResearchDatasetRow", "ResearchDatasetEventRow",
     "ResearchIntelSnapshotRow", "ResearchIntelInputRow", "ResearchIntelOutcomeRow",
     "ResearchValidationRunRow",
+    "InstrumentRow", "InstrumentImportRunRow", "InstrumentImportEventRow",
 ]
 
 

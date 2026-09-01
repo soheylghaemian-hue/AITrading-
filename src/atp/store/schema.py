@@ -1035,6 +1035,125 @@ def _migration_025(dialect: str) -> list[str]:
     ]
 
 
+# --------------------------------------------------------------------------- § WP2 instrument model triggers
+# `instrument_import_events` is an append-only audit/progress log: ANY update or delete is rejected.
+# `instrument_import_runs` is status-terminal (RUNNING → COMPLETED|PARTIAL|FAILED): a terminal run is frozen
+# and no run may ever be deleted (progress heartbeats while RUNNING remain allowed). The `instruments` table
+# itself is a living catalogue (records are re-verified over time) and is therefore intentionally NOT frozen.
+_IM_RUN_TERMINAL = "('COMPLETED','PARTIAL','FAILED')"
+
+
+def _im_triggers_sqlite() -> list[str]:
+    return [
+        """CREATE TRIGGER IF NOT EXISTS trg_instrument_import_events_no_update
+            BEFORE UPDATE ON instrument_import_events
+            BEGIN SELECT RAISE(ABORT, 'instrument_import_events: rows are immutable (insert-only)'); END""",
+        """CREATE TRIGGER IF NOT EXISTS trg_instrument_import_events_no_delete
+            BEFORE DELETE ON instrument_import_events
+            BEGIN SELECT RAISE(ABORT, 'instrument_import_events: rows cannot be deleted'); END""",
+        f"""CREATE TRIGGER IF NOT EXISTS trg_instrument_import_runs_no_update_terminal
+            BEFORE UPDATE ON instrument_import_runs WHEN OLD.status IN {_IM_RUN_TERMINAL}
+            BEGIN SELECT RAISE(ABORT, 'instrument_import_runs: terminal run is immutable'); END""",
+        """CREATE TRIGGER IF NOT EXISTS trg_instrument_import_runs_no_delete
+            BEFORE DELETE ON instrument_import_runs
+            BEGIN SELECT RAISE(ABORT, 'instrument_import_runs: runs cannot be deleted'); END""",
+    ]
+
+
+def _im_triggers_postgres() -> list[str]:
+    # `%%` is the psycopg literal-percent escape → PL/pgSQL receives a single `%` (the RAISE placeholder).
+    return [
+        """CREATE OR REPLACE FUNCTION atp_im_block_event_mutate() RETURNS trigger AS $$
+           BEGIN RAISE EXCEPTION '%%: rows are immutable (insert-only)', TG_TABLE_NAME; END; $$ LANGUAGE plpgsql""",
+        """CREATE OR REPLACE FUNCTION atp_im_block_run_update() RETURNS trigger AS $$
+           BEGIN IF OLD.status IN ('COMPLETED','PARTIAL','FAILED') THEN
+             RAISE EXCEPTION 'instrument_import_runs: terminal run is immutable'; END IF;
+             RETURN NEW; END; $$ LANGUAGE plpgsql""",
+        """CREATE OR REPLACE FUNCTION atp_im_block_run_delete() RETURNS trigger AS $$
+           BEGIN RAISE EXCEPTION 'instrument_import_runs: runs cannot be deleted'; END; $$ LANGUAGE plpgsql""",
+        "DROP TRIGGER IF EXISTS trg_instrument_import_events_no_upd ON instrument_import_events",
+        "CREATE TRIGGER trg_instrument_import_events_no_upd BEFORE UPDATE ON instrument_import_events "
+        "FOR EACH ROW EXECUTE FUNCTION atp_im_block_event_mutate()",
+        "DROP TRIGGER IF EXISTS trg_instrument_import_events_no_del ON instrument_import_events",
+        "CREATE TRIGGER trg_instrument_import_events_no_del BEFORE DELETE ON instrument_import_events "
+        "FOR EACH ROW EXECUTE FUNCTION atp_im_block_event_mutate()",
+        "DROP TRIGGER IF EXISTS trg_instrument_import_runs_no_update ON instrument_import_runs",
+        "CREATE TRIGGER trg_instrument_import_runs_no_update BEFORE UPDATE ON instrument_import_runs "
+        "FOR EACH ROW EXECUTE FUNCTION atp_im_block_run_update()",
+        "DROP TRIGGER IF EXISTS trg_instrument_import_runs_no_delete ON instrument_import_runs",
+        "CREATE TRIGGER trg_instrument_import_runs_no_delete BEFORE DELETE ON instrument_import_runs "
+        "FOR EACH ROW EXECUTE FUNCTION atp_im_block_run_delete()",
+    ]
+
+
+def _migration_026(dialect: str) -> list[str]:
+    """§ WP2 — persistent, unified global-instrument & market model (REFERENCE DATA ONLY).
+
+    Three additive tables, purely additive to the schema (no existing table is touched):
+      * ``instruments`` — one broker-neutral reference record per venue-anchored contract. ``instrument_id``
+        is a stable surrogate derived from the natural key; ``natural_key`` is UNIQUE, giving DB-level
+        symbol-collision protection across exchanges (same ticker on two venues ⇒ two rows). ``con_id`` is
+        UNIQUE where present (multiple NULLs allowed at listing stage). Unknown identifiers (isin/figi/
+        cusip/sedol/con_id) are NULL — never fabricated. ``content_checksum`` drives idempotent upserts.
+      * ``instrument_import_runs`` — one row per import; resumable + observable (planned/completed/failed
+        markets, running counters). PLANNED → RUNNING → COMPLETED|PARTIAL|FAILED; terminal rows are frozen
+        by DATABASE triggers, so an import's outcome cannot be silently rewritten.
+      * ``instrument_import_events`` — append-only per-market progress/error log (insert-only, DB-enforced),
+        giving per-market error isolation an auditable trail.
+
+    NO trading, NO orders/execution/broker, NO market-data subscription, NO IBKR qualification."""
+    t = _types(dialect)
+    ts, txt, i = t["TS"], t["TXT"], t["INT"]
+    tables = [
+        f"""CREATE TABLE IF NOT EXISTS instruments (
+            instrument_id {txt} PRIMARY KEY,
+            natural_key {txt} NOT NULL UNIQUE,
+            con_id {i} UNIQUE,
+            isin {txt}, figi {txt}, cusip {txt}, sedol {txt}, local_symbol {txt},
+            symbol {txt} NOT NULL, description {txt},
+            region {txt}, country {txt}, exchange {txt} NOT NULL, primary_exchange {txt},
+            trading_currency {txt} NOT NULL, settlement_currency {txt},
+            timezone {txt}, trading_calendar {txt}, calendar_version {txt},
+            asset_class {txt} NOT NULL, sub_class {txt},
+            underlying_symbol {txt}, underlying_instrument_id {txt},
+            tick_size {txt}, multiplier {txt}, lot_size {txt}, min_size {txt},
+            expiry {txt}, strike {txt}, option_right {txt},
+            tradability_status {txt} NOT NULL, market_data_status {txt} NOT NULL,
+            source_status {txt} NOT NULL, verification_status {txt} NOT NULL,
+            source {txt}, last_verified_at {ts},
+            content_checksum {txt} NOT NULL,
+            created_at {ts} NOT NULL, updated_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS instrument_import_runs (
+            run_id {txt} PRIMARY KEY, request_checksum {txt} NOT NULL, source_label {txt} NOT NULL,
+            planned_markets_json {txt} NOT NULL, completed_markets_json {txt} NOT NULL,
+            failed_markets_json {txt} NOT NULL,
+            status {txt} NOT NULL CHECK (status IN ('PLANNED','RUNNING','COMPLETED','PARTIAL','FAILED')),
+            discovered_count {i} NOT NULL DEFAULT 0, inserted_count {i} NOT NULL DEFAULT 0,
+            updated_count {i} NOT NULL DEFAULT 0, unchanged_count {i} NOT NULL DEFAULT 0,
+            skipped_count {i} NOT NULL DEFAULT 0, failed_market_count {i} NOT NULL DEFAULT 0,
+            failure_code {txt}, failure_reason {txt},
+            created_at {ts} NOT NULL, started_at {ts}, ended_at {ts}, updated_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS instrument_import_events (
+            id {txt} PRIMARY KEY,
+            run_id {txt} NOT NULL REFERENCES instrument_import_runs(run_id),
+            seq {i}, ts {ts}, market {txt}, event_type {txt} NOT NULL, severity {txt},
+            details_json {txt}, created_at {ts} NOT NULL)""",
+    ]
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS ix_instruments_symbol_exch ON instruments(symbol, exchange)",
+        "CREATE INDEX IF NOT EXISTS ix_instruments_asset_class ON instruments(asset_class)",
+        "CREATE INDEX IF NOT EXISTS ix_instruments_region ON instruments(region, country)",
+        "CREATE INDEX IF NOT EXISTS ix_instruments_underlying ON instruments(underlying_symbol)",
+        "CREATE INDEX IF NOT EXISTS ix_instruments_verification ON instruments(verification_status)",
+        "CREATE INDEX IF NOT EXISTS ix_instrument_import_runs_req "
+        "ON instrument_import_runs(request_checksum, status)",
+        "CREATE INDEX IF NOT EXISTS ix_instrument_import_events_run "
+        "ON instrument_import_events(run_id, event_type)",
+    ]
+    triggers = _im_triggers_postgres() if dialect == "postgres" else _im_triggers_sqlite()
+    return tables + indexes + triggers
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -1062,6 +1181,7 @@ MIGRATIONS = [
     (23, "paper_canary_operator_bindings", _migration_023),
     (24, "paper_canary_daily_loss_aggregate", _migration_024),
     (25, "paper_canary_signed_account_ledger", _migration_025),
+    (26, "global_instrument_model", _migration_026),
 ]
 
 
