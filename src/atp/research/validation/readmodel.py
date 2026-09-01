@@ -5,6 +5,7 @@ import json
 
 from ..intel import policy
 from ..intel.legacy_diag import reconcile_legacy
+from ..intel.readmodel import gate_passed
 from . import metrics as mx
 
 _SAFETY = {"research_only": True, "autonomous": "DISABLED", "execution": "DISABLED", "ibkr_orders": 0}
@@ -45,7 +46,10 @@ def coverage_view(store) -> dict:
 
 
 def _run_dict(r) -> dict:
-    return {"run_id": r.run_id, "status": r.status, "universe_id": r.universe_id,
+    # `gate_passed` is carried on the SUMMARY too (not just the detail) so a consumer can gate a verdict
+    # without a second fetch. None = no/malformed gate report = NOT validated (never optimistic).
+    return {"run_id": r.run_id, "status": r.status, "gate_passed": gate_passed(r.gate_report_json),
+            "universe_id": r.universe_id,
             "validation_policy_version": r.validation_policy_version,
             "outcome_policy_version": r.outcome_policy_version, "gate_id": r.gate_id,
             "snapshot_set_checksum": r.snapshot_set_checksum, "outcome_set_checksum": r.outcome_set_checksum,

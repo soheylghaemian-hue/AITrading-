@@ -16,6 +16,7 @@ MODULES = [
     "atp.research.intel", "atp.research.intel.policy", "atp.research.intel.commit",
     "atp.research.intel.envelope", "atp.research.intel.provenance", "atp.research.intel.collector",
     "atp.research.intel.outcomes", "atp.research.intel.worker", "atp.research.intel.legacy_diag",
+    "atp.research.intel.dsn", "atp.research.intel.readmodel",
     "atp.research.validation", "atp.research.validation.metrics", "atp.research.validation.benchmarks",
     "atp.research.validation.calibration", "atp.research.validation.runner",
     "atp.research.validation.readmodel", "atp.research.validation.worker",

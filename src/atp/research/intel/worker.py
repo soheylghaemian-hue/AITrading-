@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from ...store import open_store
 from .collector import collect_session
 from .commit import CommitVerificationError, resolve_commit_sha
+from .dsn import describe_source, missing_config_reason, resolve_store_url
 from .outcomes import evaluate_pending
 
 
@@ -33,9 +34,9 @@ def _parse_args(argv):
 
 def main(argv=None, *, _now: datetime | None = None, _commit_sha: str | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
-    store_url = os.environ.get("ATP_STORE_URL") or os.environ.get("DATABASE_URL")
+    store_url = resolve_store_url()          # accepts the production ATP_DATABASE_URL / ATP_APP_* variables
     if not store_url:
-        print(json.dumps({"ok": False, "reason": "no store url (set ATP_STORE_URL / DATABASE_URL)"}))
+        print(json.dumps(missing_config_reason()))
         return 2
 
     now = _now or datetime.now(timezone.utc)
@@ -52,12 +53,12 @@ def main(argv=None, *, _now: datetime | None = None, _commit_sha: str | None = N
             print(json.dumps({"ok": True, "command": "collect", "eligible": r["eligible"],
                               "session_date": r.get("session_date"), "written": r["written"],
                               "already_collected": r.get("already_collected", []), "skipped": r["skipped"],
-                              "reason": r.get("reason")}))
+                              "reason": r.get("reason"), "store_source": describe_source()}))
             return 0
         r = evaluate_pending(store, now=now, commit_sha=commit_sha)
         print(json.dumps({"ok": True, "command": "evaluate", "matured": r["matured_count"],
                           "failed": r["failed_count"], "pending": r["pending"],
-                          "dataset_pending": r["dataset_pending"]}))
+                          "dataset_pending": r["dataset_pending"], "store_source": describe_source()}))
         return 0
     except Exception as e:  # noqa: BLE001 — surface as non-zero without leaking secrets
         print(json.dumps({"ok": False, "command": args.command, "error": type(e).__name__}))

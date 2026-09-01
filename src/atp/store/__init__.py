@@ -51,6 +51,7 @@ from .base import (
     PositionRow,
     ResearchDatasetEventRow,
     ResearchDatasetRow,
+    ResearchIntelEventRow,
     ResearchIntelInputRow,
     ResearchIntelOutcomeRow,
     ResearchIntelSnapshotRow,
@@ -95,7 +96,7 @@ __all__ = [
     "paper_canary_request_checksum",
     "BacktestRunRow", "BacktestDecisionRow", "BacktestTradeRow", "BacktestEquityPointRow",
     "BacktestEventRow", "BacktestMetricsRow", "ResearchDatasetRow", "ResearchDatasetEventRow",
-    "ResearchIntelSnapshotRow", "ResearchIntelInputRow", "ResearchIntelOutcomeRow",
+    "ResearchIntelSnapshotRow", "ResearchIntelInputRow", "ResearchIntelOutcomeRow", "ResearchIntelEventRow",
     "ResearchValidationRunRow",
 ]
 

@@ -985,6 +985,20 @@ class ResearchIntelOutcomeRow:
 
 
 @dataclass(slots=True)
+class ResearchIntelEventRow:
+    id: str
+    snapshot_id: str | None
+    event_type: str
+    severity: str | None
+    ts: str | None
+    symbol: str | None
+    session_date: str | None
+    details_json: str | None
+    commit_sha: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
 class ResearchValidationRunRow:
     run_id: str
     universe_id: str
@@ -2833,6 +2847,46 @@ class SqlStore(Store):
         else:
             r = self._one("SELECT COUNT(*) FROM research_intel_collection_events")
         return int(r[0]) if r else 0
+
+    _RI_EVT_COLS = "id,snapshot_id,event_type,severity,ts,symbol,session_date,details_json,commit_sha,created_at"
+
+    def ri_list_events(self, *, event_type: str | None = None,
+                       limit: int = 50) -> list[ResearchIntelEventRow]:
+        """Most-recent-first bounded page of collection events (scheduling observability; read-only)."""
+        n = max(1, min(500, int(limit)))
+        if event_type:
+            rows = self._all(f"SELECT {self._RI_EVT_COLS} FROM research_intel_collection_events "
+                             "WHERE event_type=? ORDER BY created_at DESC, id DESC LIMIT ?", (event_type, n))
+        else:
+            rows = self._all(f"SELECT {self._RI_EVT_COLS} FROM research_intel_collection_events "
+                             "ORDER BY created_at DESC, id DESC LIMIT ?", (n,))
+        return [ResearchIntelEventRow(*r) for r in rows]
+
+    def ri_last_event(self, event_type: str | None = None) -> ResearchIntelEventRow | None:
+        rows = self.ri_list_events(event_type=event_type, limit=1)
+        return rows[0] if rows else None
+
+    def ri_snapshot_summary(self, *, universe_id: str | None = None) -> dict:
+        """Aggregate collection footprint WITHOUT loading every snapshot row: total snapshots, distinct
+        decision sessions, and the latest session/created_at. Used by the scheduling read-model."""
+        where, params = ("", ())
+        if universe_id:
+            where, params = (" WHERE universe_id=?", (universe_id,))
+        r = self._one("SELECT COUNT(*),COUNT(DISTINCT decision_session_date),MAX(decision_session_date),"
+                      f"MAX(created_at) FROM research_intel_snapshots{where}", params)
+        if not r:
+            return {"snapshot_count": 0, "session_count": 0, "latest_session_date": None, "latest_created_at": None}
+        return {"snapshot_count": int(r[0] or 0), "session_count": int(r[1] or 0),
+                "latest_session_date": r[2], "latest_created_at": r[3]}
+
+    def ri_outcome_summary(self) -> dict:
+        """Aggregate outcome footprint: the total, the MATURED subset (the rest are FAILED — the only
+        other terminal status) and the latest evaluation timestamp."""
+        r = self._one("SELECT COUNT(*),MAX(evaluation_ts) FROM research_intel_outcomes")
+        m = self._one("SELECT COUNT(*) FROM research_intel_outcomes WHERE status='MATURED'")
+        return {"outcome_count": int(r[0] or 0) if r else 0,
+                "matured_count": int(m[0] or 0) if m else 0,
+                "latest_evaluation_ts": r[1] if r else None}
 
     # ---- validation runs ----
     def rv_create_run(self, *, run_id, universe_id, universe_version, validation_policy_version,

@@ -4,9 +4,17 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { PerformanceView } from "@/components/AiPerformance";
 import { AiHistoryList } from "@/components/terminal/AiHistoryFeed";
 import { fetchPerformance, fetchAiHistory, fetchOutcomes } from "@/lib/api";
-import { accTone, hasHistory, hasPerformance, type AiHistory, type AiPerformance } from "@/lib/performance";
+import { accTone, gatedAccTone, gatedVerdict, hasHistory, hasPerformance, type AiHistory,
+  type AiPerformance } from "@/lib/performance";
+import { NOT_VALIDATED, type ValidationGate } from "@/lib/validation";
 
 const r = (el: React.ReactElement) => renderToStaticMarkup(el);
+
+// § R3.1A.2 — the ONLY gate that unlocks a positive verdict on the legacy panel.
+const VALIDATED: ValidationGate = { validated: true, reason: "VALIDATED", run_id: "RV1",
+  status: "COMPLETED", created_at: "2026-08-20T06:40:00Z" };
+const GATE_FAILED: ValidationGate = { validated: false, reason: "GATE_NOT_PASSED", run_id: "RV1",
+  status: "COMPLETED", created_at: "2026-08-20T06:40:00Z" };
 
 const PERF: AiPerformance = {
   sample_size: 100, overall_accuracy: 67, direction_accuracy: 67, bullish_accuracy: 70, bearish_accuracy: 60,
@@ -53,7 +61,7 @@ describe("performance helpers", () => {
 
 describe("PerformanceView — honest evaluation, never fabricated", () => {
   it("renders accuracy, average return, calibration and best/weakest inputs", () => {
-    const h = r(<PerformanceView data={PERF} loading={false} error={null} />);
+    const h = r(<PerformanceView data={PERF} loading={false} error={null} gate={VALIDATED} />);
     expect(h).toContain("AI Performance");
     expect(h).toContain("Last 100");
     expect(h).toContain("67%");                      // directional accuracy
@@ -68,13 +76,74 @@ describe("PerformanceView — honest evaluation, never fabricated", () => {
     expect(h).toContain("71%");                       // 20-day accuracy
   });
   it("shows NO DATA with too few evaluated predictions (no fabricated metrics)", () => {
-    const h = r(<PerformanceView data={EMPTY_PERF} loading={false} error={null} />);
+    const h = r(<PerformanceView data={EMPTY_PERF} loading={false} error={null} gate={VALIDATED} />);
     expect(h).toContain("NO DATA");
-    expect(h).toContain("Not enough evaluated predictions");
+    expect(h).toContain("Not enough evaluated");
+    expect(h).toContain("INSUFFICIENT DATA");
     expect(h).not.toContain("Overconfident");
   });
   it("shows LOADING while evaluating", () => {
     expect(r(<PerformanceView data={null} loading error={null} />)).toContain("LOADING");
+  });
+});
+
+// § R3.1A.2 — the legacy panel is labelled LEGACY and carries NO positive verdict without a passed gate.
+describe("PerformanceView — LEGACY labelling + validation gating", () => {
+  const render = (gate?: ValidationGate | null) =>
+    r(<PerformanceView data={PERF} loading={false} error={null} gate={gate as any} />);
+
+  it("labels the panel and every metric LEGACY", () => {
+    const h = render(VALIDATED);
+    expect(h).toContain("LEGACY METRICS");
+    // 4 headline stats + 4 per-horizon stats + panel header + calibration header.
+    expect((h.match(/LEGACY/g) || []).length).toBeGreaterThanOrEqual(10);
+    expect(h).toContain("Directional Accuracy");
+    expect(h).toContain('<span class="vd-ins-tag">LEGACY</span>');
+  });
+
+  it("suppresses the calibration verdict and shows NOT VALIDATED / INSUFFICIENT DATA with no run", () => {
+    const h = render({ ...NOT_VALIDATED, reason: "NO_COMPLETED_RUN" });
+    expect(h).not.toContain("Overconfident");
+    expect(h).toContain("NOT VALIDATED");
+    expect(h).toContain("INSUFFICIENT DATA");
+    expect(h).toContain("No COMPLETED validation run exists yet.");
+  });
+
+  it("stays NOT VALIDATED when the latest COMPLETED run did not pass its gate", () => {
+    const h = render(GATE_FAILED);
+    expect(h).toContain("NOT VALIDATED");
+    expect(h).not.toContain("Overconfident");
+    expect(h).toContain("did NOT pass its preregistered gate");
+    expect(h).not.toContain(">VALIDATED<");
+  });
+
+  it("fails closed when the gate prop is missing or null (unknown ⇒ NOT VALIDATED)", () => {
+    for (const h of [r(<PerformanceView data={PERF} loading={false} error={null} />), render(null)]) {
+      expect(h).toContain("NOT VALIDATED");
+      expect(h).not.toContain("Overconfident");
+    }
+  });
+
+  it("renders the verdict only once the gate passes, and withholds positive tones until then", () => {
+    const passed = render(VALIDATED);
+    expect(passed).toContain("Overconfident");
+    expect(passed).toContain("num pos");                   // 67% directional accuracy reads positive
+    expect(passed).toContain("num up");                    // +1.8% average return reads positive
+    const blocked = render(GATE_FAILED);
+    expect(blocked).not.toContain("num pos");              // no green verdict without validation
+    expect(blocked).not.toContain("num up");
+    expect(blocked).toContain("67%");                      // the number itself is still reported honestly
+    expect(blocked).toContain("+1.8%");
+  });
+
+  it("gated helpers: verdict + tone are pure and fail closed", () => {
+    expect(gatedVerdict(PERF.confidence_calibration, true)).toBe("Overconfident");
+    expect(gatedVerdict(PERF.confidence_calibration, false)).toBe("NOT VALIDATED");
+    expect(gatedVerdict(null, true)).toBe("NO DATA");
+    expect(gatedAccTone(90, true)).toBe("pos");
+    expect(gatedAccTone(90, false)).toBe("neu");           // never positive while unvalidated
+    expect(gatedAccTone(20, false)).toBe("neg");           // a negative reading stays honest
+    expect(accTone(90)).toBe("pos");
   });
 });
 

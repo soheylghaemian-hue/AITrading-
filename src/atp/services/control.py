@@ -46,6 +46,7 @@ from ..persistence.state import RedisStateStore
 from ..research import backfill as bf
 from ..research import readmodel as bt_read
 from ..research.intel.commit import CommitVerificationError, resolve_commit_sha
+from ..research.intel import readmodel as intel_read
 from ..research.intel.legacy_diag import reconcile_legacy
 from ..research.runner import OneActiveRunError, run_backtest
 from ..research.runner import ValidationError as BtValidationError
@@ -719,6 +720,15 @@ def research_validation_run(run_id: str) -> dict:
         if row is None:
             raise HTTPException(404, {"detail": "not found"})
         return val_read.run_detail(ctx.store, row)
+
+
+@app.get("/research/intel/status")
+def research_intel_status(events: int = 20) -> dict:
+    """READ-ONLY scheduling + last-event status for the one-shot research workers: the declared systemd
+    timer cadence, the observed collection/outcome footprint and the most recent collection events. There is
+    deliberately NO write counterpart — collection/evaluation/validation are external one-shot workers."""
+    with ctx.lock:
+        return intel_read.schedule_status_view(ctx.store, event_limit=max(1, min(100, int(events))))
 
 
 @app.get("/research/intel/legacy-reconciliation")

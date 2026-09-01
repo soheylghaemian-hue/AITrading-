@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 from ...store import open_store
 from ..intel.commit import CommitVerificationError, resolve_commit_sha
+from ..intel.dsn import describe_source, missing_config_reason, resolve_store_url
 from .runner import run_validation
 
 
@@ -29,9 +30,9 @@ def _parse_args(argv):
 
 def main(argv=None, *, _now: datetime | None = None, _commit_sha: str | None = None) -> int:
     _parse_args(argv if argv is not None else sys.argv[1:])
-    store_url = os.environ.get("ATP_STORE_URL") or os.environ.get("DATABASE_URL")
+    store_url = resolve_store_url()          # accepts the production ATP_DATABASE_URL / ATP_APP_* variables
     if not store_url:
-        print(json.dumps({"ok": False, "reason": "no store url (set ATP_STORE_URL / DATABASE_URL)"}))
+        print(json.dumps(missing_config_reason()))
         return 2
     try:
         commit_sha = _commit_sha or resolve_commit_sha(repo_dir=os.environ.get("ATP_REPO_DIR"))
@@ -45,7 +46,8 @@ def main(argv=None, *, _now: datetime | None = None, _commit_sha: str | None = N
         print(json.dumps({"ok": False, "error": type(e).__name__}))
         return 1
     print(json.dumps({"ok": True, "run_id": r["run_id"], "status": r["status"],
-                      "gate_passed": r["gate_passed"], "result_checksum": r["result_checksum"]}))
+                      "gate_passed": r["gate_passed"], "result_checksum": r["result_checksum"],
+                      "store_source": describe_source()}))
     return 0
 
 

@@ -1,6 +1,7 @@
 // AI performance + history types (§ Phase G3.1). Mirrors the Control API's /ai/performance and
 // /market/{symbol}/ai-history. Read-only evaluation of the AI's predictiveness — history is never
 // rewritten and failed predictions are never removed. Missing outcomes → NO DATA; nothing fabricated.
+import { NO_DATA } from "./format";
 
 export interface CalibrationBucket { count: number; success_rate: number | null; avg_confidence: number | null }
 export interface Calibration { high: CalibrationBucket; medium: CalibrationBucket; low: CalibrationBucket; verdict: string | null }
@@ -67,6 +68,37 @@ export function directionTone(d: string | null | undefined): "pos" | "neg" | "ne
 export function accTone(a: number | null | undefined): "pos" | "neg" | "neu" {
   if (a == null) return "neu";
   return a >= 60 ? "pos" : a < 45 ? "neg" : "neu";
+}
+
+// ---------------------------------------------------------------------------------------------------
+// § R3.1A.2 — LEGACY gating. These metrics come from the legacy hourly operational prediction history,
+// NOT from the R3.1A canonical one-sample-per-symbol-per-session validation set, so they are labelled
+// LEGACY everywhere and may NEVER carry a positive verdict unless the latest COMPLETED validation run
+// passed its preregistered gate. Fail closed: unknown validation status ⇒ NOT VALIDATED.
+export const LEGACY = "LEGACY";
+export const NOT_VALIDATED_LABEL = "NOT VALIDATED";
+export const INSUFFICIENT_LABEL = "INSUFFICIENT DATA";
+
+/** The calibration verdict actually allowed on screen. Ungated verdicts (e.g. "Good") are suppressed. */
+export function gatedVerdict(cal: Calibration | null | undefined, validated: boolean): string {
+  if (!validated) return NOT_VALIDATED_LABEL;
+  return cal?.verdict || NO_DATA;
+}
+
+/** Accuracy tone, with the POSITIVE tone withheld until validation passes. Negative stays honest. */
+export function gatedAccTone(a: number | null | undefined, validated: boolean): "pos" | "neg" | "neu" {
+  const tone = accTone(a);
+  return validated ? tone : tone === "neg" ? "neg" : "neu";
+}
+
+/** One-line explanation of why the legacy panel carries no verdict. */
+export function gateNote(reason: string | null | undefined): string {
+  switch (reason) {
+    case "VALIDATED": return "Latest COMPLETED validation run passed its preregistered gate.";
+    case "GATE_NOT_PASSED": return "The latest COMPLETED validation run did NOT pass its preregistered gate.";
+    case "NO_COMPLETED_RUN": return "No COMPLETED validation run exists yet.";
+    default: return "Validation status is unavailable — treated as not validated.";
+  }
 }
 
 /** Short date for a prediction timestamp, e.g. "Aug 16". */

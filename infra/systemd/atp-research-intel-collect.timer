@@ -1,0 +1,25 @@
+[Unit]
+Description=Collect the completed US session's research intel snapshot (post-close window)
+
+[Timer]
+Unit=atp-research-intel-collect.service
+# Host time is pinned to UTC by infra/bootstrap.sh, so these are UTC. The times must land inside the
+# policy window [close+10min, +30min] for BOTH US DST offsets: 20:20/20:35 = 16:20/16:35 ET under EDT,
+# 21:20/21:35 under EST; 17:20/17:35 and 18:20/18:35 cover the 13:00 ET early close. The second attempt of
+# each pair is an idempotent retry. Keep in sync with COLLECT_ONCALENDAR in
+# src/atp/research/intel/readmodel.py (a test asserts they match).
+OnCalendar=Mon-Fri *-*-* 17:20:00
+OnCalendar=Mon-Fri *-*-* 17:35:00
+OnCalendar=Mon-Fri *-*-* 18:20:00
+OnCalendar=Mon-Fri *-*-* 18:35:00
+OnCalendar=Mon-Fri *-*-* 20:20:00
+OnCalendar=Mon-Fri *-*-* 20:35:00
+OnCalendar=Mon-Fri *-*-* 21:20:00
+OnCalendar=Mon-Fri *-*-* 21:35:00
+AccuracySec=30s
+# NO RandomizedDelaySec: a random delay could push the run past the collection window.
+# NO Persistent: a catch-up run after downtime is outside the window and would only record a skip.
+Persistent=false
+
+[Install]
+WantedBy=timers.target
