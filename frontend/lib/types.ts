@@ -52,6 +52,14 @@ export interface Snapshot {
     latency_ms?: number | null;
     timestamp?: string | null; error?: string | null; subscription_state: string; currency?: string;
   }[];
+  market_catalog?: {
+    status?: string;
+    generated_at?: string;
+    regions?: Record<string, {
+      discovered?: number; ibkr_verified?: number; ready?: number;
+      by_exchange?: Record<string, number>; by_type?: Record<string, number>; sources?: string[];
+    }>;
+  } | null;
   trading_risk?: {
     capital: number; risk_per_trade_pct: number; max_risk_per_trade: number;
     max_daily_loss_pct: number; max_daily_loss: number; current_daily_pnl: number;

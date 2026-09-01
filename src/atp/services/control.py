@@ -67,6 +67,16 @@ SERVICE = "control"
 HEARTBEAT_INTERVAL = 5.0
 HEALTH_STALE_S = float(os.environ.get("ATP_HEALTH_STALE_S", "20"))
 BROKER_STALE_S = float(os.environ.get("ATP_BROKER_STALE_S", "20"))   # broker heartbeat expiry -> STALE
+MARKET_CATALOG_PATH = os.environ.get("ATP_MARKET_CATALOG_PATH", "/opt/atp/data/market-catalog.json")
+
+
+def _read_market_catalog() -> dict | None:
+    try:
+        with open(MARKET_CATALOG_PATH, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        return payload if isinstance(payload, dict) else None
+    except (OSError, ValueError, TypeError):
+        return None
 
 
 class _Ctx:
@@ -361,7 +371,7 @@ def market() -> dict:
             "last_update": h.get("updated_at") or s.get("updated_at"),
             "fresh": h.get("fresh"), "error": s.get("error"),
         })
-    return {"feed": feed, "market_data": out, "ts": now.isoformat()}
+    return {"feed": feed, "market_data": out, "catalog": _read_market_catalog(), "ts": now.isoformat()}
 
 
 @app.get("/market/{symbol}/ohlc")

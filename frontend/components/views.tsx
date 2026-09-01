@@ -117,12 +117,26 @@ function instruments(s: Snapshot | null): Inst[] {
 }
 export function MarketsView({ s, connected }: { s: Snapshot | null; connected: boolean }) {
   const rows = instruments(s);
+  const catalog = s?.market_catalog?.regions || {};
   const regions = ["USA", "Europe", "FX"];
   const byRegion = (rg: string) => rows.filter((r) => (r.region || "").toUpperCase().includes(rg.toUpperCase()) || (rg === "USA" && !r.region));
   const errored = rows.filter((r) => r.status === "DATA_NOT_AVAILABLE" || r.status === "ERROR");
   return (
     <>
       {!connected ? <Disconnected /> : null}
+      {Object.keys(catalog).length ? <div className="card">
+        <div className="cardhead"><h3 style={{ border: 0, padding: 0 }}>Global Instrument Catalog</h3><Tag kind="warnt">DISCOVERED · NOT YET TRADEABLE</Tag></div>
+        <div className="grid k3">
+          {Object.entries(catalog).map(([region, info]) => <div key={region}>
+            <div className="label">{region}</div>
+            <div className="num" style={{ fontSize: 24, marginTop: 5 }}>{num(info.discovered as any, 0)}</div>
+            <div className="metrics" style={{ marginTop: 8 }}>
+              <span>IBKR verified <b>{num(info.ibkr_verified as any, 0)}</b></span>
+              <span>Ready <b>{num(info.ready as any, 0)}</b></span>
+            </div>
+          </div>)}
+        </div>
+      </div> : null}
       <div className="grid k3">
         {regions.map((rg) => {
           const rs = byRegion(rg);
