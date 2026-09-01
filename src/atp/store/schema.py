@@ -1154,6 +1154,107 @@ def _migration_026(dialect: str) -> list[str]:
     return tables + indexes + triggers
 
 
+# --------------------------------------------------------------------------- § WP3 IBKR qualification triggers
+# `instrument_qualification_events` is append-only (audit/progress). `instrument_qualification_runs` is
+# status-terminal (RUNNING → COMPLETED|PARTIAL|FAILED). The `instruments` table stays mutable (statuses are
+# updated over successive qualification passes).
+_IQ_RUN_TERMINAL = "('COMPLETED','PARTIAL','FAILED')"
+
+
+def _iq_triggers_sqlite() -> list[str]:
+    return [
+        """CREATE TRIGGER IF NOT EXISTS trg_instrument_qualification_events_no_update
+            BEFORE UPDATE ON instrument_qualification_events
+            BEGIN SELECT RAISE(ABORT, 'instrument_qualification_events: rows are immutable (insert-only)'); END""",
+        """CREATE TRIGGER IF NOT EXISTS trg_instrument_qualification_events_no_delete
+            BEFORE DELETE ON instrument_qualification_events
+            BEGIN SELECT RAISE(ABORT, 'instrument_qualification_events: rows cannot be deleted'); END""",
+        f"""CREATE TRIGGER IF NOT EXISTS trg_instrument_qualification_runs_no_update_terminal
+            BEFORE UPDATE ON instrument_qualification_runs WHEN OLD.status IN {_IQ_RUN_TERMINAL}
+            BEGIN SELECT RAISE(ABORT, 'instrument_qualification_runs: terminal run is immutable'); END""",
+        """CREATE TRIGGER IF NOT EXISTS trg_instrument_qualification_runs_no_delete
+            BEFORE DELETE ON instrument_qualification_runs
+            BEGIN SELECT RAISE(ABORT, 'instrument_qualification_runs: runs cannot be deleted'); END""",
+    ]
+
+
+def _iq_triggers_postgres() -> list[str]:
+    # `%%` is the psycopg literal-percent escape → PL/pgSQL receives a single `%` (the RAISE placeholder).
+    return [
+        """CREATE OR REPLACE FUNCTION atp_iq_block_event_mutate() RETURNS trigger AS $$
+           BEGIN RAISE EXCEPTION '%%: rows are immutable (insert-only)', TG_TABLE_NAME; END; $$ LANGUAGE plpgsql""",
+        """CREATE OR REPLACE FUNCTION atp_iq_block_run_update() RETURNS trigger AS $$
+           BEGIN IF OLD.status IN ('COMPLETED','PARTIAL','FAILED') THEN
+             RAISE EXCEPTION 'instrument_qualification_runs: terminal run is immutable'; END IF;
+             RETURN NEW; END; $$ LANGUAGE plpgsql""",
+        """CREATE OR REPLACE FUNCTION atp_iq_block_run_delete() RETURNS trigger AS $$
+           BEGIN RAISE EXCEPTION 'instrument_qualification_runs: runs cannot be deleted'; END; $$ LANGUAGE plpgsql""",
+        "DROP TRIGGER IF EXISTS trg_instrument_qualification_events_no_upd ON instrument_qualification_events",
+        "CREATE TRIGGER trg_instrument_qualification_events_no_upd BEFORE UPDATE ON "
+        "instrument_qualification_events FOR EACH ROW EXECUTE FUNCTION atp_iq_block_event_mutate()",
+        "DROP TRIGGER IF EXISTS trg_instrument_qualification_events_no_del ON instrument_qualification_events",
+        "CREATE TRIGGER trg_instrument_qualification_events_no_del BEFORE DELETE ON "
+        "instrument_qualification_events FOR EACH ROW EXECUTE FUNCTION atp_iq_block_event_mutate()",
+        "DROP TRIGGER IF EXISTS trg_instrument_qualification_runs_no_update ON instrument_qualification_runs",
+        "CREATE TRIGGER trg_instrument_qualification_runs_no_update BEFORE UPDATE ON "
+        "instrument_qualification_runs FOR EACH ROW EXECUTE FUNCTION atp_iq_block_run_update()",
+        "DROP TRIGGER IF EXISTS trg_instrument_qualification_runs_no_delete ON instrument_qualification_runs",
+        "CREATE TRIGGER trg_instrument_qualification_runs_no_delete BEFORE DELETE ON "
+        "instrument_qualification_runs FOR EACH ROW EXECUTE FUNCTION atp_iq_block_run_delete()",
+    ]
+
+
+def _migration_027(dialect: str) -> list[str]:
+    """§ WP3 — controlled, read-only IBKR verification & tradability check of the persistent instrument
+    catalogue. Additive: extends `instruments` with an 8-state qualification lifecycle and adds two
+    qualification-run tables. NO trading, NO orders/execution, NO market-data subscription. The 8 states are
+    DISCOVERED / QUALIFICATION_PENDING / VERIFIED / AMBIGUOUS / NOT_TRADABLE / MARKET_DATA_NOT_ENTITLED /
+    ERROR_RETRYABLE / ERROR_PERMANENT — fail-closed (a status is never presumed VERIFIED)."""
+    t = _types(dialect)
+    ts, txt, i = t["TS"], t["TXT"], t["INT"]
+    states = ("'DISCOVERED','QUALIFICATION_PENDING','VERIFIED','AMBIGUOUS','NOT_TRADABLE',"
+              "'MARKET_DATA_NOT_ENTITLED','ERROR_RETRYABLE','ERROR_PERMANENT'")
+    alters = [
+        f"ALTER TABLE instruments ADD COLUMN qualification_status {txt} NOT NULL DEFAULT 'DISCOVERED' "
+        f"CHECK (qualification_status IN ({states}))",
+        f"ALTER TABLE instruments ADD COLUMN qualification_reason {txt}",
+        f"ALTER TABLE instruments ADD COLUMN qualification_run_id {txt}",
+        f"ALTER TABLE instruments ADD COLUMN qualification_attempts {i} NOT NULL DEFAULT 0",
+        f"ALTER TABLE instruments ADD COLUMN last_qualified_at {ts}",
+    ]
+    tables = [
+        f"""CREATE TABLE IF NOT EXISTS instrument_qualification_runs (
+            run_id {txt} PRIMARY KEY, request_checksum {txt} NOT NULL, run_label {txt} NOT NULL,
+            exchange {txt}, batch_size {i} NOT NULL, pause_seconds {txt} NOT NULL,
+            status {txt} NOT NULL CHECK (status IN ('PLANNED','RUNNING','COMPLETED','PARTIAL','FAILED')),
+            planned_markets_json {txt} NOT NULL, completed_markets_json {txt} NOT NULL,
+            failed_markets_json {txt} NOT NULL,
+            processed_count {i} NOT NULL DEFAULT 0, verified_count {i} NOT NULL DEFAULT 0,
+            ambiguous_count {i} NOT NULL DEFAULT 0, not_tradable_count {i} NOT NULL DEFAULT 0,
+            mdne_count {i} NOT NULL DEFAULT 0, error_retryable_count {i} NOT NULL DEFAULT 0,
+            error_permanent_count {i} NOT NULL DEFAULT 0,
+            failure_code {txt}, failure_reason {txt},
+            created_at {ts} NOT NULL, started_at {ts}, ended_at {ts}, updated_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS instrument_qualification_events (
+            id {txt} PRIMARY KEY,
+            run_id {txt} NOT NULL REFERENCES instrument_qualification_runs(run_id),
+            seq {i}, ts {ts}, instrument_id {txt}, market {txt}, event_type {txt} NOT NULL, severity {txt},
+            status {txt}, con_id {i}, candidate_count {i}, reason {txt}, details_json {txt}, created_at {ts} NOT NULL)""",
+    ]
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS ix_instruments_qualification_status "
+        "ON instruments(qualification_status)",
+        "CREATE INDEX IF NOT EXISTS ix_instrument_qualification_runs_req "
+        "ON instrument_qualification_runs(request_checksum, status)",
+        "CREATE INDEX IF NOT EXISTS ix_instrument_qualification_events_run "
+        "ON instrument_qualification_events(run_id, event_type)",
+        "CREATE INDEX IF NOT EXISTS ix_instrument_qualification_events_inst "
+        "ON instrument_qualification_events(instrument_id)",
+    ]
+    triggers = _iq_triggers_postgres() if dialect == "postgres" else _iq_triggers_sqlite()
+    return alters + tables + indexes + triggers
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -1182,6 +1283,7 @@ MIGRATIONS = [
     (24, "paper_canary_daily_loss_aggregate", _migration_024),
     (25, "paper_canary_signed_account_ledger", _migration_025),
     (26, "global_instrument_model", _migration_026),
+    (27, "instrument_ibkr_qualification", _migration_027),
 ]
 
 

@@ -1048,6 +1048,12 @@ class InstrumentRow:
     content_checksum: str
     created_at: str
     updated_at: str
+    # § WP3 — IBKR qualification lifecycle (NULL/default for a freshly imported instrument)
+    qualification_status: str = "DISCOVERED"
+    qualification_reason: str | None = None
+    qualification_run_id: str | None = None
+    qualification_attempts: int = 0
+    last_qualified_at: str | None = None
 
 
 @dataclass(slots=True)
@@ -1082,6 +1088,52 @@ class InstrumentImportEventRow:
     market: str | None
     event_type: str
     severity: str | None
+    details_json: str | None
+    created_at: str
+
+
+# --------------------------------------------------------------------------- § WP3 IBKR qualification rows
+@dataclass(slots=True)
+class InstrumentQualificationRunRow:
+    run_id: str
+    request_checksum: str
+    run_label: str
+    exchange: str | None
+    batch_size: int
+    pause_seconds: str
+    status: str
+    planned_markets_json: str
+    completed_markets_json: str
+    failed_markets_json: str
+    processed_count: int
+    verified_count: int
+    ambiguous_count: int
+    not_tradable_count: int
+    mdne_count: int
+    error_retryable_count: int
+    error_permanent_count: int
+    failure_code: str | None
+    failure_reason: str | None
+    created_at: str
+    started_at: str | None
+    ended_at: str | None
+    updated_at: str
+
+
+@dataclass(slots=True)
+class InstrumentQualificationEventRow:
+    id: str
+    run_id: str
+    seq: int | None
+    ts: str | None
+    instrument_id: str | None
+    market: str | None
+    event_type: str
+    severity: str | None
+    status: str | None
+    con_id: int | None
+    candidate_count: int | None
+    reason: str | None
     details_json: str | None
     created_at: str
 
@@ -2965,7 +3017,9 @@ class SqlStore(Store):
         "expiry", "strike", "option_right", "tradability_status", "market_data_status",
         "source_status", "verification_status", "source", "last_verified_at", "content_checksum",
     )
-    _IM_INSTR_COLS = ("instrument_id,natural_key," + ",".join(_IM_MUTABLE_COLS) + ",created_at,updated_at")
+    _IM_INSTR_COLS = ("instrument_id,natural_key," + ",".join(_IM_MUTABLE_COLS) + ",created_at,updated_at,"
+                      "qualification_status,qualification_reason,qualification_run_id,"
+                      "qualification_attempts,last_qualified_at")
     _IM_RUN_COLS = (
         "run_id,request_checksum,source_label,planned_markets_json,completed_markets_json,"
         "failed_markets_json,status,discovered_count,inserted_count,updated_count,unchanged_count,"
@@ -3193,6 +3247,240 @@ class SqlStore(Store):
                                "failure_reason=?, ended_at=?, updated_at=? WHERE run_id=? AND "
                                "status='RUNNING' AND updated_at < ?",
                                (failure_code, failure_reason, now, now, run_id, cutoff_iso))
+                    if cur.rowcount <= 0:
+                        raise _ReclaimSkipped()
+                reclaimed.append(run_id)
+            except _ReclaimSkipped:
+                continue
+        return reclaimed
+
+    # ---- § WP3 read-only IBKR qualification of the persistent instrument catalogue ----
+    _IQ_RUN_COLS = (
+        "run_id,request_checksum,run_label,exchange,batch_size,pause_seconds,status,"
+        "planned_markets_json,completed_markets_json,failed_markets_json,processed_count,verified_count,"
+        "ambiguous_count,not_tradable_count,mdne_count,error_retryable_count,error_permanent_count,"
+        "failure_code,failure_reason,created_at,started_at,ended_at,updated_at"
+    )
+    _IQ_EVENT_COLS = ("id,run_id,seq,ts,instrument_id,market,event_type,severity,status,con_id,"
+                      "candidate_count,reason,details_json,created_at")
+
+    def _iq_insert_event(self, cur, run_id: str, event: dict, now: str) -> None:
+        self._exec(cur, f"INSERT INTO instrument_qualification_events ({self._IQ_EVENT_COLS}) "
+                   "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (event["id"], run_id, event.get("seq"), event.get("ts", now), event.get("instrument_id"),
+                    event.get("market"), event["event_type"], event.get("severity"), event.get("status"),
+                    (None if event.get("con_id") is None else int(event["con_id"])),
+                    event.get("candidate_count"), event.get("reason"),
+                    json.dumps(event.get("details") or {}), now))
+
+    def iq_select_instruments(self, *, statuses, exchange: str | None = None,
+                              limit: int = 500) -> list[InstrumentRow]:
+        n = max(1, min(5000, int(limit)))
+        status_list = list(statuses) or ["DISCOVERED"]
+        ph = ",".join(["?"] * len(status_list))
+        where = f"qualification_status IN ({ph})"
+        params = list(status_list)
+        if exchange:
+            where += " AND exchange=?"
+            params.append(exchange)
+        rows = self._all(f"SELECT {self._IM_INSTR_COLS} FROM instruments WHERE {where} "
+                         "ORDER BY exchange ASC, instrument_id ASC LIMIT ?", (*params, n))
+        return [self._im_row(r) for r in rows]
+
+    def iq_find_instrument_by_conid(self, con_id: int) -> InstrumentRow | None:
+        r = self._one(f"SELECT {self._IM_INSTR_COLS} FROM instruments WHERE con_id=?", (int(con_id),))
+        return self._im_row(r) if r else None
+
+    def iq_mark_pending(self, instrument_id: str, run_id: str) -> int:
+        """Claim an instrument for qualification (→ QUALIFICATION_PENDING) and return its CURRENT attempt
+        count. Attempts are incremented only when an outcome is actually recorded (see iq_apply_outcome), so
+        a crash between the claim and the outcome burns no attempt — a resumed run does not over-escalate."""
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "UPDATE instruments SET qualification_status='QUALIFICATION_PENDING', "
+                       "qualification_run_id=?, updated_at=? WHERE instrument_id=?",
+                       (run_id, now, instrument_id))
+            self._exec(cur, "SELECT qualification_attempts FROM instruments WHERE instrument_id=?",
+                       (instrument_id,))
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
+
+    def iq_max_event_seq(self, run_id: str) -> int:
+        """Highest event seq recorded for a run (0 if none). Seeds the next event id on resume so a gap left
+        by a rolled-back outcome (or a very large run) never collides with an already-persisted event id."""
+        r = self._one("SELECT MAX(seq) FROM instrument_qualification_events WHERE run_id=?", (run_id,))
+        return int(r[0]) if r and r[0] is not None else 0
+
+    def iq_apply_outcome(self, instrument_id: str, *, run_id: str, qualification_status: str, reason: str,
+                         verification_status: str | None = None, tradability_status: str | None = None,
+                         market_data_status: str | None = None, con_id=None, set_last_verified: bool = False,
+                         count_attempt: bool = True, event: dict) -> None:
+        """Persist one instrument's qualification outcome AND its audit event in ONE transaction, and bump the
+        run's liveness heartbeat. Increments the instrument's attempt count when ``count_attempt`` is True
+        (attempts track genuine RECORDED qualification attempts, not claims). A broker-outage outcome
+        (ConnectionUnavailableError) passes ``count_attempt=False`` so an IBKR outage never consumes an
+        instrument's retry budget. Fail-closed: coarse fields (verification/tradability/market_data/con_id/
+        last_verified_at) are written only when explicitly provided by the caller for a proven outcome. The
+        run's per-status counters are derived authoritatively at finalize, so resume never double-counts."""
+        now = utcnow_iso()
+        sets = ["qualification_status=?", "qualification_reason=?", "qualification_run_id=?",
+                "last_qualified_at=?", "updated_at=?"]
+        if count_attempt:
+            sets.append("qualification_attempts=qualification_attempts+1")
+        params = [qualification_status, reason, run_id, now, now]
+        if verification_status is not None:
+            sets.append("verification_status=?"); params.append(verification_status)
+        if tradability_status is not None:
+            sets.append("tradability_status=?"); params.append(tradability_status)
+        if market_data_status is not None:
+            sets.append("market_data_status=?"); params.append(market_data_status)
+        if con_id is not None:
+            sets.append("con_id=?"); params.append(int(con_id))
+        if set_last_verified:
+            sets.append("last_verified_at=?"); params.append(now)
+        params.append(instrument_id)
+        with self.tx() as cur:
+            self._exec(cur, f"UPDATE instruments SET {','.join(sets)} WHERE instrument_id=?", tuple(params))
+            self._iq_insert_event(cur, run_id, event, now)
+            self._exec(cur, "UPDATE instrument_qualification_runs SET updated_at=? "
+                       "WHERE run_id=? AND status='RUNNING'", (now, run_id))
+
+    def iq_create_run(self, *, run_id: str, request_checksum: str, run_label: str, exchange: str | None,
+                      batch_size: int, pause_seconds: float) -> None:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO instrument_qualification_runs ({self._IQ_RUN_COLS}) "
+                       f"VALUES ({','.join(['?'] * 23)})",
+                       (run_id, request_checksum, run_label, exchange, int(batch_size), str(pause_seconds),
+                        "PLANNED", json.dumps([]), json.dumps([]), json.dumps([]), 0, 0, 0, 0, 0, 0, 0,
+                        None, None, now, None, None, now))
+
+    def iq_advance_run_status(self, run_id: str, expected_from: str, to: str) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            if to == "RUNNING":
+                self._exec(cur, "UPDATE instrument_qualification_runs SET status=?, started_at=?, updated_at=? "
+                           "WHERE run_id=? AND status=?", (to, now, now, run_id, expected_from))
+            else:
+                self._exec(cur, "UPDATE instrument_qualification_runs SET status=?, updated_at=? "
+                           "WHERE run_id=? AND status=?", (to, now, run_id, expected_from))
+            return cur.rowcount > 0
+
+    def iq_set_planned_markets(self, run_id: str, markets) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "UPDATE instrument_qualification_runs SET planned_markets_json=?, updated_at=? "
+                       "WHERE run_id=? AND status='RUNNING'", (json.dumps(list(markets)), now, run_id))
+            return cur.rowcount > 0
+
+    def iq_record_market(self, run_id: str, *, market: str, market_status: str, event: dict | None = None) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "SELECT completed_markets_json,failed_markets_json FROM "
+                       "instrument_qualification_runs WHERE run_id=? AND status='RUNNING'", (run_id,))
+            row = cur.fetchone()
+            if row is None:
+                return False
+            completed = list(json.loads(row[0]))
+            failed = list(json.loads(row[1]))
+            if market_status == "COMPLETED":
+                if market not in completed:
+                    completed.append(market)
+                failed = [m for m in failed if m != market]
+            elif market_status == "FAILED":
+                if market not in failed:
+                    failed.append(market)
+                completed = [m for m in completed if m != market]   # a market is never both
+            self._exec(cur, "UPDATE instrument_qualification_runs SET completed_markets_json=?, "
+                       "failed_markets_json=?, updated_at=? WHERE run_id=? AND status='RUNNING'",
+                       (json.dumps(completed), json.dumps(failed), now, run_id))
+            if cur.rowcount <= 0:
+                return False
+            if event is not None:
+                self._iq_insert_event(cur, run_id, event, now)
+            return True
+
+    def iq_finalize_run(self, run_id: str, *, expected_from: str = "RUNNING", status: str,
+                        failure_code: str | None = None, failure_reason: str | None = None) -> bool:
+        """Finalize a run, deriving the per-status counters AUTHORITATIVELY from the instruments this run
+        last touched (grouped by qualification_status). Deriving-not-accumulating makes the counts exact and
+        immune to resume/re-processing double-counting; the snapshot is then frozen with the terminal flip."""
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "SELECT qualification_status, COUNT(*) FROM instruments "
+                       "WHERE qualification_run_id=? GROUP BY qualification_status", (run_id,))
+            counts = {row[0]: int(row[1]) for row in cur.fetchall()}
+            v = counts.get("VERIFIED", 0)
+            a = counts.get("AMBIGUOUS", 0)
+            nt = counts.get("NOT_TRADABLE", 0)
+            md = counts.get("MARKET_DATA_NOT_ENTITLED", 0)
+            er = counts.get("ERROR_RETRYABLE", 0)
+            ep = counts.get("ERROR_PERMANENT", 0)
+            processed = v + a + nt + md + er + ep
+            self._exec(cur, "UPDATE instrument_qualification_runs SET status=?, verified_count=?, "
+                       "ambiguous_count=?, not_tradable_count=?, mdne_count=?, error_retryable_count=?, "
+                       "error_permanent_count=?, processed_count=?, failure_code=?, failure_reason=?, "
+                       "ended_at=?, updated_at=? WHERE run_id=? AND status=?",
+                       (status, v, a, nt, md, er, ep, processed, failure_code, failure_reason, now, now,
+                        run_id, expected_from))
+            return cur.rowcount > 0
+
+    def iq_get_run(self, run_id: str) -> InstrumentQualificationRunRow | None:
+        r = self._one(f"SELECT {self._IQ_RUN_COLS} FROM instrument_qualification_runs WHERE run_id=?",
+                      (run_id,))
+        return InstrumentQualificationRunRow(*r) if r else None
+
+    def iq_list_runs(self, *, status: str | None = None, limit: int = 50,
+                     offset: int = 0) -> list[InstrumentQualificationRunRow]:
+        n, off = max(1, min(200, int(limit))), max(0, int(offset))
+        clause, params = "", []
+        if status:
+            clause, params = " WHERE status=?", [status]
+        rows = self._all(f"SELECT {self._IQ_RUN_COLS} FROM instrument_qualification_runs{clause} "
+                         "ORDER BY created_at DESC, run_id DESC LIMIT ? OFFSET ?", (*params, n, off))
+        return [InstrumentQualificationRunRow(*r) for r in rows]
+
+    def iq_list_run_events(self, run_id: str, *, limit: int = 500,
+                           offset: int = 0) -> list[InstrumentQualificationEventRow]:
+        n, off = max(1, min(5000, int(limit))), max(0, int(offset))
+        rows = self._all(f"SELECT {self._IQ_EVENT_COLS} FROM instrument_qualification_events WHERE run_id=? "
+                         "ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?", (run_id, n, off))
+        return [InstrumentQualificationEventRow(*r) for r in rows]
+
+    def iq_reclaim_stale_running(self, cutoff_iso: str, *, failure_code: str, failure_reason: str,
+                                 _probe=None) -> list[str]:
+        """Atomically reclaim crashed/stale RUNNING qualification runs as FAILED, re-checking the staleness
+        predicate at the terminal flip (a fresh heartbeat is not reclaimed). Instruments left
+        QUALIFICATION_PENDING remain selectable, so the next run re-qualifies them."""
+        now = utcnow_iso()
+        candidates = [r[0] for r in self._all(
+            "SELECT run_id FROM instrument_qualification_runs WHERE status='RUNNING' AND updated_at < ?",
+            (cutoff_iso,))]
+        reclaimed: list[str] = []
+        for run_id in candidates:
+            if _probe is not None:
+                _probe(run_id)
+            try:
+                with self.tx() as cur:
+                    self._exec(cur, f"INSERT INTO instrument_qualification_events ({self._IQ_EVENT_COLS}) "
+                               "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                               (f"{run_id}-reclaim", run_id, None, now, None, None, "RECLAIM", "ERROR", None,
+                                None, None, failure_reason,
+                                json.dumps({"failure_code": failure_code, "reason": failure_reason}), now))
+                    # best-effort: snapshot the counts this crashed run managed to produce, so a reclaimed
+                    # run's summary reflects what it actually did rather than defaulting to all-zero.
+                    self._exec(cur, "SELECT qualification_status, COUNT(*) FROM instruments "
+                               "WHERE qualification_run_id=? GROUP BY qualification_status", (run_id,))
+                    c = {row[0]: int(row[1]) for row in cur.fetchall()}
+                    v = c.get("VERIFIED", 0); a = c.get("AMBIGUOUS", 0); nt = c.get("NOT_TRADABLE", 0)
+                    md = c.get("MARKET_DATA_NOT_ENTITLED", 0); er = c.get("ERROR_RETRYABLE", 0)
+                    ep = c.get("ERROR_PERMANENT", 0)
+                    self._exec(cur, "UPDATE instrument_qualification_runs SET status='FAILED', verified_count=?, "
+                               "ambiguous_count=?, not_tradable_count=?, mdne_count=?, error_retryable_count=?, "
+                               "error_permanent_count=?, processed_count=?, failure_code=?, failure_reason=?, "
+                               "ended_at=?, updated_at=? WHERE run_id=? AND status='RUNNING' AND updated_at < ?",
+                               (v, a, nt, md, er, ep, v + a + nt + md + er + ep, failure_code, failure_reason,
+                                now, now, run_id, cutoff_iso))
                     if cur.rowcount <= 0:
                         raise _ReclaimSkipped()
                 reclaimed.append(run_id)

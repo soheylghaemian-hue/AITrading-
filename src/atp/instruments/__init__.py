@@ -35,6 +35,20 @@ from .importer import (
     record_from_listing,
     us_market_source,
 )
+from .qualification import (
+    IbkrQualificationClient,
+    MarketDataNotEntitledError,
+    NotTradableError,
+    PermanentQualificationError,
+    QualificationClient,
+    QualificationConfig,
+    QualificationStatus,
+    QualificationSummary,
+    RetryableQualificationError,
+    build_request_spec,
+    match_contract,
+    qualify_instruments,
+)
 
 __all__ = [
     "MarketCalendar",
@@ -69,4 +83,16 @@ __all__ = [
     "import_request_checksum",
     "record_from_listing",
     "us_market_source",
+    "QualificationStatus",
+    "QualificationConfig",
+    "QualificationSummary",
+    "QualificationClient",
+    "IbkrQualificationClient",
+    "RetryableQualificationError",
+    "PermanentQualificationError",
+    "NotTradableError",
+    "MarketDataNotEntitledError",
+    "qualify_instruments",
+    "match_contract",
+    "build_request_spec",
 ]

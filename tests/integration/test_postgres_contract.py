@@ -134,7 +134,7 @@ def _prepare_running_paper_runtime(store):
 # ---------------------------------------------------------------- migrations + NUMERIC precision
 def test_migrations_applied(store):
     versions = sorted(r[0] for r in store._all("SELECT version FROM schema_migrations"))
-    assert versions == list(range(1, 27))
+    assert versions == list(range(1, 28))
 
 
 def test_numeric_types_in_information_schema(store):

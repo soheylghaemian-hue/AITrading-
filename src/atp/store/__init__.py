@@ -32,6 +32,8 @@ from .base import (
     InstitutionalChangeRow,
     InstrumentImportEventRow,
     InstrumentImportRunRow,
+    InstrumentQualificationEventRow,
+    InstrumentQualificationRunRow,
     InstrumentRow,
     KillSwitchRow,
     MacroSnapshotRow,
@@ -101,6 +103,7 @@ __all__ = [
     "ResearchIntelSnapshotRow", "ResearchIntelInputRow", "ResearchIntelOutcomeRow",
     "ResearchValidationRunRow",
     "InstrumentRow", "InstrumentImportRunRow", "InstrumentImportEventRow",
+    "InstrumentQualificationRunRow", "InstrumentQualificationEventRow",
 ]
 
 

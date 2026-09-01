@@ -27,6 +27,7 @@ from atp.store.schema import (
     _migration_024,
     _migration_025,
     _migration_026,
+    _migration_027,
 )
 
 PG_PLACEHOLDER = PostgresStore.PLACEHOLDER          # "%s"
@@ -80,6 +81,7 @@ def test_postgres_migration_placeholders_are_psycopg_safe():
         + _migration_024("postgres")
         + _migration_025("postgres")
         + _migration_026("postgres")
+        + _migration_027("postgres")
     )
     psycopg_ran = False
     for raw in stmts:
@@ -124,6 +126,11 @@ def test_postgres_functions_use_escaped_percent_and_sqlite_uses_none():
     assert "'%%: rows are immutable (insert-only)'" in pg26
     assert "'%:" not in pg26
     assert "%" not in "\n".join(_migration_026("sqlite"))
+    # … WP3 migration 27 instrument-qualification triggers carry the same `%%` escape and no bare single-% …
+    pg27 = "\n".join(_migration_027("postgres"))
+    assert "'%%: rows are immutable (insert-only)'" in pg27
+    assert "'%:" not in pg27
+    assert "%" not in "\n".join(_migration_027("sqlite"))
     assert _migration_025("postgres") == [
         "ALTER TABLE paper_accounts "
         "DROP CONSTRAINT IF EXISTS paper_accounts_cash_check"
@@ -134,7 +141,7 @@ def test_migrations_18_19_apply_sequentially_after_1_17():
     s = open_store(str(Path(tempfile.mkdtemp()) / "atp.db"))   # applies 1..20 in order
     rows = s._all("SELECT version, name FROM schema_migrations ORDER BY version")
     versions = [int(r[0]) for r in rows]
-    assert versions == list(range(1, 27))          # 1..26 all applied, in order
+    assert versions == list(range(1, 28))          # 1..27 all applied, in order
     names = {int(r[0]): r[1] for r in rows}
     assert names[18] == "research_backtesting" and names[19] == "backtest_actual_risk"
     assert names[20] == "research_datasets"        # R3.0A immutable dataset tables
@@ -144,8 +151,11 @@ def test_migrations_18_19_apply_sequentially_after_1_17():
     assert names[24] == "paper_canary_daily_loss_aggregate"
     assert names[25] == "paper_canary_signed_account_ledger"
     assert names[26] == "global_instrument_model"   # WP2 persistent global instrument model
+    assert names[27] == "instrument_ibkr_qualification"   # WP3 read-only IBKR qualification
     s._one("SELECT instrument_id FROM instruments")                 # 26's tables exist
     s._one("SELECT run_id FROM instrument_import_runs")
+    s._one("SELECT qualification_status FROM instruments")          # 27's column exists
+    s._one("SELECT run_id FROM instrument_qualification_runs")      # 27's tables exist
     s._one(
         "SELECT trade_date,risk_capital_baseline,cumulative_equity_delta,version "
         "FROM paper_daily_loss_state"
@@ -161,7 +171,7 @@ def test_migrations_18_19_apply_sequentially_after_1_17():
     same_path = str(Path(tempfile.mkdtemp()) / "atp.db")
     a = _open(same_path)
     b = _open(same_path)                                    # migrate again over an already-migrated db
-    assert [int(r[0]) for r in b._all("SELECT version FROM schema_migrations ORDER BY version")] == list(range(1, 27))
+    assert [int(r[0]) for r in b._all("SELECT version FROM schema_migrations ORDER BY version")] == list(range(1, 28))
 
 
 def test_failed_migration_version_is_not_recorded_and_retry_is_safe():
