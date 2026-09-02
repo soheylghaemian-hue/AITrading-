@@ -1255,6 +1255,145 @@ def _migration_027(dialect: str) -> list[str]:
     return alters + tables + indexes + triggers
 
 
+# --------------------------------------------------------------------------- § WP4 market-data triggers
+# The immutable market-data tables (quote history, provider-neutral bars, corporate actions, import events)
+# are insert-only: ANY update or delete is rejected. `md_import_runs` is status-terminal
+# (RUNNING → COMPLETED|PARTIAL|FAILED): a terminal run is frozen. The CURRENT-quote and provider-entitlement
+# tables are intentionally mutable (guarded upserts) and are NOT frozen.
+_MD_IMMUTABLE_TABLES = ("md_quote_history", "md_bars", "md_corporate_actions", "md_import_events")
+_MD_RUN_TERMINAL = "('COMPLETED','PARTIAL','FAILED')"
+
+
+def _md_triggers_sqlite() -> list[str]:
+    out: list[str] = []
+    for tbl in _MD_IMMUTABLE_TABLES:
+        out += [
+            f"""CREATE TRIGGER IF NOT EXISTS trg_{tbl}_no_update BEFORE UPDATE ON {tbl}
+                BEGIN SELECT RAISE(ABORT, '{tbl}: rows are immutable (insert-only)'); END""",
+            f"""CREATE TRIGGER IF NOT EXISTS trg_{tbl}_no_delete BEFORE DELETE ON {tbl}
+                BEGIN SELECT RAISE(ABORT, '{tbl}: rows cannot be deleted'); END""",
+        ]
+    out += [
+        f"""CREATE TRIGGER IF NOT EXISTS trg_md_import_runs_no_update_terminal
+            BEFORE UPDATE ON md_import_runs WHEN OLD.status IN {_MD_RUN_TERMINAL}
+            BEGIN SELECT RAISE(ABORT, 'md_import_runs: terminal run is immutable'); END""",
+        """CREATE TRIGGER IF NOT EXISTS trg_md_import_runs_no_delete
+            BEFORE DELETE ON md_import_runs
+            BEGIN SELECT RAISE(ABORT, 'md_import_runs: runs cannot be deleted'); END""",
+    ]
+    return out
+
+
+def _md_triggers_postgres() -> list[str]:
+    # `%%` is the psycopg literal-percent escape → PL/pgSQL receives a single `%` (the RAISE placeholder).
+    out = [
+        """CREATE OR REPLACE FUNCTION atp_md_block_mutate() RETURNS trigger AS $$
+           BEGIN RAISE EXCEPTION '%%: rows are immutable (insert-only)', TG_TABLE_NAME; END; $$ LANGUAGE plpgsql""",
+        """CREATE OR REPLACE FUNCTION atp_md_block_run_update() RETURNS trigger AS $$
+           BEGIN IF OLD.status IN ('COMPLETED','PARTIAL','FAILED') THEN
+             RAISE EXCEPTION 'md_import_runs: terminal run is immutable'; END IF;
+             RETURN NEW; END; $$ LANGUAGE plpgsql""",
+        """CREATE OR REPLACE FUNCTION atp_md_block_run_delete() RETURNS trigger AS $$
+           BEGIN RAISE EXCEPTION 'md_import_runs: runs cannot be deleted'; END; $$ LANGUAGE plpgsql""",
+    ]
+    for tbl in _MD_IMMUTABLE_TABLES:
+        out += [
+            f"DROP TRIGGER IF EXISTS trg_{tbl}_no_upd ON {tbl}",
+            f"CREATE TRIGGER trg_{tbl}_no_upd BEFORE UPDATE ON {tbl} FOR EACH ROW EXECUTE FUNCTION atp_md_block_mutate()",
+            f"DROP TRIGGER IF EXISTS trg_{tbl}_no_del ON {tbl}",
+            f"CREATE TRIGGER trg_{tbl}_no_del BEFORE DELETE ON {tbl} FOR EACH ROW EXECUTE FUNCTION atp_md_block_mutate()",
+        ]
+    out += [
+        "DROP TRIGGER IF EXISTS trg_md_import_runs_no_update ON md_import_runs",
+        "CREATE TRIGGER trg_md_import_runs_no_update BEFORE UPDATE ON md_import_runs "
+        "FOR EACH ROW EXECUTE FUNCTION atp_md_block_run_update()",
+        "DROP TRIGGER IF EXISTS trg_md_import_runs_no_delete ON md_import_runs",
+        "CREATE TRIGGER trg_md_import_runs_no_delete BEFORE DELETE ON md_import_runs "
+        "FOR EACH ROW EXECUTE FUNCTION atp_md_block_run_delete()",
+    ]
+    return out
+
+
+def _migration_028(dialect: str) -> list[str]:
+    """§ WP4 — provider-neutral, persistent, fault-tolerant market-data foundation (REFERENCE/DATA ONLY).
+
+    Purely additive: six new tables, no existing table touched (market_data_health / ohlc_bars stay exactly
+    as they are, preserving Paper-Canary fill-safety). Every price row keys on the WP2 instrument_id (FK) and
+    carries full provenance — provider, provider_instrument_id, data currency, source vs receive timestamp,
+    a fail-closed data_status (REALTIME/DELAYED/END_OF_DAY/STALE/NO_DATA), an explicit entitlement + license,
+    a quality status, the adjustment policy, a corporate-action version, and an immutable provenance checksum.
+    The CURRENT quote (mutable, monotonic-guarded upsert) is separated from the immutable append-only history;
+    bars / corporate actions / import events are DB-immutable; md_import_runs is status-terminal and frozen.
+    NO trading, NO orders/execution, NO market-data subscription purchase, NO account path."""
+    t = _types(dialect)
+    ts, txt, i, m, b = t["TS"], t["TXT"], t["INT"], t["MONEY"], t["BOOL"]
+    quote_cols = (
+        f"instrument_id {txt} NOT NULL REFERENCES instruments(instrument_id), provider {txt} NOT NULL, "
+        f"provider_instrument_id {txt}, bid {m}, ask {m}, last {m}, mid {m}, spread {m}, "
+        f"bid_size {m}, ask_size {m}, volume {m}, reference_price {m}, previous_close {m}, "
+        f"data_currency {txt}, source_ts {ts}, receive_ts {ts}, latency_ms {m}, "
+        f"data_status {txt} NOT NULL, entitlement_status {txt} NOT NULL, license {txt} NOT NULL, "
+        f"quality_status {txt} NOT NULL, adjustment_policy {txt} NOT NULL, corporate_action_version {i} NOT NULL DEFAULT 0, "
+        f"provenance_checksum {txt} NOT NULL, import_run_id {txt}, created_at {ts} NOT NULL")
+    tables = [
+        f"""CREATE TABLE IF NOT EXISTS md_quotes_current (
+            {quote_cols}, updated_at {ts} NOT NULL,
+            PRIMARY KEY (instrument_id, provider))""",
+        f"""CREATE TABLE IF NOT EXISTS md_quote_history (
+            {quote_cols},
+            PRIMARY KEY (instrument_id, provider, source_ts))""",
+        f"""CREATE TABLE IF NOT EXISTS md_bars (
+            instrument_id {txt} NOT NULL REFERENCES instruments(instrument_id), provider {txt} NOT NULL,
+            provider_instrument_id {txt}, interval {txt} NOT NULL, ts {ts} NOT NULL,
+            open {m}, high {m}, low {m}, close {m}, volume {m}, trade_count {i},
+            data_currency {txt}, source_ts {ts}, receive_ts {ts}, latency_ms {m},
+            data_status {txt} NOT NULL, entitlement_status {txt} NOT NULL, license {txt} NOT NULL,
+            quality_status {txt} NOT NULL, adjustment_policy {txt} NOT NULL,
+            corporate_action_version {i} NOT NULL DEFAULT 0, provenance_checksum {txt} NOT NULL,
+            import_run_id {txt}, created_at {ts} NOT NULL,
+            PRIMARY KEY (instrument_id, provider, interval, ts, adjustment_policy))""",
+        f"""CREATE TABLE IF NOT EXISTS md_corporate_actions (
+            instrument_id {txt} NOT NULL REFERENCES instruments(instrument_id), provider {txt} NOT NULL,
+            action_type {txt} NOT NULL, effective_date {txt} NOT NULL, corporate_action_version {i} NOT NULL DEFAULT 0,
+            ex_date {txt}, ratio {m}, cash_amount {m}, currency {txt}, provenance_checksum {txt} NOT NULL,
+            import_run_id {txt}, created_at {ts} NOT NULL,
+            PRIMARY KEY (instrument_id, provider, action_type, effective_date, corporate_action_version))""",
+        f"""CREATE TABLE IF NOT EXISTS md_provider_entitlements (
+            instrument_id {txt} NOT NULL REFERENCES instruments(instrument_id), provider {txt} NOT NULL,
+            provider_instrument_id {txt}, entitlement_status {txt} NOT NULL, license {txt} NOT NULL,
+            realtime_available {b} NOT NULL DEFAULT 0, available {b} NOT NULL DEFAULT 0,
+            capabilities_json {txt} NOT NULL DEFAULT '{{}}', rate_limit_json {txt} NOT NULL DEFAULT '{{}}',
+            reason {txt}, last_checked_at {ts} NOT NULL, updated_at {ts} NOT NULL,
+            PRIMARY KEY (instrument_id, provider))""",
+        f"""CREATE TABLE IF NOT EXISTS md_import_runs (
+            run_id {txt} PRIMARY KEY, request_checksum {txt} NOT NULL, run_label {txt} NOT NULL,
+            provider {txt} NOT NULL, kind {txt} NOT NULL,
+            status {txt} NOT NULL CHECK (status IN ('PLANNED','RUNNING','COMPLETED','PARTIAL','FAILED')),
+            planned_markets_json {txt} NOT NULL, completed_markets_json {txt} NOT NULL,
+            failed_markets_json {txt} NOT NULL,
+            processed_count {i} NOT NULL DEFAULT 0, quotes_written_count {i} NOT NULL DEFAULT 0,
+            bars_written_count {i} NOT NULL DEFAULT 0, history_appended_count {i} NOT NULL DEFAULT 0,
+            no_data_count {i} NOT NULL DEFAULT 0, skipped_count {i} NOT NULL DEFAULT 0,
+            error_count {i} NOT NULL DEFAULT 0,
+            failure_code {txt}, failure_reason {txt},
+            created_at {ts} NOT NULL, started_at {ts}, ended_at {ts}, updated_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS md_import_events (
+            id {txt} PRIMARY KEY, run_id {txt} NOT NULL REFERENCES md_import_runs(run_id),
+            seq {i}, ts {ts}, provider {txt}, market {txt}, instrument_id {txt}, event_type {txt} NOT NULL,
+            severity {txt}, status {txt}, reason {txt}, details_json {txt}, created_at {ts} NOT NULL)""",
+    ]
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS ix_md_quotes_current_status ON md_quotes_current(data_status)",
+        "CREATE INDEX IF NOT EXISTS ix_md_quote_history_inst ON md_quote_history(instrument_id, provider, source_ts)",
+        "CREATE INDEX IF NOT EXISTS ix_md_bars_inst ON md_bars(instrument_id, provider, interval, ts)",
+        "CREATE INDEX IF NOT EXISTS ix_md_corporate_actions_inst ON md_corporate_actions(instrument_id, effective_date)",
+        "CREATE INDEX IF NOT EXISTS ix_md_import_runs_req ON md_import_runs(request_checksum, status)",
+        "CREATE INDEX IF NOT EXISTS ix_md_import_events_run ON md_import_events(run_id, event_type)",
+    ]
+    triggers = _md_triggers_postgres() if dialect == "postgres" else _md_triggers_sqlite()
+    return tables + indexes + triggers
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -1284,6 +1423,7 @@ MIGRATIONS = [
     (25, "paper_canary_signed_account_ledger", _migration_025),
     (26, "global_instrument_model", _migration_026),
     (27, "instrument_ibkr_qualification", _migration_027),
+    (28, "wp4_market_data_foundation", _migration_028),
 ]
 
 

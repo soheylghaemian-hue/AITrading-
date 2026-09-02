@@ -92,7 +92,7 @@ def _upsert(store, symbol, *, exchange="NASDAQ", asset_class=AssetClass.EQUITY, 
 def test_migration_27_applied_and_defaults_discovered():
     store = _store()
     versions = {r[0] for r in store._all("SELECT version FROM schema_migrations")}
-    assert {26, 27} <= versions and max(versions) == 27
+    assert {26, 27} <= versions and max(versions) >= 27
     iid = _upsert(store, "MSFT")
     row = store.im_get_instrument(iid)
     assert row.qualification_status == "DISCOVERED" and row.qualification_attempts == 0

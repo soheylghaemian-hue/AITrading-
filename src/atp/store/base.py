@@ -66,6 +66,22 @@ def utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _md_canon_ts(value):
+    """Lenient canonical UTC ISO-8601 (offset +00:00) for a market-data source timestamp. The CURRENT-quote
+    monotonic guard compares timestamps lexicographically, which is chronological ONLY for a single canonical
+    form — so the store canonicalizes on write (defense in depth: any caller, not just the ingest, is safe;
+    a valid non-UTC-offset timestamp can no longer beat a canonical one lexicographically). Naive/bad → None."""
+    if value is None:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value))
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        return None
+    return dt.astimezone(timezone.utc).isoformat()
+
+
 def new_id() -> str:
     return uuid.uuid4().hex
 
@@ -1133,6 +1149,141 @@ class InstrumentQualificationEventRow:
     status: str | None
     con_id: int | None
     candidate_count: int | None
+    reason: str | None
+    details_json: str | None
+    created_at: str
+
+
+# --------------------------------------------------------------------------- § WP4 market-data rows
+@dataclass(slots=True)
+class MdQuoteRow:
+    instrument_id: str
+    provider: str
+    provider_instrument_id: str | None
+    bid: Decimal | None
+    ask: Decimal | None
+    last: Decimal | None
+    mid: Decimal | None
+    spread: Decimal | None
+    bid_size: Decimal | None
+    ask_size: Decimal | None
+    volume: Decimal | None
+    reference_price: Decimal | None
+    previous_close: Decimal | None
+    data_currency: str | None
+    source_ts: str | None
+    receive_ts: str | None
+    latency_ms: Decimal | None
+    data_status: str
+    entitlement_status: str
+    license: str
+    quality_status: str
+    adjustment_policy: str
+    corporate_action_version: int
+    provenance_checksum: str
+    import_run_id: str | None
+    created_at: str
+    updated_at: str | None = None
+
+
+@dataclass(slots=True)
+class MdBarRow:
+    instrument_id: str
+    provider: str
+    provider_instrument_id: str | None
+    interval: str
+    ts: str
+    open: Decimal | None
+    high: Decimal | None
+    low: Decimal | None
+    close: Decimal | None
+    volume: Decimal | None
+    trade_count: int | None
+    data_currency: str | None
+    source_ts: str | None
+    receive_ts: str | None
+    latency_ms: Decimal | None
+    data_status: str
+    entitlement_status: str
+    license: str
+    quality_status: str
+    adjustment_policy: str
+    corporate_action_version: int
+    provenance_checksum: str
+    import_run_id: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
+class MdCorporateActionRow:
+    instrument_id: str
+    provider: str
+    action_type: str
+    effective_date: str
+    corporate_action_version: int
+    ex_date: str | None
+    ratio: Decimal | None
+    cash_amount: Decimal | None
+    currency: str | None
+    provenance_checksum: str
+    import_run_id: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
+class MdProviderEntitlementRow:
+    instrument_id: str
+    provider: str
+    provider_instrument_id: str | None
+    entitlement_status: str
+    license: str
+    realtime_available: bool
+    available: bool
+    capabilities_json: str
+    rate_limit_json: str
+    reason: str | None
+    last_checked_at: str
+    updated_at: str
+
+
+@dataclass(slots=True)
+class MdImportRunRow:
+    run_id: str
+    request_checksum: str
+    run_label: str
+    provider: str
+    kind: str
+    status: str
+    planned_markets_json: str
+    completed_markets_json: str
+    failed_markets_json: str
+    processed_count: int
+    quotes_written_count: int
+    bars_written_count: int
+    history_appended_count: int
+    no_data_count: int
+    skipped_count: int
+    error_count: int
+    failure_code: str | None
+    failure_reason: str | None
+    created_at: str
+    started_at: str | None
+    ended_at: str | None
+    updated_at: str
+
+
+@dataclass(slots=True)
+class MdImportEventRow:
+    id: str
+    run_id: str
+    seq: int | None
+    ts: str | None
+    provider: str | None
+    market: str | None
+    instrument_id: str | None
+    event_type: str
+    severity: str | None
+    status: str | None
     reason: str | None
     details_json: str | None
     created_at: str
@@ -3481,6 +3632,423 @@ class SqlStore(Store):
                                "ended_at=?, updated_at=? WHERE run_id=? AND status='RUNNING' AND updated_at < ?",
                                (v, a, nt, md, er, ep, v + a + nt + md + er + ep, failure_code, failure_reason,
                                 now, now, run_id, cutoff_iso))
+                    if cur.rowcount <= 0:
+                        raise _ReclaimSkipped()
+                reclaimed.append(run_id)
+            except _ReclaimSkipped:
+                continue
+        return reclaimed
+
+    # ---- § WP4 provider-neutral, persistent market-data foundation (DATA ONLY) ----
+    # CURRENT quote (mutable, monotonic-guarded) split from IMMUTABLE append-only history + bars +
+    # corporate actions; resumable/observable import runs with per-provider/market/instrument isolation.
+    # No trading, no orders/execution, no market-data subscription purchase.
+    _MD_QUOTE_COL_LIST = (
+        "instrument_id", "provider", "provider_instrument_id", "bid", "ask", "last", "mid", "spread",
+        "bid_size", "ask_size", "volume", "reference_price", "previous_close", "data_currency",
+        "source_ts", "receive_ts", "latency_ms", "data_status", "entitlement_status", "license",
+        "quality_status", "adjustment_policy", "corporate_action_version", "provenance_checksum",
+        "import_run_id", "created_at")
+    _MD_QUOTE_MONEY = frozenset({"bid", "ask", "last", "mid", "spread", "bid_size", "ask_size", "volume",
+                                 "reference_price", "previous_close", "latency_ms"})
+    _MD_QUOTE_COLS = ",".join(_MD_QUOTE_COL_LIST)
+    _MD_QUOTE_MONEY_IDX = (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 16)
+    _MD_BAR_COL_LIST = (
+        "instrument_id", "provider", "provider_instrument_id", "interval", "ts", "open", "high", "low",
+        "close", "volume", "trade_count", "data_currency", "source_ts", "receive_ts", "latency_ms",
+        "data_status", "entitlement_status", "license", "quality_status", "adjustment_policy",
+        "corporate_action_version", "provenance_checksum", "import_run_id", "created_at")
+    _MD_BAR_MONEY = frozenset({"open", "high", "low", "close", "volume", "latency_ms"})
+    _MD_BAR_COLS = ",".join(_MD_BAR_COL_LIST)
+    _MD_BAR_MONEY_IDX = (5, 6, 7, 8, 9, 14)
+    _MD_CA_COL_LIST = (
+        "instrument_id", "provider", "action_type", "effective_date", "corporate_action_version",
+        "ex_date", "ratio", "cash_amount", "currency", "provenance_checksum", "import_run_id", "created_at")
+    _MD_CA_COLS = ",".join(_MD_CA_COL_LIST)
+    _MD_ENT_COLS = ("instrument_id,provider,provider_instrument_id,entitlement_status,license,"
+                    "realtime_available,available,capabilities_json,rate_limit_json,reason,"
+                    "last_checked_at,updated_at")
+    _MD_RUN_COLS = (
+        "run_id,request_checksum,run_label,provider,kind,status,planned_markets_json,completed_markets_json,"
+        "failed_markets_json,processed_count,quotes_written_count,bars_written_count,history_appended_count,"
+        "no_data_count,skipped_count,error_count,failure_code,failure_reason,created_at,started_at,"
+        "ended_at,updated_at")
+    _MD_EVENT_COLS = "id,run_id,seq,ts,provider,market,instrument_id,event_type,severity,status,reason,details_json,created_at"
+
+    def _md_quote_values(self, record: dict, now: str, run_id: str | None) -> tuple:
+        out = []
+        for col in self._MD_QUOTE_COL_LIST:
+            if col in self._MD_QUOTE_MONEY:
+                out.append(self._m(record.get(col)))
+            elif col == "created_at":
+                out.append(now)
+            elif col == "import_run_id":
+                out.append(run_id if run_id is not None else record.get("import_run_id"))
+            elif col == "corporate_action_version":
+                out.append(int(record.get(col, 0) or 0))
+            else:
+                out.append(record.get(col))
+        return tuple(out)
+
+    def _md_quote_row(self, r) -> MdQuoteRow:
+        r = list(r)
+        for i in self._MD_QUOTE_MONEY_IDX:
+            r[i] = to_decimal(r[i]) if r[i] is not None else None
+        r[22] = int(r[22]) if r[22] is not None else 0
+        return MdQuoteRow(*r)
+
+    def md_record_quote(self, record: dict, *, run_id: str | None = None, event: dict | None = None) -> dict:
+        """Persist one quote observation atomically: append to the IMMUTABLE history (duplicate-safe via
+        ON CONFLICT DO NOTHING) AND monotonically update the CURRENT quote — a stale / out-of-order / backward
+        / late packet (source_ts <= the stored current) NEVER overwrites the newer current row. In the SAME
+        transaction it marks the instrument processed (processed_count+1) and appends the optional QUOTE_OK
+        event, so a successful quote can never be counted (quotes/history) without also being counted as
+        processed. Returns {history_appended, current} where current is 'inserted'|'updated'|'stale-ignored'."""
+        now = utcnow_iso()
+        # canonicalize source_ts on write so the monotonic string comparison is correct for ANY caller.
+        record = {**record, "source_ts": _md_canon_ts(record.get("source_ts"))}
+        iid, provider, source_ts = record["instrument_id"], record["provider"], record["source_ts"]
+        result = {"history_appended": False, "current": "stale-ignored"}
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO md_quote_history ({self._MD_QUOTE_COLS}) "
+                       f"VALUES ({','.join(['?'] * len(self._MD_QUOTE_COL_LIST))}) "
+                       "ON CONFLICT (instrument_id,provider,source_ts) DO NOTHING",
+                       self._md_quote_values(record, now, run_id))
+            result["history_appended"] = cur.rowcount > 0
+            self._exec(cur, "SELECT source_ts FROM md_quotes_current WHERE instrument_id=? AND provider=?",
+                       (iid, provider))
+            existing = cur.fetchone()
+            values = self._md_quote_values(record, now, run_id)
+            if existing is None:
+                cols = self._MD_QUOTE_COLS + ",updated_at"
+                ph = ",".join(["?"] * (len(self._MD_QUOTE_COL_LIST) + 1))
+                self._exec(cur, f"INSERT INTO md_quotes_current ({cols}) VALUES ({ph})", (*values, now))
+                result["current"] = "inserted"
+            elif existing[0] is None or (source_ts is not None and str(source_ts) > str(existing[0])):
+                setcols = [c for c in self._MD_QUOTE_COL_LIST if c not in ("instrument_id", "provider", "created_at")]
+                set_clause = ",".join(f"{c}=?" for c in setcols) + ",updated_at=?"
+                setvals = tuple(v for c, v in zip(self._MD_QUOTE_COL_LIST, values, strict=True)
+                                if c not in ("instrument_id", "provider", "created_at")) + (now,)
+                self._exec(cur, f"UPDATE md_quotes_current SET {set_clause} WHERE instrument_id=? AND provider=?",
+                           (*setvals, iid, provider))
+                result["current"] = "updated"
+            if run_id is not None:
+                # processed_count + data counters in ONE tx with the write, so quotes/history can never be
+                # counted without the instrument also being counted as processed.
+                self._exec(cur, "UPDATE md_import_runs SET processed_count=processed_count+1, "
+                           "history_appended_count=history_appended_count+?, quotes_written_count=quotes_written_count+?, "
+                           "updated_at=? WHERE run_id=? AND status='RUNNING'",
+                           (1 if result["history_appended"] else 0,
+                            1 if result["current"] in ("inserted", "updated") else 0, now, run_id))
+                if event is not None:
+                    self._md_insert_event(cur, run_id, event, now)
+        return result
+
+    def md_get_current_quote(self, instrument_id: str, provider: str) -> MdQuoteRow | None:
+        r = self._one(f"SELECT {self._MD_QUOTE_COLS},updated_at FROM md_quotes_current "
+                      "WHERE instrument_id=? AND provider=?", (instrument_id, provider))
+        return self._md_quote_row(r) if r else None
+
+    def md_list_current_quotes(self, *, provider: str | None = None, data_status: str | None = None,
+                               limit: int = 500) -> list[MdQuoteRow]:
+        n = max(1, min(5000, int(limit)))
+        where, params = [], []
+        if provider:
+            where.append("provider=?"); params.append(provider)
+        if data_status:
+            where.append("data_status=?"); params.append(data_status)
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        rows = self._all(f"SELECT {self._MD_QUOTE_COLS},updated_at FROM md_quotes_current{clause} "
+                         "ORDER BY instrument_id ASC, provider ASC LIMIT ?", (*params, n))
+        return [self._md_quote_row(r) for r in rows]
+
+    def md_list_quote_history(self, instrument_id: str, provider: str, *, limit: int = 500) -> list[MdQuoteRow]:
+        n = max(1, min(10000, int(limit)))
+        rows = self._all(f"SELECT {self._MD_QUOTE_COLS} FROM md_quote_history "
+                         "WHERE instrument_id=? AND provider=? ORDER BY source_ts ASC LIMIT ?",
+                         (instrument_id, provider, n))
+        return [self._md_quote_row(r) for r in rows]
+
+    def md_append_bar(self, record: dict, *, run_id: str | None = None) -> bool:
+        """Append one immutable provider-neutral bar (duplicate-safe). A late/duplicate bar never overwrites."""
+        now = utcnow_iso()
+        vals = []
+        for col in self._MD_BAR_COL_LIST:
+            if col in self._MD_BAR_MONEY:
+                vals.append(self._m(record.get(col)))
+            elif col == "created_at":
+                vals.append(now)
+            elif col == "import_run_id":
+                vals.append(run_id if run_id is not None else record.get("import_run_id"))
+            elif col == "trade_count":
+                v = record.get(col)
+                vals.append(None if v is None else int(v))
+            elif col == "corporate_action_version":
+                vals.append(int(record.get(col, 0) or 0))
+            else:
+                vals.append(record.get(col))
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO md_bars ({self._MD_BAR_COLS}) "
+                       f"VALUES ({','.join(['?'] * len(self._MD_BAR_COL_LIST))}) "
+                       "ON CONFLICT (instrument_id,provider,interval,ts,adjustment_policy) DO NOTHING",
+                       tuple(vals))
+            appended = cur.rowcount > 0
+            if run_id is not None:
+                self._exec(cur, "UPDATE md_import_runs SET bars_written_count=bars_written_count+?, "
+                           "updated_at=? WHERE run_id=? AND status='RUNNING'",
+                           (1 if appended else 0, now, run_id))
+            return appended
+
+    def md_list_bars(self, instrument_id: str, provider: str, *, interval: str | None = None,
+                     limit: int = 5000) -> list[MdBarRow]:
+        n = max(1, min(60000, int(limit)))
+        where, params = ["instrument_id=?", "provider=?"], [instrument_id, provider]
+        if interval:
+            where.append("interval=?"); params.append(interval)
+        rows = self._all(f"SELECT {self._MD_BAR_COLS} FROM md_bars WHERE {' AND '.join(where)} "
+                         "ORDER BY ts ASC LIMIT ?", (*params, n))
+        out = []
+        for r in rows:
+            r = list(r)
+            for idx in self._MD_BAR_MONEY_IDX:
+                r[idx] = to_decimal(r[idx]) if r[idx] is not None else None
+            r[10] = int(r[10]) if r[10] is not None else None    # trade_count
+            r[20] = int(r[20]) if r[20] is not None else 0        # corporate_action_version
+            out.append(MdBarRow(*r))
+        return out
+
+    def md_append_corporate_action(self, record: dict, *, run_id: str | None = None) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO md_corporate_actions ({self._MD_CA_COLS}) VALUES ({','.join(['?'] * 12)}) "
+                       "ON CONFLICT (instrument_id,provider,action_type,effective_date,corporate_action_version) "
+                       "DO NOTHING",
+                       (record["instrument_id"], record["provider"], record["action_type"],
+                        record["effective_date"], int(record.get("corporate_action_version", 0) or 0),
+                        record.get("ex_date"), self._m(record.get("ratio")), self._m(record.get("cash_amount")),
+                        record.get("currency"), record["provenance_checksum"],
+                        run_id if run_id is not None else record.get("import_run_id"), now))
+            return cur.rowcount > 0
+
+    def md_list_corporate_actions(self, instrument_id: str, *, provider: str | None = None,
+                                  limit: int = 500) -> list[MdCorporateActionRow]:
+        n = max(1, min(5000, int(limit)))
+        where, params = ["instrument_id=?"], [instrument_id]
+        if provider:
+            where.append("provider=?"); params.append(provider)
+        rows = self._all(f"SELECT {self._MD_CA_COLS} FROM md_corporate_actions WHERE {' AND '.join(where)} "
+                         "ORDER BY effective_date ASC, corporate_action_version ASC LIMIT ?", (*params, n))
+        out = []
+        for r in rows:
+            r = list(r)
+            r[4] = int(r[4]) if r[4] is not None else 0
+            r[6] = to_decimal(r[6]) if r[6] is not None else None
+            r[7] = to_decimal(r[7]) if r[7] is not None else None
+            out.append(MdCorporateActionRow(*r))
+        return out
+
+    def md_upsert_provider_entitlement(self, record: dict) -> str:
+        """Record an instrument's provider mapping + explicit availability/entitlement/license. Monotonic on
+        last_checked_at so an out-of-order stale probe never regresses a newer one."""
+        now = utcnow_iso()
+        iid, provider, checked = record["instrument_id"], record["provider"], record["last_checked_at"]
+        vals = (iid, provider, record.get("provider_instrument_id"), record["entitlement_status"],
+                record["license"], 1 if record.get("realtime_available") else 0,
+                1 if record.get("available") else 0, record.get("capabilities_json", "{}"),
+                record.get("rate_limit_json", "{}"), record.get("reason"), checked)
+        with self.tx() as cur:
+            self._exec(cur, "SELECT last_checked_at FROM md_provider_entitlements "
+                       "WHERE instrument_id=? AND provider=?", (iid, provider))
+            existing = cur.fetchone()
+            if existing is None:
+                self._exec(cur, f"INSERT INTO md_provider_entitlements ({self._MD_ENT_COLS}) "
+                           "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (*vals, now))
+                return "inserted"
+            if existing[0] is None or str(checked) >= str(existing[0]):
+                self._exec(cur, "UPDATE md_provider_entitlements SET provider_instrument_id=?, "
+                           "entitlement_status=?, license=?, realtime_available=?, available=?, "
+                           "capabilities_json=?, rate_limit_json=?, reason=?, last_checked_at=?, updated_at=? "
+                           "WHERE instrument_id=? AND provider=?", (*vals[2:], now, iid, provider))
+                return "updated"
+            return "stale-ignored"
+
+    def md_get_provider_entitlement(self, instrument_id: str, provider: str) -> MdProviderEntitlementRow | None:
+        r = self._one(f"SELECT {self._MD_ENT_COLS} FROM md_provider_entitlements "
+                      "WHERE instrument_id=? AND provider=?", (instrument_id, provider))
+        if not r:
+            return None
+        r = list(r)
+        r[5], r[6] = bool(r[5]), bool(r[6])
+        return MdProviderEntitlementRow(*r)
+
+    def md_list_provider_entitlements(self, *, provider: str | None = None,
+                                      limit: int = 1000) -> list[MdProviderEntitlementRow]:
+        n = max(1, min(10000, int(limit)))
+        clause, params = "", []
+        if provider:
+            clause, params = " WHERE provider=?", [provider]
+        rows = self._all(f"SELECT {self._MD_ENT_COLS} FROM md_provider_entitlements{clause} "
+                         "ORDER BY instrument_id ASC, provider ASC LIMIT ?", (*params, n))
+        out = []
+        for r in rows:
+            r = list(r)
+            r[5], r[6] = bool(r[5]), bool(r[6])
+            out.append(MdProviderEntitlementRow(*r))
+        return out
+
+    # ---- market-data import runs (resumable, observable, per-provider/market/instrument isolated) ----
+    def md_select_verified_instruments(self, *, exchange: str | None = None,
+                                       limit: int = 1000) -> list[InstrumentRow]:
+        """Fail-closed selection: ONLY instruments whose WP3 qualification_status is exactly VERIFIED."""
+        n = max(1, min(10000, int(limit)))
+        where, params = ["qualification_status='VERIFIED'"], []
+        if exchange:
+            where.append("exchange=?"); params.append(exchange)
+        rows = self._all(f"SELECT {self._IM_INSTR_COLS} FROM instruments WHERE {' AND '.join(where)} "
+                         "ORDER BY exchange ASC, instrument_id ASC LIMIT ?", (*params, n))
+        return [self._im_row(r) for r in rows]
+
+    def _md_insert_event(self, cur, run_id: str, event: dict, now: str) -> None:
+        self._exec(cur, f"INSERT INTO md_import_events ({self._MD_EVENT_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (event["id"], run_id, event.get("seq"), event.get("ts", now), event.get("provider"),
+                    event.get("market"), event.get("instrument_id"), event["event_type"],
+                    event.get("severity"), event.get("status"), event.get("reason"),
+                    json.dumps(event.get("details") or {}), now))
+
+    def md_create_run(self, *, run_id: str, request_checksum: str, run_label: str, provider: str,
+                      kind: str) -> None:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO md_import_runs ({self._MD_RUN_COLS}) VALUES ({','.join(['?'] * 22)})",
+                       (run_id, request_checksum, run_label, provider, kind, "PLANNED", json.dumps([]),
+                        json.dumps([]), json.dumps([]), 0, 0, 0, 0, 0, 0, 0, None, None, now, None, None, now))
+
+    def md_advance_run_status(self, run_id: str, expected_from: str, to: str) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            if to == "RUNNING":
+                self._exec(cur, "UPDATE md_import_runs SET status=?, started_at=?, updated_at=? "
+                           "WHERE run_id=? AND status=?", (to, now, now, run_id, expected_from))
+            else:
+                self._exec(cur, "UPDATE md_import_runs SET status=?, updated_at=? WHERE run_id=? AND status=?",
+                           (to, now, run_id, expected_from))
+            return cur.rowcount > 0
+
+    def md_set_planned_markets(self, run_id: str, markets) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "UPDATE md_import_runs SET planned_markets_json=?, updated_at=? "
+                       "WHERE run_id=? AND status='RUNNING'", (json.dumps(list(markets)), now, run_id))
+            return cur.rowcount > 0
+
+    def md_max_event_seq(self, run_id: str) -> int:
+        r = self._one("SELECT MAX(seq) FROM md_import_events WHERE run_id=?", (run_id,))
+        return int(r[0]) if r and r[0] is not None else 0
+
+    def md_append_run_event(self, run_id: str, *, event: dict) -> None:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._md_insert_event(cur, run_id, event, now)
+
+    def md_bump_counter(self, run_id: str, counter: str | None = None, *, event: dict | None = None) -> bool:
+        """Mark ONE instrument processed (processed_count+1) and optionally bump one outcome counter
+        (no_data_count / skipped_count / error_count), guarded on RUNNING, with an optional event, in one tx.
+        Called exactly once per instrument so processed_count counts instruments, not rows. `counter` is from a
+        fixed allow-list (never caller-interpolated blindly)."""
+        allowed = {"no_data_count", "skipped_count", "error_count"}
+        if counter is not None and counter not in allowed:
+            raise ValueError(f"unknown md counter {counter!r}")
+        now = utcnow_iso()
+        extra = f", {counter}={counter}+1" if counter else ""
+        with self.tx() as cur:
+            self._exec(cur, f"UPDATE md_import_runs SET processed_count=processed_count+1{extra}, "
+                       "updated_at=? WHERE run_id=? AND status='RUNNING'", (now, run_id))
+            ok = cur.rowcount > 0
+            if event is not None and ok:
+                self._md_insert_event(cur, run_id, event, now)
+            return ok
+
+    def md_record_market(self, run_id: str, *, market: str, market_status: str,
+                         event: dict | None = None) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "SELECT completed_markets_json,failed_markets_json FROM md_import_runs "
+                       "WHERE run_id=? AND status='RUNNING'", (run_id,))
+            row = cur.fetchone()
+            if row is None:
+                return False
+            completed = list(json.loads(row[0]))
+            failed = list(json.loads(row[1]))
+            if market_status == "COMPLETED":
+                if market not in completed:
+                    completed.append(market)
+                failed = [x for x in failed if x != market]
+            elif market_status == "FAILED":
+                if market not in failed:
+                    failed.append(market)
+                completed = [x for x in completed if x != market]
+            self._exec(cur, "UPDATE md_import_runs SET completed_markets_json=?, failed_markets_json=?, "
+                       "updated_at=? WHERE run_id=? AND status='RUNNING'",
+                       (json.dumps(completed), json.dumps(failed), now, run_id))
+            if cur.rowcount <= 0:
+                return False
+            if event is not None:
+                self._md_insert_event(cur, run_id, event, now)
+            return True
+
+    def md_finalize_run(self, run_id: str, *, expected_from: str = "RUNNING", status: str,
+                        failure_code: str | None = None, failure_reason: str | None = None) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "UPDATE md_import_runs SET status=?, failure_code=?, failure_reason=?, "
+                       "ended_at=?, updated_at=? WHERE run_id=? AND status=?",
+                       (status, failure_code, failure_reason, now, now, run_id, expected_from))
+            return cur.rowcount > 0
+
+    def md_get_run(self, run_id: str) -> MdImportRunRow | None:
+        r = self._one(f"SELECT {self._MD_RUN_COLS} FROM md_import_runs WHERE run_id=?", (run_id,))
+        return MdImportRunRow(*r) if r else None
+
+    def md_list_runs(self, *, status: str | None = None, provider: str | None = None,
+                     limit: int = 50, offset: int = 0) -> list[MdImportRunRow]:
+        n, off = max(1, min(200, int(limit))), max(0, int(offset))
+        where, params = [], []
+        if status:
+            where.append("status=?"); params.append(status)
+        if provider:
+            where.append("provider=?"); params.append(provider)
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        rows = self._all(f"SELECT {self._MD_RUN_COLS} FROM md_import_runs{clause} "
+                         "ORDER BY created_at DESC, run_id DESC LIMIT ? OFFSET ?", (*params, n, off))
+        return [MdImportRunRow(*r) for r in rows]
+
+    def md_list_run_events(self, run_id: str, *, limit: int = 1000, offset: int = 0) -> list[MdImportEventRow]:
+        n, off = max(1, min(10000, int(limit))), max(0, int(offset))
+        rows = self._all(f"SELECT {self._MD_EVENT_COLS} FROM md_import_events WHERE run_id=? "
+                         "ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?", (run_id, n, off))
+        return [MdImportEventRow(*r) for r in rows]
+
+    def md_reclaim_stale_running(self, cutoff_iso: str, *, failure_code: str, failure_reason: str,
+                                 _probe=None) -> list[str]:
+        """Atomically reclaim crashed/stale RUNNING market-data runs as FAILED, re-checking staleness at the
+        guarded flip so a live heartbeating run is not reclaimed. Immutable RECLAIM event in the same tx."""
+        now = utcnow_iso()
+        candidates = [r[0] for r in self._all(
+            "SELECT run_id FROM md_import_runs WHERE status='RUNNING' AND updated_at < ?", (cutoff_iso,))]
+        reclaimed: list[str] = []
+        for run_id in candidates:
+            if _probe is not None:
+                _probe(run_id)
+            try:
+                with self.tx() as cur:
+                    self._exec(cur, f"INSERT INTO md_import_events ({self._MD_EVENT_COLS}) "
+                               "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                               (f"{run_id}-reclaim", run_id, None, now, None, None, None, "RECLAIM", "ERROR",
+                                None, failure_reason, json.dumps({"failure_code": failure_code}), now))
+                    self._exec(cur, "UPDATE md_import_runs SET status='FAILED', failure_code=?, "
+                               "failure_reason=?, ended_at=?, updated_at=? WHERE run_id=? AND "
+                               "status='RUNNING' AND updated_at < ?",
+                               (failure_code, failure_reason, now, now, run_id, cutoff_iso))
                     if cur.rowcount <= 0:
                         raise _ReclaimSkipped()
                 reclaimed.append(run_id)
