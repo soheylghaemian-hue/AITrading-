@@ -1217,6 +1217,53 @@ class NewsImportEventRow:
     created_at: str
 
 
+@dataclass(slots=True)
+class MacroEventRow:
+    """§ WP6 — the immutable macro/geopolitical overlay for one WP5 news message (keyed by message_id)."""
+
+    message_id: str
+    macro_type: str
+    source_class: str
+    geo_scope: str
+    severity: str
+    policy_area: str | None
+    affected_regions_json: str
+    affected_countries_json: str
+    affected_blocs_json: str
+    affected_asset_classes_json: str
+    link_status: str
+    macro_cluster_id: str | None
+    macro_checksum: str
+    correction_of_id: str | None
+    retraction_of_id: str | None
+    provenance_json: str
+    created_at: str
+
+
+@dataclass(slots=True)
+class MacroSourceRow:
+    """§ WP6 — a macro/geopolitical/regulatory channel in the mutable registry."""
+
+    source_id: str
+    name: str
+    source_class: str
+    regions_json: str
+    languages_json: str
+    mandate: str
+    update_mode: str
+    rate_limit_json: str
+    license_status: str
+    storage_allowed: bool
+    redistribution_allowed: bool
+    commercial_use_allowed: bool
+    attribution_required: bool
+    available: bool
+    last_success_at: str | None
+    last_error: str | None
+    created_at: str
+    updated_at: str
+
+
 # --------------------------------------------------------------------------- shared SQL impl
 class SqlStore(Store):
     """DB-agnostic SQL implementation. Subclasses supply a DB-API connection, the parameter
@@ -3756,6 +3803,160 @@ class SqlStore(Store):
         c = self._one("SELECT COUNT(*) FROM news_messages WHERE correction_of_id IS NOT NULL")
         r = self._one("SELECT COUNT(*) FROM news_messages WHERE retraction_of_id IS NOT NULL")
         return {"corrections": int(c[0]) if c else 0, "retractions": int(r[0]) if r else 0}
+
+    # === § WP6 — macro / geopolitical event overlay + registry (read-only research data) =================
+    _MX_EVENT_COL_LIST = (
+        "message_id", "macro_type", "source_class", "geo_scope", "severity", "policy_area",
+        "affected_regions_json", "affected_countries_json", "affected_blocs_json",
+        "affected_asset_classes_json", "link_status", "macro_cluster_id", "macro_checksum",
+        "correction_of_id", "retraction_of_id", "provenance_json", "created_at")
+    _MX_EVENT_COLS = ",".join(_MX_EVENT_COL_LIST)
+    _MX_SRC_COL_LIST = (
+        "source_id", "name", "source_class", "regions_json", "languages_json", "mandate", "update_mode",
+        "rate_limit_json", "license_status", "storage_allowed", "redistribution_allowed",
+        "commercial_use_allowed", "attribution_required", "available", "last_success_at", "last_error",
+        "created_at", "updated_at")
+    _MX_SRC_COLS = ",".join(_MX_SRC_COL_LIST)
+
+    # -- macro source registry (mutable) --
+    def mx_upsert_macro_source(self, record: dict) -> str:
+        """Idempotent upsert of a macro source (registry). Availability / license / mandate are updated; the
+        source is fail-closed (unavailable, unlicensed) until an entitled channel attaches."""
+        now = utcnow_iso()
+        cols = self._MX_SRC_COL_LIST
+        vals = tuple(record.get(c) for c in cols[:-2]) + (now, now)
+        upd = ",".join(f"{c}=excluded.{c}" for c in cols if c not in ("source_id", "created_at"))
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO macro_sources ({self._MX_SRC_COLS}) "
+                       f"VALUES ({','.join(['?'] * len(cols))}) "
+                       f"ON CONFLICT (source_id) DO UPDATE SET {upd}", vals)
+        return record["source_id"]
+
+    def mx_mark_macro_source_result(self, source_id: str, *, available: bool, success: bool,
+                                    last_error: str | None = None) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            if success:
+                self._exec(cur, "UPDATE macro_sources SET available=?, last_success_at=?, last_error=?, "
+                           "updated_at=? WHERE source_id=?", (available, now, None, now, source_id))
+            else:
+                self._exec(cur, "UPDATE macro_sources SET available=?, last_error=?, updated_at=? "
+                           "WHERE source_id=?", (available, last_error, now, source_id))
+            return cur.rowcount > 0
+
+    def mx_get_macro_source(self, source_id: str) -> MacroSourceRow | None:
+        r = self._one(f"SELECT {self._MX_SRC_COLS} FROM macro_sources WHERE source_id=?", (source_id,))
+        return self._mx_source_row(r) if r else None
+
+    def mx_list_macro_sources(self) -> list[MacroSourceRow]:
+        rows = self._all(f"SELECT {self._MX_SRC_COLS} FROM macro_sources ORDER BY source_id ASC")
+        return [self._mx_source_row(r) for r in rows]
+
+    @staticmethod
+    def _mx_source_row(r) -> MacroSourceRow:
+        return MacroSourceRow(*r[:9], bool(r[9]), bool(r[10]), bool(r[11]), bool(r[12]), bool(r[13]),
+                              *r[14:])
+
+    # -- macro event overlay (immutable) --
+    def mx_insert_macro_event(self, message_record: dict, macro_record: dict, *, mappings=(),
+                              run_id: str | None = None, run_event: dict | None = None,
+                              duplicate: bool = False, ambiguous: bool = False, unmapped: bool = False,
+                              is_correction: bool = False, is_retraction: bool = False) -> str:
+        """Insert one IMMUTABLE newsroom message + its macro OVERLAY + fail-closed instrument mappings AND
+        atomically advance the run counters + run event, in ONE transaction. Idempotent per message_id (ON
+        CONFLICT DO NOTHING on BOTH the message and the overlay) — a re-ingest is a no-op and neither the
+        original nor its overlay is overwritten. The WP6 unit of work is the macro EVENT (the overlay): the
+        overlay is inserted UNCONDITIONALLY (not gated on the message being new), so a message that already
+        exists in the SHARED news_messages namespace still gets its required overlay backfilled instead of
+        silently dropped. Message-scoped writes (mappings + correction links) stay gated on the message being
+        newly inserted. `fetched_count` is bumped every call; the outcome counters + run event apply when the
+        OVERLAY is newly inserted. Returns 'inserted' (overlay newly created) or 'exists'."""
+        now = utcnow_iso()
+        mid = message_record["message_id"]
+        msg_values = tuple(message_record.get(c) for c in self._NX_MSG_COL_LIST[:-1]) + (now,)
+        macro_values = tuple(macro_record.get(c) for c in self._MX_EVENT_COL_LIST[:-1]) + (now,)
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO news_messages ({self._NX_MSG_COLS}) "
+                       f"VALUES ({','.join(['?'] * len(self._NX_MSG_COL_LIST))}) "
+                       "ON CONFLICT (message_id) DO NOTHING", msg_values)
+            msg_inserted = cur.rowcount > 0
+            if msg_inserted:
+                # mappings + correction links belong to the MESSAGE — only when it is newly inserted
+                for instrument_id, status, *rest in mappings:
+                    conf = rest[0] if rest else None
+                    method = rest[1] if len(rest) > 1 else None
+                    self._exec(cur, "INSERT INTO news_message_instruments "
+                               "(message_id,instrument_id,mapping_status,confidence,method,created_at) "
+                               "VALUES (?,?,?,?,?,?) ON CONFLICT (message_id,instrument_id) DO NOTHING",
+                               (mid, instrument_id, status, conf, method, now))
+                self._nx_link_corrections(cur, mid, message_record, now)
+            # the macro overlay is a required 1:1 child unique to WP6 → insert it UNCONDITIONALLY in the same
+            # tx (idempotent): a no-op when the overlay already exists, a backfill when only the message did.
+            self._exec(cur, f"INSERT INTO macro_events ({self._MX_EVENT_COLS}) "
+                       f"VALUES ({','.join(['?'] * len(self._MX_EVENT_COL_LIST))}) "
+                       "ON CONFLICT (message_id) DO NOTHING", macro_values)
+            overlay_inserted = cur.rowcount > 0
+            if run_id is not None:
+                cols = ["fetched_count=fetched_count+1"]
+                if overlay_inserted:
+                    cols.append("stored_count=stored_count+1")
+                    if duplicate:
+                        cols.append("duplicate_count=duplicate_count+1")
+                    if ambiguous:
+                        cols.append("ambiguous_count=ambiguous_count+1")
+                    if unmapped:
+                        cols.append("unmapped_count=unmapped_count+1")
+                    if is_correction:
+                        cols.append("correction_count=correction_count+1")
+                    if is_retraction:
+                        cols.append("retraction_count=retraction_count+1")
+                self._exec(cur, f"UPDATE news_import_runs SET {','.join(cols)}, updated_at=? "
+                           "WHERE run_id=? AND status='RUNNING'", (now, run_id))
+                run_is_live = cur.rowcount > 0   # a reclaimed/terminal run gets no event/counter drift
+                if overlay_inserted and run_event is not None and run_is_live:
+                    self._nx_insert_event(cur, run_id, run_event, now)
+            return "inserted" if overlay_inserted else "exists"
+
+    def mx_get_macro_event(self, message_id: str) -> MacroEventRow | None:
+        r = self._one(f"SELECT {self._MX_EVENT_COLS} FROM macro_events WHERE message_id=?", (message_id,))
+        return MacroEventRow(*r) if r else None
+
+    def mx_list_macro_events(self, *, macro_type: str | None = None, source_class: str | None = None,
+                             geo_scope: str | None = None, limit: int = 100,
+                             offset: int = 0) -> list[MacroEventRow]:
+        n, off = max(1, min(1000, int(limit))), max(0, int(offset))
+        clauses, params = [], []
+        for col, val in (("macro_type", macro_type), ("source_class", source_class), ("geo_scope", geo_scope)):
+            if val:
+                clauses.append(f"{col}=?")
+                params.append(val)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = self._all(f"SELECT {self._MX_EVENT_COLS} FROM macro_events{where} "
+                         "ORDER BY created_at DESC, message_id DESC LIMIT ? OFFSET ?", (*params, n, off))
+        return [MacroEventRow(*r) for r in rows]
+
+    def mx_list_events_in_cluster(self, macro_cluster_id: str, *, limit: int = 200) -> list[MacroEventRow]:
+        n = max(1, min(1000, int(limit)))
+        rows = self._all(f"SELECT {self._MX_EVENT_COLS} FROM macro_events WHERE macro_cluster_id=? "
+                         "ORDER BY created_at ASC, message_id ASC LIMIT ?", (macro_cluster_id, n))
+        return [MacroEventRow(*r) for r in rows]
+
+    def mx_count_macro_events(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM macro_events")
+        return int(r[0]) if r else 0
+
+    def mx_macro_type_breakdown(self) -> dict:
+        rows = self._all("SELECT macro_type, COUNT(*) FROM macro_events GROUP BY macro_type")
+        return {str(t): int(c) for t, c in sorted(rows)}
+
+    def mx_link_status_breakdown(self) -> dict:
+        rows = self._all("SELECT link_status, COUNT(*) FROM macro_events GROUP BY link_status")
+        return {str(s): int(c) for s, c in sorted(rows)}
+
+    def mx_macro_cluster_count(self) -> int:
+        r = self._one("SELECT COUNT(DISTINCT macro_cluster_id) FROM macro_events "
+                      "WHERE macro_cluster_id IS NOT NULL")
+        return int(r[0]) if r else 0
 
     # -- durable PAPER-canary lifecycle + ledger -------------------------
     _PAPER_RUN_COLS = (

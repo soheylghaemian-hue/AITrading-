@@ -1292,6 +1292,87 @@ def _migration_027(dialect: str) -> list[str]:
     return tables + indexes + triggers
 
 
+# --------------------------------------------------------------------------- § WP6 macro / geopolitical events
+# `macro_events` is an INSERT-ONLY overlay on the immutable WP5 `news_messages`: one macro row per newsroom
+# message, never updated or deleted (corrections/retractions are NEW newsroom records, mirrored here). The
+# `macro_sources` registry is intentionally mutable (availability / last-success / last-error change).
+_MACRO_IMMUTABLE_TABLES = ("macro_events",)
+
+
+def _macro_triggers_sqlite() -> list[str]:
+    out: list[str] = []
+    for tbl in _MACRO_IMMUTABLE_TABLES:
+        out += [
+            f"""CREATE TRIGGER IF NOT EXISTS trg_{tbl}_no_update BEFORE UPDATE ON {tbl}
+                BEGIN SELECT RAISE(ABORT, '{tbl}: rows are immutable (insert-only)'); END""",
+            f"""CREATE TRIGGER IF NOT EXISTS trg_{tbl}_no_delete BEFORE DELETE ON {tbl}
+                BEGIN SELECT RAISE(ABORT, '{tbl}: rows cannot be deleted'); END""",
+        ]
+    return out
+
+
+def _macro_triggers_postgres() -> list[str]:
+    out = [
+        """CREATE OR REPLACE FUNCTION atp_macro_block_mutate() RETURNS trigger AS $$
+           BEGIN RAISE EXCEPTION '%%: rows are immutable (insert-only)', TG_TABLE_NAME; END; $$ LANGUAGE plpgsql""",
+    ]
+    for tbl in _MACRO_IMMUTABLE_TABLES:
+        out += [
+            f"DROP TRIGGER IF EXISTS trg_{tbl}_no_upd ON {tbl}",
+            f"CREATE TRIGGER trg_{tbl}_no_upd BEFORE UPDATE ON {tbl} FOR EACH ROW EXECUTE FUNCTION atp_macro_block_mutate()",
+            f"DROP TRIGGER IF EXISTS trg_{tbl}_no_del ON {tbl}",
+            f"CREATE TRIGGER trg_{tbl}_no_del BEFORE DELETE ON {tbl} FOR EACH ROW EXECUTE FUNCTION atp_macro_block_mutate()",
+        ]
+    return out
+
+
+def _migration_029(dialect: str) -> list[str]:
+    """§ WP6 — worldwide macro / geopolitical / regulatory event intake (RESEARCH DATA ONLY).
+
+    Purely additive: two new tables, no existing table touched. `macro_events` is a per-message OVERLAY on the
+    immutable WP5 `news_messages` (FK message_id) that adds macro-specific structure — event sub-type, source
+    class, geographic scope, severity (research metadata, not a fact), affected regions/countries/blocs/asset
+    CLASSES, a fail-closed instrument link-status, and a macro-situation cluster id. It is INSERT-ONLY and
+    DB-immutable; corrections/retractions are NEW newsroom records (mirrored here). Instrument linkage reuses
+    the fail-closed WP5 `news_message_instruments`. `macro_sources` records each macro channel's explicit
+    mandate + license + usage rights + availability (fail-closed until an entitled source attaches). The
+    import lifecycle REUSES the WP5 `news_import_runs`/`news_import_events` (a macro event is a newsroom
+    record). NO trading, NO orders/execution, NO subscription purchase, NO HTTP write path. Numbered 29 (not
+    28) so it never collides with WP4's migration 28 on the sibling stack; the framework applies migrations by
+    set-difference, so the 28 gap on this branch is intentional and harmless.
+    """
+    t = _types(dialect)
+    ts, txt, b = t["TS"], t["TXT"], t["BOOL"]      # macro tables use no INT columns
+    tables = [
+        f"""CREATE TABLE IF NOT EXISTS macro_events (
+            message_id {txt} PRIMARY KEY REFERENCES news_messages(message_id),
+            macro_type {txt} NOT NULL, source_class {txt} NOT NULL, geo_scope {txt} NOT NULL,
+            severity {txt} NOT NULL, policy_area {txt},
+            affected_regions_json {txt} NOT NULL DEFAULT '[]', affected_countries_json {txt} NOT NULL DEFAULT '[]',
+            affected_blocs_json {txt} NOT NULL DEFAULT '[]', affected_asset_classes_json {txt} NOT NULL DEFAULT '[]',
+            link_status {txt} NOT NULL, macro_cluster_id {txt}, macro_checksum {txt} NOT NULL,
+            correction_of_id {txt}, retraction_of_id {txt}, provenance_json {txt} NOT NULL DEFAULT '{{}}',
+            created_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS macro_sources (
+            source_id {txt} PRIMARY KEY, name {txt} NOT NULL, source_class {txt} NOT NULL,
+            regions_json {txt} NOT NULL DEFAULT '[]', languages_json {txt} NOT NULL DEFAULT '[]',
+            mandate {txt} NOT NULL, update_mode {txt} NOT NULL, rate_limit_json {txt} NOT NULL DEFAULT '{{}}',
+            license_status {txt} NOT NULL, storage_allowed {b} NOT NULL DEFAULT 0,
+            redistribution_allowed {b} NOT NULL DEFAULT 0, commercial_use_allowed {b} NOT NULL DEFAULT 0,
+            attribution_required {b} NOT NULL DEFAULT 1, available {b} NOT NULL DEFAULT 0,
+            last_success_at {ts}, last_error {txt}, created_at {ts} NOT NULL, updated_at {ts} NOT NULL)""",
+    ]
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS ix_macro_events_cluster ON macro_events(macro_cluster_id)",
+        "CREATE INDEX IF NOT EXISTS ix_macro_events_type ON macro_events(macro_type, geo_scope)",
+        "CREATE INDEX IF NOT EXISTS ix_macro_events_checksum ON macro_events(macro_checksum)",
+        "CREATE INDEX IF NOT EXISTS ix_macro_events_link ON macro_events(link_status)",
+        "CREATE INDEX IF NOT EXISTS ix_macro_events_source_class ON macro_events(source_class)",
+    ]
+    triggers = _macro_triggers_postgres() if dialect == "postgres" else _macro_triggers_sqlite()
+    return tables + indexes + triggers
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -1321,6 +1402,9 @@ MIGRATIONS = [
     (25, "paper_canary_signed_account_ledger", _migration_025),
     (26, "global_instrument_model", _migration_026),
     (27, "global_news_official_filings", _migration_027),
+    # NOTE: 28 is intentionally skipped on this stack — it belongs to WP4 on the sibling stack. The migrator
+    # applies by set-difference (no contiguity requirement), so the gap is harmless and avoids a collision.
+    (29, "macro_geopolitical_events", _migration_029),
 ]
 
 

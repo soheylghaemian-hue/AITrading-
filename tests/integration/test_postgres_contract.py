@@ -133,8 +133,11 @@ def _prepare_running_paper_runtime(store):
 
 # ---------------------------------------------------------------- migrations + NUMERIC precision
 def test_migrations_applied(store):
+    from atp.store import schema as store_schema
     versions = sorted(r[0] for r in store._all("SELECT version FROM schema_migrations"))
-    assert versions == list(range(1, 28))
+    # the applied set must equal exactly the DECLARED migrations (robust to the intentional 28 gap on this
+    # stack, where WP6 is 29 and WP4's 28 lives on the sibling stack)
+    assert versions == sorted(v for v, *_ in store_schema.MIGRATIONS)
 
 
 def test_numeric_types_in_information_schema(store):
