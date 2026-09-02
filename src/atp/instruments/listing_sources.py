@@ -21,6 +21,18 @@ class ListingCandidate:
     description: str
     lot_size: float = 1.0
     source: str = ""
+    # --- optional richer identity carried by richer official directories (e.g. FIRDS/SEC) -------------
+    # All default None = NO DATA. A plain US listing file leaves these unset (unchanged behaviour); a
+    # FIRDS record fills ISIN + venue MIC + the derivative-identity fields. These are never fabricated —
+    # a parser sets a value only when it is present in the source record.
+    isin: str | None = None
+    figi: str | None = None
+    primary_exchange: str | None = None
+    expiry: str | None = None
+    strike: str | None = None
+    option_right: str | None = None
+    underlying_symbol: str | None = None
+    multiplier: str | None = None
 
 
 _US_EXCHANGES = {
@@ -86,8 +98,14 @@ def parse_other_us_listings(handle: TextIO) -> list[ListingCandidate]:
 
 
 def deduplicate_listings(rows: list[ListingCandidate]) -> list[ListingCandidate]:
-    unique = {(row.symbol, row.exchange, row.sec_type, row.currency): row for row in rows}
-    return sorted(unique.values(), key=lambda row: (row.exchange, row.symbol, row.sec_type))
+    # The key includes the derivative-identity fields (expiry/strike/right) so two distinct contracts that
+    # share (symbol, exchange, sec_type, currency) — e.g. two option strikes on one root — are never
+    # collapsed. For cash instruments these are all None ("") so the key/order is unchanged.
+    def _k(row: ListingCandidate):
+        return (row.symbol, row.exchange, row.sec_type, row.currency,
+                row.expiry or "", row.strike or "", row.option_right or "")
+    unique = {_k(row): row for row in rows}
+    return sorted(unique.values(), key=_k)
 
 
 def _number(value: str | None, fallback: float) -> float:
