@@ -104,25 +104,34 @@ def record_from_listing(candidate: ListingCandidate, plan: MarketPlan) -> Instru
     asset_class = sec_type_to_asset_class(candidate.sec_type)
     if asset_class is None:
         return None
-    multiplier = "1" if asset_class in _UNIT_MULTIPLIER else None  # definitional for cash instruments only
+    # A genuine multiplier from the source wins; otherwise it is definitionally "1" for cash instruments
+    # only, and left NULL (genuinely unknown) for derivatives at listing stage.
+    multiplier = canon_decimal_text(candidate.multiplier) if candidate.multiplier else (
+        "1" if asset_class in _UNIT_MULTIPLIER else None)
     currency = (candidate.currency or plan.default_currency).strip() or plan.default_currency
     return InstrumentRecord(
         symbol=candidate.symbol,
         asset_class=asset_class,
         exchange=candidate.exchange,
         trading_currency=currency,
+        isin=(candidate.isin or "").strip() or None,           # NO DATA unless the source carries it
+        figi=(candidate.figi or "").strip() or None,
         local_symbol=candidate.symbol,
         description=(candidate.description or "").strip() or None,
         region=plan.region,
         country=plan.country,
-        primary_exchange=candidate.exchange,
+        primary_exchange=(candidate.primary_exchange or "").strip() or candidate.exchange,
         settlement_currency=None,          # not present in a listing file — NO DATA
         timezone=plan.timezone,
         trading_calendar=plan.calendar,
         calendar_version=plan.calendar_version or None,
         sub_class=_SUBCLASS.get(candidate.sec_type.strip().upper()),
+        underlying_symbol=(candidate.underlying_symbol or "").strip() or None,
         multiplier=multiplier,
         lot_size=canon_decimal_text(candidate.lot_size) if candidate.lot_size else None,
+        expiry=(candidate.expiry or "").strip() or None,       # derivative identity → part of natural key
+        strike=canon_decimal_text(candidate.strike) if candidate.strike is not None else None,
+        option_right=(candidate.option_right or "").strip() or None,
         source=(candidate.source or "").strip() or None,
         source_status=SourceStatus.DISCOVERED.value,
         verification_status=VerificationStatus.UNVERIFIED.value,   # discovered, not broker-qualified
