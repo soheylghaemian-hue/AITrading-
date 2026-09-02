@@ -74,7 +74,7 @@ def _run(store, prov, label="d", **cfg):
 def test_migration_27_applied_and_legacy_untouched():
     store = _store()
     versions = {r[0] for r in store._all("SELECT version FROM schema_migrations")}
-    assert {26, 27} <= versions      # WP6 stacks migration 29 on top on its branch, so 27 is not the max there
+    assert {26, 27} <= versions      # WP8-integrated: news is migration 29; 27 (WP2) is not the max
     for tbl in ("news_messages", "news_message_instruments", "news_message_events", "news_sources",
                 "news_import_runs", "news_import_events"):
         assert store._all(f"SELECT COUNT(*) FROM {tbl}")[0][0] >= 0

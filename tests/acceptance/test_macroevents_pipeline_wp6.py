@@ -83,10 +83,10 @@ def _run(store, prov, label="d", **cfg):
 
 
 # --------------------------------------------------------------------- migration
-def test_migration_29_applied_gap_at_28_and_legacy_untouched():
+def test_migration_30_applied_and_legacy_untouched():
     store = _store()
     versions = {r[0] for r in store._all("SELECT version FROM schema_migrations")}
-    assert {26, 27, 29} <= versions and 28 not in versions      # intentional gap; 28 is on the sibling stack
+    assert {26, 27, 28, 29, 30} <= versions      # WP8-integrated: macro is migration 30 (28 is WP4's, no gap)
     for tbl in ("macro_events", "macro_sources"):
         assert store._all(f"SELECT COUNT(*) FROM {tbl}")[0][0] >= 0
     store._one("SELECT message_id FROM news_messages LIMIT 0")   # WP5 newsroom tables still present

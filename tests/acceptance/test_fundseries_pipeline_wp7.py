@@ -82,7 +82,7 @@ def _run(store, prov, label="d", **cfg):
 def test_migration_30_applied_and_legacy_untouched():
     store = _store()
     versions = {r[0] for r in store._all("SELECT version FROM schema_migrations")}
-    assert {26, 27, 29, 30} <= versions
+    assert {26, 27, 28, 29, 30, 31} <= versions      # WP8-integrated: fundamentals is migration 31
     for tbl in ("fundamental_sources", "fundamental_series", "fundamental_series_instruments",
                 "fundamental_observations"):
         assert store._all(f"SELECT COUNT(*) FROM {tbl}")[0][0] >= 0

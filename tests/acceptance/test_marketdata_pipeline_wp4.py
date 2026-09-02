@@ -78,7 +78,7 @@ def _noop(_):
 def test_migration_28_applied_and_health_untouched():
     store = _store()
     versions = {r[0] for r in store._all("SELECT version FROM schema_migrations")}
-    assert {27, 28} <= versions and max(versions) == 28
+    assert {26, 27, 28} <= versions      # WP8-integrated: market-data is migration 28; news/macro/fund follow (29-31)
     for tbl in ("md_quotes_current", "md_quote_history", "md_bars", "md_corporate_actions",
                 "md_provider_entitlements", "md_import_runs", "md_import_events"):
         assert store._all(f"SELECT COUNT(*) FROM {tbl}")[0][0] == 0
