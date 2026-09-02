@@ -1086,6 +1086,137 @@ class InstrumentImportEventRow:
     created_at: str
 
 
+# --------------------------------------------------------------------------- § WP5 news / filings rows
+@dataclass(slots=True)
+class NewsMessageRow:
+    message_id: str
+    provider: str
+    provider_id: str
+    source_id: str
+    source_type: str
+    primacy: str
+    original_title: str
+    original_body: str | None
+    original_language: str | None
+    translated_title: str | None
+    translated_summary: str | None
+    translation_status: str
+    translation_source: str | None
+    url: str | None
+    published_at: str | None
+    received_at: str | None
+    correction_at: str | None
+    event_category: str
+    relevance: str
+    impact_estimate: str
+    uncertainty: str
+    source_confidence: str
+    license_status: str
+    storage_status: str
+    time_status: str
+    content_checksum: str
+    cluster_id: str | None
+    correction_of_id: str | None
+    retraction_of_id: str | None
+    supersedes_id: str | None
+    duplicate_of_id: str | None
+    affected_countries_json: str
+    affected_regions_json: str
+    affected_industries_json: str
+    affected_companies_json: str
+    affected_exchanges_json: str
+    provenance_json: str
+    created_at: str
+
+
+@dataclass(slots=True)
+class NewsMessageInstrumentRow:
+    message_id: str
+    instrument_id: str
+    mapping_status: str
+    confidence: str | None
+    method: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
+class NewsMessageEventRow:
+    id: str
+    message_id: str
+    seq: int | None
+    ts: str | None
+    event_type: str
+    severity: str | None
+    related_message_id: str | None
+    details_json: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
+class NewsSourceRow:
+    source_id: str
+    name: str
+    source_type: str
+    primacy: str
+    regions_json: str
+    languages_json: str
+    update_mode: str
+    rate_limit_json: str
+    license_status: str
+    storage_allowed: bool
+    redistribution_allowed: bool
+    commercial_use_allowed: bool
+    attribution_required: bool
+    available: bool
+    last_success_at: str | None
+    last_error: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(slots=True)
+class NewsImportRunRow:
+    run_id: str
+    request_checksum: str
+    run_label: str
+    provider: str
+    source_id: str
+    cursor: str | None
+    status: str
+    completed_regions_json: str
+    failed_regions_json: str
+    fetched_count: int
+    stored_count: int
+    duplicate_count: int
+    ambiguous_count: int
+    correction_count: int
+    retraction_count: int
+    unmapped_count: int
+    error_count: int
+    failure_code: str | None
+    failure_reason: str | None
+    created_at: str
+    started_at: str | None
+    ended_at: str | None
+    updated_at: str
+
+
+@dataclass(slots=True)
+class NewsImportEventRow:
+    id: str
+    run_id: str
+    seq: int | None
+    ts: str | None
+    provider: str | None
+    region: str | None
+    message_id: str | None
+    event_type: str
+    severity: str | None
+    reason: str | None
+    details_json: str | None
+    created_at: str
+
+
 # --------------------------------------------------------------------------- shared SQL impl
 class SqlStore(Store):
     """DB-agnostic SQL implementation. Subclasses supply a DB-API connection, the parameter
@@ -3199,6 +3330,432 @@ class SqlStore(Store):
             except _ReclaimSkipped:
                 continue
         return reclaimed
+
+    # ---- § WP5 worldwide news & official filings (RESEARCH DATA ONLY) ----
+    # Immutable original messages + fail-closed instrument mapping + append-only corrections/retractions;
+    # resumable/observable/per-provider-region-isolated import runs. No trading, no orders/execution, no
+    # subscription purchase, no HTTP write path.
+    _NX_MSG_COL_LIST = (
+        "message_id", "provider", "provider_id", "source_id", "source_type", "primacy", "original_title",
+        "original_body", "original_language", "translated_title", "translated_summary", "translation_status",
+        "translation_source", "url", "published_at", "received_at", "correction_at", "event_category",
+        "relevance", "impact_estimate", "uncertainty", "source_confidence", "license_status",
+        "storage_status", "time_status", "content_checksum", "cluster_id", "correction_of_id",
+        "retraction_of_id", "supersedes_id", "duplicate_of_id", "affected_countries_json",
+        "affected_regions_json", "affected_industries_json", "affected_companies_json",
+        "affected_exchanges_json", "provenance_json", "created_at")
+    _NX_MSG_COLS = ",".join(_NX_MSG_COL_LIST)
+    _NX_SRC_COLS = ("source_id,name,source_type,primacy,regions_json,languages_json,update_mode,"
+                    "rate_limit_json,license_status,storage_allowed,redistribution_allowed,"
+                    "commercial_use_allowed,attribution_required,available,last_success_at,last_error,"
+                    "created_at,updated_at")
+    _NX_RUN_COLS = (
+        "run_id,request_checksum,run_label,provider,source_id,cursor,status,completed_regions_json,"
+        "failed_regions_json,fetched_count,stored_count,duplicate_count,ambiguous_count,correction_count,"
+        "retraction_count,unmapped_count,error_count,failure_code,failure_reason,created_at,started_at,"
+        "ended_at,updated_at")
+    _NX_EVENT_COLS = "id,run_id,seq,ts,provider,region,message_id,event_type,severity,reason,details_json,created_at"
+    _NX_MSG_EVENT_COLS = "id,message_id,seq,ts,event_type,severity,related_message_id,details_json,created_at"
+
+    # -- fail-closed instrument mapping (uses the WP2 catalogue only) --
+    def nx_resolve_instruments(self, *, symbol=None, exchange=None, isin=None,
+                               con_id=None) -> list[tuple]:
+        """Resolve a message's identifier hints to catalogue instruments, fail-closed → list of
+        (instrument_id, mapping_status). A stable id (conId/ISIN/symbol+exchange) with exactly ONE match is
+        VERIFIED; >1 is AMBIGUOUS; a symbol ALONE is NEVER unique (any match → AMBIGUOUS); no match → []. No
+        fabricated mapping — only instruments that actually exist are returned."""
+        if con_id is not None:
+            rows = self._all("SELECT instrument_id FROM instruments WHERE con_id=?", (int(con_id),))
+            if len(rows) == 1:                                # defensive: don't rely on the UNIQUE constraint
+                return [(rows[0][0], "VERIFIED")]
+            return [(r[0], "AMBIGUOUS") for r in rows]        # 0 → []; a hypothetical collision → AMBIGUOUS
+        if isin:
+            rows = self._all("SELECT instrument_id FROM instruments WHERE isin=?", (isin,))
+            if len(rows) == 1:
+                return [(rows[0][0], "VERIFIED")]
+            return [(r[0], "AMBIGUOUS") for r in rows]
+        if symbol and exchange:
+            rows = self._all("SELECT instrument_id FROM instruments WHERE symbol=? AND exchange=?",
+                             (symbol, exchange))
+            if len(rows) == 1:
+                return [(rows[0][0], "VERIFIED")]
+            return [(r[0], "AMBIGUOUS") for r in rows]
+        if symbol:
+            rows = self._all("SELECT instrument_id FROM instruments WHERE symbol=?", (symbol,))
+            return [(r[0], "AMBIGUOUS") for r in rows]   # symbol alone can never be VERIFIED
+        return []
+
+    # -- source registry (mutable) --
+    def nx_upsert_source(self, record: dict) -> str:
+        now = utcnow_iso()
+        sid = record["source_id"]
+        vals = (sid, record["name"], record["source_type"], record["primacy"],
+                record.get("regions_json", "[]"), record.get("languages_json", "[]"),
+                record.get("update_mode", "unknown"), record.get("rate_limit_json", "{}"),
+                record["license_status"], 1 if record.get("storage_allowed") else 0,
+                1 if record.get("redistribution_allowed") else 0,
+                1 if record.get("commercial_use_allowed") else 0,
+                1 if record.get("attribution_required", True) else 0, 1 if record.get("available") else 0)
+        with self.tx() as cur:
+            self._exec(cur, "SELECT source_id FROM news_sources WHERE source_id=?", (sid,))
+            if cur.fetchone() is None:
+                self._exec(cur, f"INSERT INTO news_sources ({self._NX_SRC_COLS}) "
+                           "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (*vals, None, None, now, now))
+                return "inserted"
+            self._exec(cur, "UPDATE news_sources SET name=?, source_type=?, primacy=?, regions_json=?, "
+                       "languages_json=?, update_mode=?, rate_limit_json=?, license_status=?, storage_allowed=?, "
+                       "redistribution_allowed=?, commercial_use_allowed=?, attribution_required=?, available=?, "
+                       "updated_at=? WHERE source_id=?", (*vals[1:], now, sid))
+            return "updated"
+
+    def nx_mark_source_result(self, source_id: str, *, available: bool, success: bool,
+                              last_error: str | None = None) -> None:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            if success:
+                self._exec(cur, "UPDATE news_sources SET available=?, last_success_at=?, last_error=?, "
+                           "updated_at=? WHERE source_id=?", (1 if available else 0, now, None, now, source_id))
+            else:
+                self._exec(cur, "UPDATE news_sources SET available=?, last_error=?, updated_at=? "
+                           "WHERE source_id=?", (1 if available else 0, last_error, now, source_id))
+
+    def nx_get_source(self, source_id: str) -> NewsSourceRow | None:
+        r = self._one(f"SELECT {self._NX_SRC_COLS} FROM news_sources WHERE source_id=?", (source_id,))
+        return self._nx_source_row(r) if r else None
+
+    def nx_list_sources(self) -> list[NewsSourceRow]:
+        rows = self._all(f"SELECT {self._NX_SRC_COLS} FROM news_sources ORDER BY source_id ASC")
+        return [self._nx_source_row(r) for r in rows]
+
+    @staticmethod
+    def _nx_source_row(r) -> NewsSourceRow:
+        r = list(r)
+        for idx in (9, 10, 11, 12, 13):   # bool columns
+            r[idx] = bool(r[idx])
+        return NewsSourceRow(*r)
+
+    # -- immutable messages + mappings + events --
+    def nx_find_message_id_by_checksum(self, content_checksum: str) -> str | None:
+        r = self._one("SELECT message_id FROM news_messages WHERE content_checksum=? "
+                      "ORDER BY created_at ASC, message_id ASC LIMIT 1", (content_checksum,))
+        return r[0] if r else None
+
+    def nx_insert_message(self, record: dict, *, mappings=(), run_id: str | None = None,
+                          run_event: dict | None = None, duplicate: bool = False, ambiguous: bool = False,
+                          unmapped: bool = False, is_correction: bool = False,
+                          is_retraction: bool = False) -> str:
+        """Insert one IMMUTABLE message + its fail-closed instrument mappings AND atomically advance the run
+        counters + run event, in ONE transaction. Idempotent per message_id (ON CONFLICT DO NOTHING) — a
+        re-ingest is a no-op and the original is never overwritten. `fetched_count` is bumped for every call;
+        the outcome counters (stored/duplicate/ambiguous/unmapped/correction/retraction) and the run event
+        are applied ONLY when the message is newly inserted, so a stored message is always counted. Returns
+        'inserted' or 'exists'."""
+        now = utcnow_iso()
+        mid = record["message_id"]
+        values = tuple(record.get(c) for c in self._NX_MSG_COL_LIST[:-1]) + (now,)
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO news_messages ({self._NX_MSG_COLS}) "
+                       f"VALUES ({','.join(['?'] * len(self._NX_MSG_COL_LIST))}) "
+                       "ON CONFLICT (message_id) DO NOTHING", values)
+            inserted = cur.rowcount > 0
+            if inserted:
+                for instrument_id, status, *rest in mappings:
+                    conf = rest[0] if rest else None
+                    method = rest[1] if len(rest) > 1 else None
+                    self._exec(cur, "INSERT INTO news_message_instruments "
+                               "(message_id,instrument_id,mapping_status,confidence,method,created_at) "
+                               "VALUES (?,?,?,?,?,?) ON CONFLICT (message_id,instrument_id) DO NOTHING",
+                               (mid, instrument_id, status, conf, method, now))
+                # order-independent, atomic correction/retraction audit links (forward + backfill)
+                self._nx_link_corrections(cur, mid, record, now)
+            if run_id is not None:
+                cols = ["fetched_count=fetched_count+1"]
+                if inserted:
+                    cols.append("stored_count=stored_count+1")
+                    if duplicate:
+                        cols.append("duplicate_count=duplicate_count+1")
+                    if ambiguous:
+                        cols.append("ambiguous_count=ambiguous_count+1")
+                    if unmapped:
+                        cols.append("unmapped_count=unmapped_count+1")
+                    if is_correction:
+                        cols.append("correction_count=correction_count+1")
+                    if is_retraction:
+                        cols.append("retraction_count=retraction_count+1")
+                self._exec(cur, f"UPDATE news_import_runs SET {','.join(cols)}, updated_at=? "
+                           "WHERE run_id=? AND status='RUNNING'", (now, run_id))
+                run_is_live = cur.rowcount > 0   # 0 → run already terminal (e.g. reclaimed) while a straggler
+                # worker kept going; the global message is still stored + dedup-safe, but we must NOT append a
+                # run event to a frozen run (that would desync its counters from its event log). Fail closed.
+                if inserted and run_event is not None and run_is_live:
+                    self._nx_insert_event(cur, run_id, run_event, now)
+            return "inserted" if inserted else "exists"
+
+    def _nx_insert_msg_event(self, cur, message_id: str, event: dict, now: str) -> None:
+        # ON CONFLICT DO NOTHING → the forward (correction-after-original) and backfill (original-after-
+        # correction) links are order-independent and idempotent; a deterministic event id makes the second
+        # path a no-op rather than a duplicate. (A no-op insert does not fire the insert-only UPDATE trigger.)
+        self._exec(cur, f"INSERT INTO news_message_events ({self._NX_MSG_EVENT_COLS}) "
+                   "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING",
+                   (event["id"], message_id, event.get("seq"), event.get("ts", now), event["event_type"],
+                    event.get("severity"), event.get("related_message_id"),
+                    json.dumps(event.get("details") or {}), now))
+
+    def _nx_link_corrections(self, cur, message_id: str, record: dict, now: str) -> None:
+        """Record the append-only CORRECTION/RETRACTION audit events on the IMMUTABLE original, in BOTH
+        directions and order-independently: (forward) this message corrects/retracts an already-stored
+        original; (backfill) this message IS an original that already-stored corrections/retractions
+        reference. Idempotent via deterministic event ids, so it never double-records or depends on arrival
+        order. The original is never mutated — only its append-only event log gains a record."""
+        # forward
+        for target, etype, sev in ((record.get("correction_of_id"), "CORRECTION", "INFO"),
+                                   (record.get("retraction_of_id"), "RETRACTION", "WARN")):
+            if target and self._one("SELECT 1 FROM news_messages WHERE message_id=?", (target,)):
+                self._nx_insert_msg_event(cur, target, {
+                    "id": f"{message_id}-{'corr' if etype == 'CORRECTION' else 'retr'}",
+                    "event_type": etype, "severity": sev, "related_message_id": message_id}, now)
+        # backfill: pre-existing messages that reference THIS message as their original
+        for ref_id, corr_of, retr_of in self._all(
+                "SELECT message_id, correction_of_id, retraction_of_id FROM news_messages "
+                "WHERE correction_of_id=? OR retraction_of_id=?", (message_id, message_id)):
+            if corr_of == message_id:
+                self._nx_insert_msg_event(cur, message_id, {
+                    "id": f"{ref_id}-corr", "event_type": "CORRECTION", "severity": "INFO",
+                    "related_message_id": ref_id}, now)
+            if retr_of == message_id:
+                self._nx_insert_msg_event(cur, message_id, {
+                    "id": f"{ref_id}-retr", "event_type": "RETRACTION", "severity": "WARN",
+                    "related_message_id": ref_id}, now)
+
+    def nx_append_message_event(self, message_id: str, *, event: dict) -> None:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._nx_insert_msg_event(cur, message_id, event, now)
+
+    def nx_get_message(self, message_id: str) -> NewsMessageRow | None:
+        r = self._one(f"SELECT {self._NX_MSG_COLS} FROM news_messages WHERE message_id=?", (message_id,))
+        return NewsMessageRow(*r) if r else None
+
+    def nx_list_messages(self, *, source_id: str | None = None, event_category: str | None = None,
+                         cluster_id: str | None = None, limit: int = 200, offset: int = 0) -> list[NewsMessageRow]:
+        n, off = max(1, min(2000, int(limit))), max(0, int(offset))
+        where, params = [], []
+        if source_id:
+            where.append("source_id=?"); params.append(source_id)
+        if event_category:
+            where.append("event_category=?"); params.append(event_category)
+        if cluster_id:
+            where.append("cluster_id=?"); params.append(cluster_id)
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        rows = self._all(f"SELECT {self._NX_MSG_COLS} FROM news_messages{clause} "
+                         "ORDER BY created_at ASC, message_id ASC LIMIT ? OFFSET ?", (*params, n, off))
+        return [NewsMessageRow(*r) for r in rows]
+
+    def nx_list_message_instruments(self, message_id: str) -> list[NewsMessageInstrumentRow]:
+        rows = self._all("SELECT message_id,instrument_id,mapping_status,confidence,method,created_at "
+                         "FROM news_message_instruments WHERE message_id=? ORDER BY instrument_id ASC",
+                         (message_id,))
+        return [NewsMessageInstrumentRow(*r) for r in rows]
+
+    def nx_list_messages_for_instrument(self, instrument_id: str, *, mapping_status: str | None = None,
+                                        limit: int = 200) -> list[str]:
+        n = max(1, min(2000, int(limit)))
+        where, params = ["instrument_id=?"], [instrument_id]
+        if mapping_status:
+            where.append("mapping_status=?"); params.append(mapping_status)
+        rows = self._all(f"SELECT message_id FROM news_message_instruments WHERE {' AND '.join(where)} "
+                         "ORDER BY created_at DESC LIMIT ?", (*params, n))
+        return [r[0] for r in rows]
+
+    def nx_list_message_events(self, message_id: str, *, limit: int = 200) -> list[NewsMessageEventRow]:
+        n = max(1, min(2000, int(limit)))
+        rows = self._all(f"SELECT {self._NX_MSG_EVENT_COLS} FROM news_message_events WHERE message_id=? "
+                         "ORDER BY created_at ASC, id ASC LIMIT ?", (message_id, n))
+        return [NewsMessageEventRow(*r) for r in rows]
+
+    def nx_derived_message_status(self, message_id: str) -> str:
+        """Fail-closed DERIVED lifecycle (never a mutation of the immutable original): RETRACTED if a
+        retraction message references it, CORRECTED if a correction does, else ACTIVE."""
+        if self._one("SELECT 1 FROM news_messages WHERE retraction_of_id=? LIMIT 1", (message_id,)):
+            return "RETRACTED"
+        if self._one("SELECT 1 FROM news_messages WHERE correction_of_id=? LIMIT 1", (message_id,)):
+            return "CORRECTED"
+        return "ACTIVE"
+
+    # -- import runs (resumable, observable, per-provider/region isolated) --
+    def _nx_insert_event(self, cur, run_id: str, event: dict, now: str) -> None:
+        self._exec(cur, f"INSERT INTO news_import_events ({self._NX_EVENT_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (event["id"], run_id, event.get("seq"), event.get("ts", now), event.get("provider"),
+                    event.get("region"), event.get("message_id"), event["event_type"], event.get("severity"),
+                    event.get("reason"), json.dumps(event.get("details") or {}), now))
+
+    def nx_create_run(self, *, run_id: str, request_checksum: str, run_label: str, provider: str,
+                      source_id: str) -> None:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO news_import_runs ({self._NX_RUN_COLS}) VALUES ({','.join(['?'] * 23)})",
+                       (run_id, request_checksum, run_label, provider, source_id, None, "PLANNED",
+                        json.dumps([]), json.dumps([]), 0, 0, 0, 0, 0, 0, 0, 0, None, None, now, None, None, now))
+
+    def nx_advance_run_status(self, run_id: str, expected_from: str, to: str) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            if to == "RUNNING":
+                self._exec(cur, "UPDATE news_import_runs SET status=?, started_at=?, updated_at=? "
+                           "WHERE run_id=? AND status=?", (to, now, now, run_id, expected_from))
+            else:
+                self._exec(cur, "UPDATE news_import_runs SET status=?, updated_at=? WHERE run_id=? AND status=?",
+                           (to, now, run_id, expected_from))
+            return cur.rowcount > 0
+
+    def nx_set_cursor(self, run_id: str, cursor: str | None) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "UPDATE news_import_runs SET cursor=?, updated_at=? "
+                       "WHERE run_id=? AND status='RUNNING'", (cursor, now, run_id))
+            return cur.rowcount > 0
+
+    _NX_COUNTERS = frozenset({"fetched_count", "stored_count", "duplicate_count", "ambiguous_count",
+                              "correction_count", "retraction_count", "unmapped_count", "error_count"})
+
+    def nx_bump(self, run_id: str, counters: dict, *, event: dict | None = None) -> bool:
+        """Increment one or more run counters (from a fixed allow-list) guarded on RUNNING, with an optional
+        event, in one transaction."""
+        deltas = {k: int(v) for k, v in counters.items() if k in self._NX_COUNTERS and v}
+        now = utcnow_iso()
+        with self.tx() as cur:
+            if deltas:
+                sets = ",".join(f"{k}={k}+?" for k in deltas)
+                self._exec(cur, f"UPDATE news_import_runs SET {sets}, updated_at=? "
+                           "WHERE run_id=? AND status='RUNNING'", (*deltas.values(), now, run_id))
+            else:
+                self._exec(cur, "UPDATE news_import_runs SET updated_at=? WHERE run_id=? AND status='RUNNING'",
+                           (now, run_id))
+            ok = cur.rowcount > 0
+            if event is not None and ok:
+                self._nx_insert_event(cur, run_id, event, now)
+            return ok
+
+    def nx_record_region(self, run_id: str, *, region: str, region_status: str,
+                         event: dict | None = None) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "SELECT completed_regions_json,failed_regions_json FROM news_import_runs "
+                       "WHERE run_id=? AND status='RUNNING'", (run_id,))
+            row = cur.fetchone()
+            if row is None:
+                return False
+            completed = list(json.loads(row[0]))
+            failed = list(json.loads(row[1]))
+            if region_status == "COMPLETED":
+                if region not in completed:
+                    completed.append(region)
+                failed = [x for x in failed if x != region]
+            elif region_status == "FAILED":
+                if region not in failed:
+                    failed.append(region)
+                completed = [x for x in completed if x != region]
+            self._exec(cur, "UPDATE news_import_runs SET completed_regions_json=?, failed_regions_json=?, "
+                       "updated_at=? WHERE run_id=? AND status='RUNNING'",
+                       (json.dumps(completed), json.dumps(failed), now, run_id))
+            if cur.rowcount <= 0:
+                return False
+            if event is not None:
+                self._nx_insert_event(cur, run_id, event, now)
+            return True
+
+    def nx_append_run_event(self, run_id: str, *, event: dict) -> None:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._nx_insert_event(cur, run_id, event, now)
+
+    def nx_max_event_seq(self, run_id: str) -> int:
+        r = self._one("SELECT MAX(seq) FROM news_import_events WHERE run_id=?", (run_id,))
+        return int(r[0]) if r and r[0] is not None else 0
+
+    def nx_finalize_run(self, run_id: str, *, expected_from: str = "RUNNING", status: str,
+                        failure_code: str | None = None, failure_reason: str | None = None) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "UPDATE news_import_runs SET status=?, failure_code=?, failure_reason=?, "
+                       "ended_at=?, updated_at=? WHERE run_id=? AND status=?",
+                       (status, failure_code, failure_reason, now, now, run_id, expected_from))
+            return cur.rowcount > 0
+
+    def nx_get_run(self, run_id: str) -> NewsImportRunRow | None:
+        r = self._one(f"SELECT {self._NX_RUN_COLS} FROM news_import_runs WHERE run_id=?", (run_id,))
+        return NewsImportRunRow(*r) if r else None
+
+    def nx_list_runs(self, *, status: str | None = None, limit: int = 50,
+                     offset: int = 0) -> list[NewsImportRunRow]:
+        n, off = max(1, min(200, int(limit))), max(0, int(offset))
+        clause, params = "", []
+        if status:
+            clause, params = " WHERE status=?", [status]
+        rows = self._all(f"SELECT {self._NX_RUN_COLS} FROM news_import_runs{clause} "
+                         "ORDER BY created_at DESC, run_id DESC LIMIT ? OFFSET ?", (*params, n, off))
+        return [NewsImportRunRow(*r) for r in rows]
+
+    def nx_list_run_events(self, run_id: str, *, limit: int = 1000, offset: int = 0) -> list[NewsImportEventRow]:
+        n, off = max(1, min(10000, int(limit))), max(0, int(offset))
+        rows = self._all(f"SELECT {self._NX_EVENT_COLS} FROM news_import_events WHERE run_id=? "
+                         "ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?", (run_id, n, off))
+        return [NewsImportEventRow(*r) for r in rows]
+
+    def nx_reclaim_stale_running(self, cutoff_iso: str, *, failure_code: str, failure_reason: str,
+                                 _probe=None) -> list[str]:
+        """Atomically reclaim crashed/stale RUNNING news-import runs as FAILED (parallel-worker safe: the
+        staleness predicate is re-checked at the guarded flip, so a live heartbeating run is not reclaimed).
+        Immutable RECLAIM event in the same tx."""
+        now = utcnow_iso()
+        candidates = [r[0] for r in self._all(
+            "SELECT run_id FROM news_import_runs WHERE status='RUNNING' AND updated_at < ?", (cutoff_iso,))]
+        reclaimed: list[str] = []
+        for run_id in candidates:
+            if _probe is not None:
+                _probe(run_id)
+            try:
+                with self.tx() as cur:
+                    # ON CONFLICT DO NOTHING → two concurrent reclaimers do not collide on this event PK; the
+                    # guarded UPDATE below (re-checked staleness → _ReclaimSkipped) remains the sole arbiter.
+                    self._exec(cur, f"INSERT INTO news_import_events ({self._NX_EVENT_COLS}) "
+                               "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING",
+                               (f"{run_id}-reclaim", run_id, None, now, None, None, None, "RECLAIM", "ERROR",
+                                failure_reason, json.dumps({"failure_code": failure_code}), now))
+                    self._exec(cur, "UPDATE news_import_runs SET status='FAILED', failure_code=?, "
+                               "failure_reason=?, ended_at=?, updated_at=? WHERE run_id=? AND "
+                               "status='RUNNING' AND updated_at < ?",
+                               (failure_code, failure_reason, now, now, run_id, cutoff_iso))
+                    if cur.rowcount <= 0:
+                        raise _ReclaimSkipped()
+                reclaimed.append(run_id)
+            except _ReclaimSkipped:
+                continue
+        return reclaimed
+
+    # -- read-only observability aggregates --
+    def nx_count_messages(self, *, source_id: str | None = None) -> int:
+        clause, params = ("", ())
+        if source_id:
+            clause, params = " WHERE source_id=?", (source_id,)
+        r = self._one(f"SELECT COUNT(*) FROM news_messages{clause}", params)
+        return int(r[0]) if r else 0
+
+    def nx_dedup_stats(self) -> dict:
+        total = self.nx_count_messages()
+        dups = self._one("SELECT COUNT(*) FROM news_messages WHERE duplicate_of_id IS NOT NULL")
+        dup = int(dups[0]) if dups else 0
+        return {"total": total, "exact_duplicates": dup,
+                "duplicate_rate": (dup / total) if total else 0.0}
+
+    def nx_count_ambiguous_mappings(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM news_message_instruments WHERE mapping_status='AMBIGUOUS'")
+        return int(r[0]) if r else 0
+
+    def nx_corrections_retractions(self) -> dict:
+        c = self._one("SELECT COUNT(*) FROM news_messages WHERE correction_of_id IS NOT NULL")
+        r = self._one("SELECT COUNT(*) FROM news_messages WHERE retraction_of_id IS NOT NULL")
+        return {"corrections": int(c[0]) if c else 0, "retractions": int(r[0]) if r else 0}
 
     # -- durable PAPER-canary lifecycle + ledger -------------------------
     _PAPER_RUN_COLS = (

@@ -58,7 +58,7 @@ def _rec(symbol="AAPL", exchange="NASDAQ", **kw):
 def test_migration_26_applied_and_tables_exist():
     store = _store()
     versions = {r[0] for r in store._all("SELECT version FROM schema_migrations")}
-    assert {1, 25, 26} <= versions and max(versions) == 26
+    assert {1, 25, 26} <= versions and max(versions) >= 26
     # each additive table is queryable
     for tbl in ("instruments", "instrument_import_runs", "instrument_import_events"):
         assert store._all(f"SELECT COUNT(*) FROM {tbl}")[0][0] == 0
