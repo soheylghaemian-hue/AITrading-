@@ -66,6 +66,22 @@ def utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _md_canon_ts(value):
+    """Lenient canonical UTC ISO-8601 (offset +00:00) for a market-data source timestamp. The CURRENT-quote
+    monotonic guard compares timestamps lexicographically, which is chronological ONLY for a single canonical
+    form — so the store canonicalizes on write (defense in depth: any caller, not just the ingest, is safe;
+    a valid non-UTC-offset timestamp can no longer beat a canonical one lexicographically). Naive/bad → None."""
+    if value is None:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value))
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        return None
+    return dt.astimezone(timezone.utc).isoformat()
+
+
 def new_id() -> str:
     return uuid.uuid4().hex
 
@@ -985,6 +1001,20 @@ class ResearchIntelOutcomeRow:
 
 
 @dataclass(slots=True)
+class ResearchIntelEventRow:
+    id: str
+    snapshot_id: str | None
+    event_type: str
+    severity: str | None
+    ts: str | None
+    symbol: str | None
+    session_date: str | None
+    details_json: str | None
+    commit_sha: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
 class ResearchValidationRunRow:
     run_id: str
     universe_id: str
@@ -1004,6 +1034,536 @@ class ResearchValidationRunRow:
     started_at: str | None
     ended_at: str | None
     updated_at: str
+
+
+# --------------------------------------------------------------------------- § WP2 instrument model rows
+@dataclass(slots=True)
+class InstrumentRow:
+    instrument_id: str
+    natural_key: str
+    con_id: int | None
+    isin: str | None
+    figi: str | None
+    cusip: str | None
+    sedol: str | None
+    local_symbol: str | None
+    symbol: str
+    description: str | None
+    region: str | None
+    country: str | None
+    exchange: str
+    primary_exchange: str | None
+    trading_currency: str
+    settlement_currency: str | None
+    timezone: str | None
+    trading_calendar: str | None
+    calendar_version: str | None
+    asset_class: str
+    sub_class: str | None
+    underlying_symbol: str | None
+    underlying_instrument_id: str | None
+    tick_size: str | None
+    multiplier: str | None
+    lot_size: str | None
+    min_size: str | None
+    expiry: str | None
+    strike: str | None
+    option_right: str | None
+    tradability_status: str
+    market_data_status: str
+    source_status: str
+    verification_status: str
+    source: str | None
+    last_verified_at: str | None
+    content_checksum: str
+    created_at: str
+    updated_at: str
+    # § WP3 — IBKR qualification lifecycle (NULL/default for a freshly imported instrument)
+    qualification_status: str = "DISCOVERED"
+    qualification_reason: str | None = None
+    qualification_run_id: str | None = None
+    qualification_attempts: int = 0
+    last_qualified_at: str | None = None
+
+
+@dataclass(slots=True)
+class InstrumentImportRunRow:
+    run_id: str
+    request_checksum: str
+    source_label: str
+    planned_markets_json: str
+    completed_markets_json: str
+    failed_markets_json: str
+    status: str
+    discovered_count: int
+    inserted_count: int
+    updated_count: int
+    unchanged_count: int
+    skipped_count: int
+    failed_market_count: int
+    failure_code: str | None
+    failure_reason: str | None
+    created_at: str
+    started_at: str | None
+    ended_at: str | None
+    updated_at: str
+
+
+@dataclass(slots=True)
+class InstrumentImportEventRow:
+    id: str
+    run_id: str
+    seq: int | None
+    ts: str | None
+    market: str | None
+    event_type: str
+    severity: str | None
+    details_json: str | None
+    created_at: str
+
+
+# --------------------------------------------------------------------------- § WP3 IBKR qualification rows
+@dataclass(slots=True)
+class InstrumentQualificationRunRow:
+    run_id: str
+    request_checksum: str
+    run_label: str
+    exchange: str | None
+    batch_size: int
+    pause_seconds: str
+    status: str
+    planned_markets_json: str
+    completed_markets_json: str
+    failed_markets_json: str
+    processed_count: int
+    verified_count: int
+    ambiguous_count: int
+    not_tradable_count: int
+    mdne_count: int
+    error_retryable_count: int
+    error_permanent_count: int
+    failure_code: str | None
+    failure_reason: str | None
+    created_at: str
+    started_at: str | None
+    ended_at: str | None
+    updated_at: str
+
+
+@dataclass(slots=True)
+class InstrumentQualificationEventRow:
+    id: str
+    run_id: str
+    seq: int | None
+    ts: str | None
+    instrument_id: str | None
+    market: str | None
+    event_type: str
+    severity: str | None
+    status: str | None
+    con_id: int | None
+    candidate_count: int | None
+    reason: str | None
+    details_json: str | None
+    created_at: str
+
+
+# --------------------------------------------------------------------------- § WP4 market-data rows
+@dataclass(slots=True)
+class MdQuoteRow:
+    instrument_id: str
+    provider: str
+    provider_instrument_id: str | None
+    bid: Decimal | None
+    ask: Decimal | None
+    last: Decimal | None
+    mid: Decimal | None
+    spread: Decimal | None
+    bid_size: Decimal | None
+    ask_size: Decimal | None
+    volume: Decimal | None
+    reference_price: Decimal | None
+    previous_close: Decimal | None
+    data_currency: str | None
+    source_ts: str | None
+    receive_ts: str | None
+    latency_ms: Decimal | None
+    data_status: str
+    entitlement_status: str
+    license: str
+    quality_status: str
+    adjustment_policy: str
+    corporate_action_version: int
+    provenance_checksum: str
+    import_run_id: str | None
+    created_at: str
+    updated_at: str | None = None
+
+
+@dataclass(slots=True)
+class MdBarRow:
+    instrument_id: str
+    provider: str
+    provider_instrument_id: str | None
+    interval: str
+    ts: str
+    open: Decimal | None
+    high: Decimal | None
+    low: Decimal | None
+    close: Decimal | None
+    volume: Decimal | None
+    trade_count: int | None
+    data_currency: str | None
+    source_ts: str | None
+    receive_ts: str | None
+    latency_ms: Decimal | None
+    data_status: str
+    entitlement_status: str
+    license: str
+    quality_status: str
+    adjustment_policy: str
+    corporate_action_version: int
+    provenance_checksum: str
+    import_run_id: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
+class MdCorporateActionRow:
+    instrument_id: str
+    provider: str
+    action_type: str
+    effective_date: str
+    corporate_action_version: int
+    ex_date: str | None
+    ratio: Decimal | None
+    cash_amount: Decimal | None
+    currency: str | None
+    provenance_checksum: str
+    import_run_id: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
+class MdProviderEntitlementRow:
+    instrument_id: str
+    provider: str
+    provider_instrument_id: str | None
+    entitlement_status: str
+    license: str
+    realtime_available: bool
+    available: bool
+    capabilities_json: str
+    rate_limit_json: str
+    reason: str | None
+    last_checked_at: str
+    updated_at: str
+
+
+@dataclass(slots=True)
+class MdImportRunRow:
+    run_id: str
+    request_checksum: str
+    run_label: str
+    provider: str
+    kind: str
+    status: str
+    planned_markets_json: str
+    completed_markets_json: str
+    failed_markets_json: str
+    processed_count: int
+    quotes_written_count: int
+    bars_written_count: int
+    history_appended_count: int
+    no_data_count: int
+    skipped_count: int
+    error_count: int
+    failure_code: str | None
+    failure_reason: str | None
+    created_at: str
+    started_at: str | None
+    ended_at: str | None
+    updated_at: str
+
+
+@dataclass(slots=True)
+class MdImportEventRow:
+    id: str
+    run_id: str
+    seq: int | None
+    ts: str | None
+    provider: str | None
+    market: str | None
+    instrument_id: str | None
+    event_type: str
+    severity: str | None
+    status: str | None
+    reason: str | None
+    details_json: str | None
+    created_at: str
+
+
+# --------------------------------------------------------------------------- § WP5 news / filings rows
+@dataclass(slots=True)
+class NewsMessageRow:
+    message_id: str
+    provider: str
+    provider_id: str
+    source_id: str
+    source_type: str
+    primacy: str
+    original_title: str
+    original_body: str | None
+    original_language: str | None
+    translated_title: str | None
+    translated_summary: str | None
+    translation_status: str
+    translation_source: str | None
+    url: str | None
+    published_at: str | None
+    received_at: str | None
+    correction_at: str | None
+    event_category: str
+    relevance: str
+    impact_estimate: str
+    uncertainty: str
+    source_confidence: str
+    license_status: str
+    storage_status: str
+    time_status: str
+    content_checksum: str
+    cluster_id: str | None
+    correction_of_id: str | None
+    retraction_of_id: str | None
+    supersedes_id: str | None
+    duplicate_of_id: str | None
+    affected_countries_json: str
+    affected_regions_json: str
+    affected_industries_json: str
+    affected_companies_json: str
+    affected_exchanges_json: str
+    provenance_json: str
+    created_at: str
+
+
+@dataclass(slots=True)
+class NewsMessageInstrumentRow:
+    message_id: str
+    instrument_id: str
+    mapping_status: str
+    confidence: str | None
+    method: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
+class NewsMessageEventRow:
+    id: str
+    message_id: str
+    seq: int | None
+    ts: str | None
+    event_type: str
+    severity: str | None
+    related_message_id: str | None
+    details_json: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
+class NewsSourceRow:
+    source_id: str
+    name: str
+    source_type: str
+    primacy: str
+    regions_json: str
+    languages_json: str
+    update_mode: str
+    rate_limit_json: str
+    license_status: str
+    storage_allowed: bool
+    redistribution_allowed: bool
+    commercial_use_allowed: bool
+    attribution_required: bool
+    available: bool
+    last_success_at: str | None
+    last_error: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(slots=True)
+class NewsImportRunRow:
+    run_id: str
+    request_checksum: str
+    run_label: str
+    provider: str
+    source_id: str
+    cursor: str | None
+    status: str
+    completed_regions_json: str
+    failed_regions_json: str
+    fetched_count: int
+    stored_count: int
+    duplicate_count: int
+    ambiguous_count: int
+    correction_count: int
+    retraction_count: int
+    unmapped_count: int
+    error_count: int
+    failure_code: str | None
+    failure_reason: str | None
+    created_at: str
+    started_at: str | None
+    ended_at: str | None
+    updated_at: str
+
+
+@dataclass(slots=True)
+class NewsImportEventRow:
+    id: str
+    run_id: str
+    seq: int | None
+    ts: str | None
+    provider: str | None
+    region: str | None
+    message_id: str | None
+    event_type: str
+    severity: str | None
+    reason: str | None
+    details_json: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
+class MacroEventRow:
+    """§ WP6 — the immutable macro/geopolitical overlay for one WP5 news message (keyed by message_id)."""
+
+    message_id: str
+    macro_type: str
+    source_class: str
+    geo_scope: str
+    severity: str
+    policy_area: str | None
+    affected_regions_json: str
+    affected_countries_json: str
+    affected_blocs_json: str
+    affected_asset_classes_json: str
+    link_status: str
+    macro_cluster_id: str | None
+    macro_checksum: str
+    correction_of_id: str | None
+    retraction_of_id: str | None
+    provenance_json: str
+    created_at: str
+
+
+@dataclass(slots=True)
+class MacroSourceRow:
+    """§ WP6 — a macro/geopolitical/regulatory channel in the mutable registry."""
+
+    source_id: str
+    name: str
+    source_class: str
+    regions_json: str
+    languages_json: str
+    mandate: str
+    update_mode: str
+    rate_limit_json: str
+    license_status: str
+    storage_allowed: bool
+    redistribution_allowed: bool
+    commercial_use_allowed: bool
+    attribution_required: bool
+    available: bool
+    last_success_at: str | None
+    last_error: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(slots=True)
+class FundamentalSourceRow:
+    """§ WP7 — a fundamentals/macro data source in the mutable registry."""
+
+    source_id: str
+    name: str
+    source_type: str
+    regions_json: str
+    languages_json: str
+    update_mode: str
+    rate_limit_json: str
+    license_status: str
+    storage_allowed: bool
+    redistribution_allowed: bool
+    commercial_use_allowed: bool
+    attribution_required: bool
+    available: bool
+    last_success_at: str | None
+    last_error: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(slots=True)
+class FundamentalSeriesRow:
+    """§ WP7 — the definition of a fundamental/macro metric stream (mutable registry)."""
+
+    series_id: str
+    source_id: str
+    series_key: str
+    category: str
+    metric: str
+    unit: str
+    frequency: str
+    region: str | None
+    country: str | None
+    currency: str | None
+    description: str | None
+    link_status: str
+    provenance_json: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(slots=True)
+class FundamentalSeriesInstrumentRow:
+    """§ WP7 — one immutable fail-closed series→instrument mapping row."""
+
+    series_id: str
+    instrument_id: str
+    mapping_status: str
+    confidence: str | None
+    method: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
+class FundamentalObservationRow:
+    """§ WP7 — one immutable fundamental/macro data point (a specific revision)."""
+
+    observation_id: str
+    series_id: str
+    provider: str
+    provider_id: str
+    source_id: str
+    period: str
+    period_start: str | None
+    period_end: str | None
+    value: str | None
+    value_text: str | None
+    value_status: str
+    revision_seq: int
+    revision_of_id: str | None
+    is_preliminary: bool
+    published_at: str | None
+    received_at: str | None
+    time_status: str
+    license_status: str
+    storage_status: str
+    content_checksum: str
+    duplicate_of_id: str | None
+    provenance_json: str
+    created_at: str
 
 
 # --------------------------------------------------------------------------- shared SQL impl
@@ -2834,6 +3394,46 @@ class SqlStore(Store):
             r = self._one("SELECT COUNT(*) FROM research_intel_collection_events")
         return int(r[0]) if r else 0
 
+    _RI_EVT_COLS = "id,snapshot_id,event_type,severity,ts,symbol,session_date,details_json,commit_sha,created_at"
+
+    def ri_list_events(self, *, event_type: str | None = None,
+                       limit: int = 50) -> list[ResearchIntelEventRow]:
+        """Most-recent-first bounded page of collection events (scheduling observability; read-only)."""
+        n = max(1, min(500, int(limit)))
+        if event_type:
+            rows = self._all(f"SELECT {self._RI_EVT_COLS} FROM research_intel_collection_events "
+                             "WHERE event_type=? ORDER BY created_at DESC, id DESC LIMIT ?", (event_type, n))
+        else:
+            rows = self._all(f"SELECT {self._RI_EVT_COLS} FROM research_intel_collection_events "
+                             "ORDER BY created_at DESC, id DESC LIMIT ?", (n,))
+        return [ResearchIntelEventRow(*r) for r in rows]
+
+    def ri_last_event(self, event_type: str | None = None) -> ResearchIntelEventRow | None:
+        rows = self.ri_list_events(event_type=event_type, limit=1)
+        return rows[0] if rows else None
+
+    def ri_snapshot_summary(self, *, universe_id: str | None = None) -> dict:
+        """Aggregate collection footprint WITHOUT loading every snapshot row: total snapshots, distinct
+        decision sessions, and the latest session/created_at. Used by the scheduling read-model."""
+        where, params = ("", ())
+        if universe_id:
+            where, params = (" WHERE universe_id=?", (universe_id,))
+        r = self._one("SELECT COUNT(*),COUNT(DISTINCT decision_session_date),MAX(decision_session_date),"
+                      f"MAX(created_at) FROM research_intel_snapshots{where}", params)
+        if not r:
+            return {"snapshot_count": 0, "session_count": 0, "latest_session_date": None, "latest_created_at": None}
+        return {"snapshot_count": int(r[0] or 0), "session_count": int(r[1] or 0),
+                "latest_session_date": r[2], "latest_created_at": r[3]}
+
+    def ri_outcome_summary(self) -> dict:
+        """Aggregate outcome footprint: the total, the MATURED subset (the rest are FAILED — the only
+        other terminal status) and the latest evaluation timestamp."""
+        r = self._one("SELECT COUNT(*),MAX(evaluation_ts) FROM research_intel_outcomes")
+        m = self._one("SELECT COUNT(*) FROM research_intel_outcomes WHERE status='MATURED'")
+        return {"outcome_count": int(r[0] or 0) if r else 0,
+                "matured_count": int(m[0] or 0) if m else 0,
+                "latest_evaluation_ts": r[1] if r else None}
+
     # ---- validation runs ----
     def rv_create_run(self, *, run_id, universe_id, universe_version, validation_policy_version,
                       outcome_policy_version, sampling_policy_version, gate_id, commit_sha) -> None:
@@ -2873,6 +3473,1704 @@ class SqlStore(Store):
     def rv_list_metrics(self, run_id: str) -> list[tuple]:
         return self._all("SELECT metric_group,metrics_json FROM research_validation_metrics WHERE run_id=? "
                          "ORDER BY metric_group ASC", (run_id,))
+
+    # ---- § WP2 unified persistent global-instrument model (REFERENCE DATA ONLY) ----
+    # Idempotent, collision-safe instrument catalogue + resumable/observable import runs. No trading, no
+    # orders/execution/broker, no market-data subscription, no IBKR qualification.
+    _IM_MUTABLE_COLS = (
+        "con_id", "isin", "figi", "cusip", "sedol", "local_symbol", "symbol", "description",
+        "region", "country", "exchange", "primary_exchange", "trading_currency", "settlement_currency",
+        "timezone", "trading_calendar", "calendar_version", "asset_class", "sub_class",
+        "underlying_symbol", "underlying_instrument_id", "tick_size", "multiplier", "lot_size", "min_size",
+        "expiry", "strike", "option_right", "tradability_status", "market_data_status",
+        "source_status", "verification_status", "source", "last_verified_at", "content_checksum",
+    )
+    _IM_INSTR_COLS = ("instrument_id,natural_key," + ",".join(_IM_MUTABLE_COLS) + ",created_at,updated_at,"
+                      "qualification_status,qualification_reason,qualification_run_id,"
+                      "qualification_attempts,last_qualified_at")
+    _IM_RUN_COLS = (
+        "run_id,request_checksum,source_label,planned_markets_json,completed_markets_json,"
+        "failed_markets_json,status,discovered_count,inserted_count,updated_count,unchanged_count,"
+        "skipped_count,failed_market_count,failure_code,failure_reason,created_at,started_at,ended_at,updated_at"
+    )
+    _IM_EVENT_COLS = "id,run_id,seq,ts,market,event_type,severity,details_json,created_at"
+
+    def im_upsert_instrument(self, record: dict) -> str:
+        """Idempotent, collision-safe upsert keyed by the stable ``instrument_id`` (derived from the
+        venue-anchored natural key). Returns 'inserted' | 'updated' | 'unchanged' (unchanged when the
+        record's ``content_checksum`` already matches — a genuine no-op re-import). Atomic per call."""
+        iid = record["instrument_id"]
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "SELECT content_checksum FROM instruments WHERE instrument_id=?", (iid,))
+            existing = cur.fetchone()
+            values = tuple(self._im_value(record, c) for c in self._IM_MUTABLE_COLS)
+            if existing is None:
+                cols = "instrument_id,natural_key," + ",".join(self._IM_MUTABLE_COLS) + ",created_at,updated_at"
+                ph = ",".join(["?"] * (len(self._IM_MUTABLE_COLS) + 4))
+                self._exec(cur, f"INSERT INTO instruments ({cols}) VALUES ({ph})",
+                           (iid, record["natural_key"], *values, now, now))
+                return "inserted"
+            if existing[0] == record.get("content_checksum"):
+                return "unchanged"
+            set_clause = ",".join(f"{c}=?" for c in self._IM_MUTABLE_COLS) + ",updated_at=?"
+            self._exec(cur, f"UPDATE instruments SET {set_clause} WHERE instrument_id=?",
+                       (*values, now, iid))
+            return "updated"
+
+    @staticmethod
+    def _im_value(record: dict, col: str):
+        v = record.get(col)
+        if col == "con_id":
+            return None if v is None else int(v)
+        return v
+
+    def im_get_instrument(self, instrument_id: str) -> InstrumentRow | None:
+        r = self._one(f"SELECT {self._IM_INSTR_COLS} FROM instruments WHERE instrument_id=?", (instrument_id,))
+        return self._im_row(r) if r else None
+
+    def im_get_by_natural_key(self, natural_key: str) -> InstrumentRow | None:
+        r = self._one(f"SELECT {self._IM_INSTR_COLS} FROM instruments WHERE natural_key=?", (natural_key,))
+        return self._im_row(r) if r else None
+
+    @staticmethod
+    def _im_row(r) -> InstrumentRow:
+        r = list(r)
+        r[2] = None if r[2] is None else int(r[2])   # con_id → int
+        return InstrumentRow(*r)
+
+    def im_list_instruments(self, *, asset_class: str | None = None, exchange: str | None = None,
+                            region: str | None = None, verification_status: str | None = None,
+                            limit: int = 100, offset: int = 0) -> list[InstrumentRow]:
+        n, off = max(1, min(1000, int(limit))), max(0, int(offset))
+        where, params = [], []
+        if asset_class:
+            where.append("asset_class=?"); params.append(asset_class)
+        if exchange:
+            where.append("exchange=?"); params.append(exchange)
+        if region:
+            where.append("region=?"); params.append(region)
+        if verification_status:
+            where.append("verification_status=?"); params.append(verification_status)
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        rows = self._all(f"SELECT {self._IM_INSTR_COLS} FROM instruments{clause} "
+                         "ORDER BY symbol ASC, exchange ASC, instrument_id ASC LIMIT ? OFFSET ?",
+                         (*params, n, off))
+        return [self._im_row(r) for r in rows]
+
+    def im_count_instruments(self, *, asset_class: str | None = None, exchange: str | None = None) -> int:
+        where, params = [], []
+        if asset_class:
+            where.append("asset_class=?"); params.append(asset_class)
+        if exchange:
+            where.append("exchange=?"); params.append(exchange)
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        r = self._one(f"SELECT COUNT(*) FROM instruments{clause}", tuple(params))
+        return int(r[0]) if r else 0
+
+    def im_create_import_run(self, *, run_id: str, request_checksum: str, source_label: str,
+                             planned_markets: list) -> None:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO instrument_import_runs ({self._IM_RUN_COLS}) "
+                       f"VALUES ({','.join(['?'] * 19)})",
+                       (run_id, request_checksum, source_label, json.dumps(list(planned_markets)),
+                        json.dumps([]), json.dumps([]), "PLANNED", 0, 0, 0, 0, 0, 0, None, None,
+                        now, None, None, now))
+
+    def im_find_run_by_request_checksum(self, request_checksum: str):
+        """Idempotency/resumability lookup → (completed_run_or_None, running_run_or_None). ``completed`` is a
+        fully COMPLETED run — a true no-op, re-running is pointless; ``running`` is a RUNNING or PLANNED run
+        to resume. PARTIAL and FAILED runs are intentionally NOT returned: a re-run starts a fresh attempt
+        that re-imports every market idempotently (so previously-failed markets get retried, and already-
+        imported ones simply resolve to 'unchanged')."""
+        rows = self._all(f"SELECT {self._IM_RUN_COLS} FROM instrument_import_runs WHERE request_checksum=? "
+                         "ORDER BY created_at DESC, run_id DESC", (request_checksum,))
+        completed = running = None
+        for raw in rows:
+            row = InstrumentImportRunRow(*raw)
+            if row.status == "COMPLETED" and completed is None:
+                completed = row
+            elif row.status in ("RUNNING", "PLANNED") and running is None:
+                running = row
+        return completed, running
+
+    def im_advance_run_status(self, run_id: str, expected_from: str, to: str) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            if to == "RUNNING":
+                self._exec(cur, "UPDATE instrument_import_runs SET status=?, started_at=?, updated_at=? "
+                           "WHERE run_id=? AND status=?", (to, now, now, run_id, expected_from))
+            else:
+                self._exec(cur, "UPDATE instrument_import_runs SET status=?, updated_at=? "
+                           "WHERE run_id=? AND status=?", (to, now, run_id, expected_from))
+            return cur.rowcount > 0
+
+    def im_record_market_progress(self, run_id: str, *, market: str, market_status: str, counts: dict,
+                                  event: dict | None = None) -> bool:
+        """Persist one market's outcome AND its progress event in ONE transaction, guarded on the run still
+        being RUNNING (so a reclaimed/terminal run is never mutated — returns False and writes nothing).
+        ``market_status`` is 'COMPLETED' (→ completed list, removed from failed) or 'FAILED' (→ failed list).
+        Run-level counters are incremented by ``counts``. Bumps updated_at as a liveness heartbeat."""
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "SELECT completed_markets_json,failed_markets_json,discovered_count,"
+                       "inserted_count,updated_count,unchanged_count,skipped_count,failed_market_count "
+                       "FROM instrument_import_runs WHERE run_id=? AND status='RUNNING'", (run_id,))
+            row = cur.fetchone()
+            if row is None:
+                return False
+            completed = list(json.loads(row[0]))
+            failed = list(json.loads(row[1]))
+            if market_status == "COMPLETED":
+                if market not in completed:
+                    completed.append(market)
+                failed = [m for m in failed if m != market]
+            elif market_status == "FAILED":
+                if market not in failed:
+                    failed.append(market)
+            discovered = int(row[2]) + int(counts.get("discovered", 0))
+            inserted = int(row[3]) + int(counts.get("inserted", 0))
+            updated = int(row[4]) + int(counts.get("updated", 0))
+            unchanged = int(row[5]) + int(counts.get("unchanged", 0))
+            skipped = int(row[6]) + int(counts.get("skipped", 0))
+            failed_markets = len(failed)
+            self._exec(cur, "UPDATE instrument_import_runs SET completed_markets_json=?, failed_markets_json=?, "
+                       "discovered_count=?, inserted_count=?, updated_count=?, unchanged_count=?, "
+                       "skipped_count=?, failed_market_count=?, updated_at=? WHERE run_id=? AND status='RUNNING'",
+                       (json.dumps(completed), json.dumps(failed), discovered, inserted, updated, unchanged,
+                        skipped, failed_markets, now, run_id))
+            if cur.rowcount <= 0:
+                return False
+            if event is not None:
+                self._exec(cur, f"INSERT INTO instrument_import_events ({self._IM_EVENT_COLS}) "
+                           "VALUES (?,?,?,?,?,?,?,?,?)",
+                           (event["id"], run_id, event.get("seq"), event.get("ts", now), market,
+                            event["event_type"], event.get("severity"),
+                            json.dumps(event.get("details") or {}), now))
+            return True
+
+    def im_append_import_event(self, run_id: str, *, event_id: str, event_type: str, market: str | None = None,
+                               seq: int | None = None, severity: str | None = None,
+                               details: dict | None = None) -> None:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO instrument_import_events ({self._IM_EVENT_COLS}) "
+                       "VALUES (?,?,?,?,?,?,?,?,?)",
+                       (event_id, run_id, seq, now, market, event_type, severity,
+                        json.dumps(details or {}), now))
+
+    def im_finalize_run(self, run_id: str, *, expected_from: str = "RUNNING", status: str,
+                        failure_code: str | None = None, failure_reason: str | None = None) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "UPDATE instrument_import_runs SET status=?, failure_code=?, failure_reason=?, "
+                       "ended_at=?, updated_at=? WHERE run_id=? AND status=?",
+                       (status, failure_code, failure_reason, now, now, run_id, expected_from))
+            return cur.rowcount > 0
+
+    def im_get_run(self, run_id: str) -> InstrumentImportRunRow | None:
+        r = self._one(f"SELECT {self._IM_RUN_COLS} FROM instrument_import_runs WHERE run_id=?", (run_id,))
+        return InstrumentImportRunRow(*r) if r else None
+
+    def im_list_runs(self, *, status: str | None = None, limit: int = 50,
+                     offset: int = 0) -> list[InstrumentImportRunRow]:
+        n, off = max(1, min(200, int(limit))), max(0, int(offset))
+        clause, params = "", []
+        if status:
+            clause, params = " WHERE status=?", [status]
+        rows = self._all(f"SELECT {self._IM_RUN_COLS} FROM instrument_import_runs{clause} "
+                         "ORDER BY created_at DESC, run_id DESC LIMIT ? OFFSET ?", (*params, n, off))
+        return [InstrumentImportRunRow(*r) for r in rows]
+
+    def im_list_run_events(self, run_id: str, *, limit: int = 500,
+                           offset: int = 0) -> list[InstrumentImportEventRow]:
+        n, off = max(1, min(2000, int(limit))), max(0, int(offset))
+        rows = self._all(f"SELECT {self._IM_EVENT_COLS} FROM instrument_import_events WHERE run_id=? "
+                         "ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?", (run_id, n, off))
+        return [InstrumentImportEventRow(*r) for r in rows]
+
+    def im_reclaim_stale_running(self, cutoff_iso: str, *, failure_code: str, failure_reason: str,
+                                 _probe=None) -> list[str]:
+        """Atomically reclaim crashed/stale RUNNING import runs as FAILED. The ``updated_at < cutoff``
+        staleness predicate is RE-CHECKED at the terminal flip, so a run that writes a fresh heartbeat first
+        is NOT reclaimed. The immutable RECLAIM event is written in the SAME transaction as the FAILED
+        transition (event first, while the run is still RUNNING → allowed; then the guarded flip; if it
+        matches 0 rows the whole tx rolls back). Returns only the ids actually transitioned."""
+        now = utcnow_iso()
+        candidates = [r[0] for r in self._all(
+            "SELECT run_id FROM instrument_import_runs WHERE status='RUNNING' AND updated_at < ?",
+            (cutoff_iso,))]
+        reclaimed: list[str] = []
+        for run_id in candidates:
+            if _probe is not None:
+                _probe(run_id)
+            try:
+                with self.tx() as cur:
+                    self._exec(cur, f"INSERT INTO instrument_import_events ({self._IM_EVENT_COLS}) "
+                               "VALUES (?,?,?,?,?,?,?,?,?)",
+                               (f"{run_id}-reclaim", run_id, None, now, None, "RECLAIM", "ERROR",
+                                json.dumps({"failure_code": failure_code, "reason": failure_reason}), now))
+                    self._exec(cur, "UPDATE instrument_import_runs SET status='FAILED', failure_code=?, "
+                               "failure_reason=?, ended_at=?, updated_at=? WHERE run_id=? AND "
+                               "status='RUNNING' AND updated_at < ?",
+                               (failure_code, failure_reason, now, now, run_id, cutoff_iso))
+                    if cur.rowcount <= 0:
+                        raise _ReclaimSkipped()
+                reclaimed.append(run_id)
+            except _ReclaimSkipped:
+                continue
+        return reclaimed
+
+    # ---- § WP3 read-only IBKR qualification of the persistent instrument catalogue ----
+    _IQ_RUN_COLS = (
+        "run_id,request_checksum,run_label,exchange,batch_size,pause_seconds,status,"
+        "planned_markets_json,completed_markets_json,failed_markets_json,processed_count,verified_count,"
+        "ambiguous_count,not_tradable_count,mdne_count,error_retryable_count,error_permanent_count,"
+        "failure_code,failure_reason,created_at,started_at,ended_at,updated_at"
+    )
+    _IQ_EVENT_COLS = ("id,run_id,seq,ts,instrument_id,market,event_type,severity,status,con_id,"
+                      "candidate_count,reason,details_json,created_at")
+
+    def _iq_insert_event(self, cur, run_id: str, event: dict, now: str) -> None:
+        self._exec(cur, f"INSERT INTO instrument_qualification_events ({self._IQ_EVENT_COLS}) "
+                   "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (event["id"], run_id, event.get("seq"), event.get("ts", now), event.get("instrument_id"),
+                    event.get("market"), event["event_type"], event.get("severity"), event.get("status"),
+                    (None if event.get("con_id") is None else int(event["con_id"])),
+                    event.get("candidate_count"), event.get("reason"),
+                    json.dumps(event.get("details") or {}), now))
+
+    def iq_select_instruments(self, *, statuses, exchange: str | None = None,
+                              limit: int = 500) -> list[InstrumentRow]:
+        n = max(1, min(5000, int(limit)))
+        status_list = list(statuses) or ["DISCOVERED"]
+        ph = ",".join(["?"] * len(status_list))
+        where = f"qualification_status IN ({ph})"
+        params = list(status_list)
+        if exchange:
+            where += " AND exchange=?"
+            params.append(exchange)
+        rows = self._all(f"SELECT {self._IM_INSTR_COLS} FROM instruments WHERE {where} "
+                         "ORDER BY exchange ASC, instrument_id ASC LIMIT ?", (*params, n))
+        return [self._im_row(r) for r in rows]
+
+    def iq_find_instrument_by_conid(self, con_id: int) -> InstrumentRow | None:
+        r = self._one(f"SELECT {self._IM_INSTR_COLS} FROM instruments WHERE con_id=?", (int(con_id),))
+        return self._im_row(r) if r else None
+
+    def iq_mark_pending(self, instrument_id: str, run_id: str) -> int:
+        """Claim an instrument for qualification (→ QUALIFICATION_PENDING) and return its CURRENT attempt
+        count. Attempts are incremented only when an outcome is actually recorded (see iq_apply_outcome), so
+        a crash between the claim and the outcome burns no attempt — a resumed run does not over-escalate."""
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "UPDATE instruments SET qualification_status='QUALIFICATION_PENDING', "
+                       "qualification_run_id=?, updated_at=? WHERE instrument_id=?",
+                       (run_id, now, instrument_id))
+            self._exec(cur, "SELECT qualification_attempts FROM instruments WHERE instrument_id=?",
+                       (instrument_id,))
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
+
+    def iq_max_event_seq(self, run_id: str) -> int:
+        """Highest event seq recorded for a run (0 if none). Seeds the next event id on resume so a gap left
+        by a rolled-back outcome (or a very large run) never collides with an already-persisted event id."""
+        r = self._one("SELECT MAX(seq) FROM instrument_qualification_events WHERE run_id=?", (run_id,))
+        return int(r[0]) if r and r[0] is not None else 0
+
+    def iq_apply_outcome(self, instrument_id: str, *, run_id: str, qualification_status: str, reason: str,
+                         verification_status: str | None = None, tradability_status: str | None = None,
+                         market_data_status: str | None = None, con_id=None, set_last_verified: bool = False,
+                         count_attempt: bool = True, event: dict) -> None:
+        """Persist one instrument's qualification outcome AND its audit event in ONE transaction, and bump the
+        run's liveness heartbeat. Increments the instrument's attempt count when ``count_attempt`` is True
+        (attempts track genuine RECORDED qualification attempts, not claims). A broker-outage outcome
+        (ConnectionUnavailableError) passes ``count_attempt=False`` so an IBKR outage never consumes an
+        instrument's retry budget. Fail-closed: coarse fields (verification/tradability/market_data/con_id/
+        last_verified_at) are written only when explicitly provided by the caller for a proven outcome. The
+        run's per-status counters are derived authoritatively at finalize, so resume never double-counts."""
+        now = utcnow_iso()
+        sets = ["qualification_status=?", "qualification_reason=?", "qualification_run_id=?",
+                "last_qualified_at=?", "updated_at=?"]
+        if count_attempt:
+            sets.append("qualification_attempts=qualification_attempts+1")
+        params = [qualification_status, reason, run_id, now, now]
+        if verification_status is not None:
+            sets.append("verification_status=?"); params.append(verification_status)
+        if tradability_status is not None:
+            sets.append("tradability_status=?"); params.append(tradability_status)
+        if market_data_status is not None:
+            sets.append("market_data_status=?"); params.append(market_data_status)
+        if con_id is not None:
+            sets.append("con_id=?"); params.append(int(con_id))
+        if set_last_verified:
+            sets.append("last_verified_at=?"); params.append(now)
+        params.append(instrument_id)
+        with self.tx() as cur:
+            self._exec(cur, f"UPDATE instruments SET {','.join(sets)} WHERE instrument_id=?", tuple(params))
+            self._iq_insert_event(cur, run_id, event, now)
+            self._exec(cur, "UPDATE instrument_qualification_runs SET updated_at=? "
+                       "WHERE run_id=? AND status='RUNNING'", (now, run_id))
+
+    def iq_create_run(self, *, run_id: str, request_checksum: str, run_label: str, exchange: str | None,
+                      batch_size: int, pause_seconds: float) -> None:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO instrument_qualification_runs ({self._IQ_RUN_COLS}) "
+                       f"VALUES ({','.join(['?'] * 23)})",
+                       (run_id, request_checksum, run_label, exchange, int(batch_size), str(pause_seconds),
+                        "PLANNED", json.dumps([]), json.dumps([]), json.dumps([]), 0, 0, 0, 0, 0, 0, 0,
+                        None, None, now, None, None, now))
+
+    def iq_advance_run_status(self, run_id: str, expected_from: str, to: str) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            if to == "RUNNING":
+                self._exec(cur, "UPDATE instrument_qualification_runs SET status=?, started_at=?, updated_at=? "
+                           "WHERE run_id=? AND status=?", (to, now, now, run_id, expected_from))
+            else:
+                self._exec(cur, "UPDATE instrument_qualification_runs SET status=?, updated_at=? "
+                           "WHERE run_id=? AND status=?", (to, now, run_id, expected_from))
+            return cur.rowcount > 0
+
+    def iq_set_planned_markets(self, run_id: str, markets) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "UPDATE instrument_qualification_runs SET planned_markets_json=?, updated_at=? "
+                       "WHERE run_id=? AND status='RUNNING'", (json.dumps(list(markets)), now, run_id))
+            return cur.rowcount > 0
+
+    def iq_record_market(self, run_id: str, *, market: str, market_status: str, event: dict | None = None) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "SELECT completed_markets_json,failed_markets_json FROM "
+                       "instrument_qualification_runs WHERE run_id=? AND status='RUNNING'", (run_id,))
+            row = cur.fetchone()
+            if row is None:
+                return False
+            completed = list(json.loads(row[0]))
+            failed = list(json.loads(row[1]))
+            if market_status == "COMPLETED":
+                if market not in completed:
+                    completed.append(market)
+                failed = [m for m in failed if m != market]
+            elif market_status == "FAILED":
+                if market not in failed:
+                    failed.append(market)
+                completed = [m for m in completed if m != market]   # a market is never both
+            self._exec(cur, "UPDATE instrument_qualification_runs SET completed_markets_json=?, "
+                       "failed_markets_json=?, updated_at=? WHERE run_id=? AND status='RUNNING'",
+                       (json.dumps(completed), json.dumps(failed), now, run_id))
+            if cur.rowcount <= 0:
+                return False
+            if event is not None:
+                self._iq_insert_event(cur, run_id, event, now)
+            return True
+
+    def iq_finalize_run(self, run_id: str, *, expected_from: str = "RUNNING", status: str,
+                        failure_code: str | None = None, failure_reason: str | None = None) -> bool:
+        """Finalize a run, deriving the per-status counters AUTHORITATIVELY from the instruments this run
+        last touched (grouped by qualification_status). Deriving-not-accumulating makes the counts exact and
+        immune to resume/re-processing double-counting; the snapshot is then frozen with the terminal flip."""
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "SELECT qualification_status, COUNT(*) FROM instruments "
+                       "WHERE qualification_run_id=? GROUP BY qualification_status", (run_id,))
+            counts = {row[0]: int(row[1]) for row in cur.fetchall()}
+            v = counts.get("VERIFIED", 0)
+            a = counts.get("AMBIGUOUS", 0)
+            nt = counts.get("NOT_TRADABLE", 0)
+            md = counts.get("MARKET_DATA_NOT_ENTITLED", 0)
+            er = counts.get("ERROR_RETRYABLE", 0)
+            ep = counts.get("ERROR_PERMANENT", 0)
+            processed = v + a + nt + md + er + ep
+            self._exec(cur, "UPDATE instrument_qualification_runs SET status=?, verified_count=?, "
+                       "ambiguous_count=?, not_tradable_count=?, mdne_count=?, error_retryable_count=?, "
+                       "error_permanent_count=?, processed_count=?, failure_code=?, failure_reason=?, "
+                       "ended_at=?, updated_at=? WHERE run_id=? AND status=?",
+                       (status, v, a, nt, md, er, ep, processed, failure_code, failure_reason, now, now,
+                        run_id, expected_from))
+            return cur.rowcount > 0
+
+    def iq_get_run(self, run_id: str) -> InstrumentQualificationRunRow | None:
+        r = self._one(f"SELECT {self._IQ_RUN_COLS} FROM instrument_qualification_runs WHERE run_id=?",
+                      (run_id,))
+        return InstrumentQualificationRunRow(*r) if r else None
+
+    def iq_list_runs(self, *, status: str | None = None, limit: int = 50,
+                     offset: int = 0) -> list[InstrumentQualificationRunRow]:
+        n, off = max(1, min(200, int(limit))), max(0, int(offset))
+        clause, params = "", []
+        if status:
+            clause, params = " WHERE status=?", [status]
+        rows = self._all(f"SELECT {self._IQ_RUN_COLS} FROM instrument_qualification_runs{clause} "
+                         "ORDER BY created_at DESC, run_id DESC LIMIT ? OFFSET ?", (*params, n, off))
+        return [InstrumentQualificationRunRow(*r) for r in rows]
+
+    def iq_list_run_events(self, run_id: str, *, limit: int = 500,
+                           offset: int = 0) -> list[InstrumentQualificationEventRow]:
+        n, off = max(1, min(5000, int(limit))), max(0, int(offset))
+        rows = self._all(f"SELECT {self._IQ_EVENT_COLS} FROM instrument_qualification_events WHERE run_id=? "
+                         "ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?", (run_id, n, off))
+        return [InstrumentQualificationEventRow(*r) for r in rows]
+
+    def iq_reclaim_stale_running(self, cutoff_iso: str, *, failure_code: str, failure_reason: str,
+                                 _probe=None) -> list[str]:
+        """Atomically reclaim crashed/stale RUNNING qualification runs as FAILED, re-checking the staleness
+        predicate at the terminal flip (a fresh heartbeat is not reclaimed). Instruments left
+        QUALIFICATION_PENDING remain selectable, so the next run re-qualifies them."""
+        now = utcnow_iso()
+        candidates = [r[0] for r in self._all(
+            "SELECT run_id FROM instrument_qualification_runs WHERE status='RUNNING' AND updated_at < ?",
+            (cutoff_iso,))]
+        reclaimed: list[str] = []
+        for run_id in candidates:
+            if _probe is not None:
+                _probe(run_id)
+            try:
+                with self.tx() as cur:
+                    self._exec(cur, f"INSERT INTO instrument_qualification_events ({self._IQ_EVENT_COLS}) "
+                               "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                               (f"{run_id}-reclaim", run_id, None, now, None, None, "RECLAIM", "ERROR", None,
+                                None, None, failure_reason,
+                                json.dumps({"failure_code": failure_code, "reason": failure_reason}), now))
+                    # best-effort: snapshot the counts this crashed run managed to produce, so a reclaimed
+                    # run's summary reflects what it actually did rather than defaulting to all-zero.
+                    self._exec(cur, "SELECT qualification_status, COUNT(*) FROM instruments "
+                               "WHERE qualification_run_id=? GROUP BY qualification_status", (run_id,))
+                    c = {row[0]: int(row[1]) for row in cur.fetchall()}
+                    v = c.get("VERIFIED", 0); a = c.get("AMBIGUOUS", 0); nt = c.get("NOT_TRADABLE", 0)
+                    md = c.get("MARKET_DATA_NOT_ENTITLED", 0); er = c.get("ERROR_RETRYABLE", 0)
+                    ep = c.get("ERROR_PERMANENT", 0)
+                    self._exec(cur, "UPDATE instrument_qualification_runs SET status='FAILED', verified_count=?, "
+                               "ambiguous_count=?, not_tradable_count=?, mdne_count=?, error_retryable_count=?, "
+                               "error_permanent_count=?, processed_count=?, failure_code=?, failure_reason=?, "
+                               "ended_at=?, updated_at=? WHERE run_id=? AND status='RUNNING' AND updated_at < ?",
+                               (v, a, nt, md, er, ep, v + a + nt + md + er + ep, failure_code, failure_reason,
+                                now, now, run_id, cutoff_iso))
+                    if cur.rowcount <= 0:
+                        raise _ReclaimSkipped()
+                reclaimed.append(run_id)
+            except _ReclaimSkipped:
+                continue
+        return reclaimed
+
+    # ---- § WP4 provider-neutral, persistent market-data foundation (DATA ONLY) ----
+    # CURRENT quote (mutable, monotonic-guarded) split from IMMUTABLE append-only history + bars +
+    # corporate actions; resumable/observable import runs with per-provider/market/instrument isolation.
+    # No trading, no orders/execution, no market-data subscription purchase.
+    _MD_QUOTE_COL_LIST = (
+        "instrument_id", "provider", "provider_instrument_id", "bid", "ask", "last", "mid", "spread",
+        "bid_size", "ask_size", "volume", "reference_price", "previous_close", "data_currency",
+        "source_ts", "receive_ts", "latency_ms", "data_status", "entitlement_status", "license",
+        "quality_status", "adjustment_policy", "corporate_action_version", "provenance_checksum",
+        "import_run_id", "created_at")
+    _MD_QUOTE_MONEY = frozenset({"bid", "ask", "last", "mid", "spread", "bid_size", "ask_size", "volume",
+                                 "reference_price", "previous_close", "latency_ms"})
+    _MD_QUOTE_COLS = ",".join(_MD_QUOTE_COL_LIST)
+    _MD_QUOTE_MONEY_IDX = (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 16)
+    _MD_BAR_COL_LIST = (
+        "instrument_id", "provider", "provider_instrument_id", "interval", "ts", "open", "high", "low",
+        "close", "volume", "trade_count", "data_currency", "source_ts", "receive_ts", "latency_ms",
+        "data_status", "entitlement_status", "license", "quality_status", "adjustment_policy",
+        "corporate_action_version", "provenance_checksum", "import_run_id", "created_at")
+    _MD_BAR_MONEY = frozenset({"open", "high", "low", "close", "volume", "latency_ms"})
+    _MD_BAR_COLS = ",".join(_MD_BAR_COL_LIST)
+    _MD_BAR_MONEY_IDX = (5, 6, 7, 8, 9, 14)
+    _MD_CA_COL_LIST = (
+        "instrument_id", "provider", "action_type", "effective_date", "corporate_action_version",
+        "ex_date", "ratio", "cash_amount", "currency", "provenance_checksum", "import_run_id", "created_at")
+    _MD_CA_COLS = ",".join(_MD_CA_COL_LIST)
+    _MD_ENT_COLS = ("instrument_id,provider,provider_instrument_id,entitlement_status,license,"
+                    "realtime_available,available,capabilities_json,rate_limit_json,reason,"
+                    "last_checked_at,updated_at")
+    _MD_RUN_COLS = (
+        "run_id,request_checksum,run_label,provider,kind,status,planned_markets_json,completed_markets_json,"
+        "failed_markets_json,processed_count,quotes_written_count,bars_written_count,history_appended_count,"
+        "no_data_count,skipped_count,error_count,failure_code,failure_reason,created_at,started_at,"
+        "ended_at,updated_at")
+    _MD_EVENT_COLS = "id,run_id,seq,ts,provider,market,instrument_id,event_type,severity,status,reason,details_json,created_at"
+
+    def _md_quote_values(self, record: dict, now: str, run_id: str | None) -> tuple:
+        out = []
+        for col in self._MD_QUOTE_COL_LIST:
+            if col in self._MD_QUOTE_MONEY:
+                out.append(self._m(record.get(col)))
+            elif col == "created_at":
+                out.append(now)
+            elif col == "import_run_id":
+                out.append(run_id if run_id is not None else record.get("import_run_id"))
+            elif col == "corporate_action_version":
+                out.append(int(record.get(col, 0) or 0))
+            else:
+                out.append(record.get(col))
+        return tuple(out)
+
+    def _md_quote_row(self, r) -> MdQuoteRow:
+        r = list(r)
+        for i in self._MD_QUOTE_MONEY_IDX:
+            r[i] = to_decimal(r[i]) if r[i] is not None else None
+        r[22] = int(r[22]) if r[22] is not None else 0
+        return MdQuoteRow(*r)
+
+    def md_record_quote(self, record: dict, *, run_id: str | None = None, event: dict | None = None) -> dict:
+        """Persist one quote observation atomically: append to the IMMUTABLE history (duplicate-safe via
+        ON CONFLICT DO NOTHING) AND monotonically update the CURRENT quote — a stale / out-of-order / backward
+        / late packet (source_ts <= the stored current) NEVER overwrites the newer current row. In the SAME
+        transaction it marks the instrument processed (processed_count+1) and appends the optional QUOTE_OK
+        event, so a successful quote can never be counted (quotes/history) without also being counted as
+        processed. Returns {history_appended, current} where current is 'inserted'|'updated'|'stale-ignored'."""
+        now = utcnow_iso()
+        # canonicalize source_ts on write so the monotonic string comparison is correct for ANY caller.
+        record = {**record, "source_ts": _md_canon_ts(record.get("source_ts"))}
+        iid, provider, source_ts = record["instrument_id"], record["provider"], record["source_ts"]
+        result = {"history_appended": False, "current": "stale-ignored"}
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO md_quote_history ({self._MD_QUOTE_COLS}) "
+                       f"VALUES ({','.join(['?'] * len(self._MD_QUOTE_COL_LIST))}) "
+                       "ON CONFLICT (instrument_id,provider,source_ts) DO NOTHING",
+                       self._md_quote_values(record, now, run_id))
+            result["history_appended"] = cur.rowcount > 0
+            self._exec(cur, "SELECT source_ts FROM md_quotes_current WHERE instrument_id=? AND provider=?",
+                       (iid, provider))
+            existing = cur.fetchone()
+            values = self._md_quote_values(record, now, run_id)
+            if existing is None:
+                cols = self._MD_QUOTE_COLS + ",updated_at"
+                ph = ",".join(["?"] * (len(self._MD_QUOTE_COL_LIST) + 1))
+                self._exec(cur, f"INSERT INTO md_quotes_current ({cols}) VALUES ({ph})", (*values, now))
+                result["current"] = "inserted"
+            elif existing[0] is None or (source_ts is not None and str(source_ts) > str(existing[0])):
+                setcols = [c for c in self._MD_QUOTE_COL_LIST if c not in ("instrument_id", "provider", "created_at")]
+                set_clause = ",".join(f"{c}=?" for c in setcols) + ",updated_at=?"
+                setvals = tuple(v for c, v in zip(self._MD_QUOTE_COL_LIST, values, strict=True)
+                                if c not in ("instrument_id", "provider", "created_at")) + (now,)
+                self._exec(cur, f"UPDATE md_quotes_current SET {set_clause} WHERE instrument_id=? AND provider=?",
+                           (*setvals, iid, provider))
+                result["current"] = "updated"
+            if run_id is not None:
+                # processed_count + data counters in ONE tx with the write, so quotes/history can never be
+                # counted without the instrument also being counted as processed.
+                self._exec(cur, "UPDATE md_import_runs SET processed_count=processed_count+1, "
+                           "history_appended_count=history_appended_count+?, quotes_written_count=quotes_written_count+?, "
+                           "updated_at=? WHERE run_id=? AND status='RUNNING'",
+                           (1 if result["history_appended"] else 0,
+                            1 if result["current"] in ("inserted", "updated") else 0, now, run_id))
+                if event is not None:
+                    self._md_insert_event(cur, run_id, event, now)
+        return result
+
+    def md_get_current_quote(self, instrument_id: str, provider: str) -> MdQuoteRow | None:
+        r = self._one(f"SELECT {self._MD_QUOTE_COLS},updated_at FROM md_quotes_current "
+                      "WHERE instrument_id=? AND provider=?", (instrument_id, provider))
+        return self._md_quote_row(r) if r else None
+
+    def md_list_current_quotes(self, *, provider: str | None = None, data_status: str | None = None,
+                               limit: int = 500) -> list[MdQuoteRow]:
+        n = max(1, min(5000, int(limit)))
+        where, params = [], []
+        if provider:
+            where.append("provider=?"); params.append(provider)
+        if data_status:
+            where.append("data_status=?"); params.append(data_status)
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        rows = self._all(f"SELECT {self._MD_QUOTE_COLS},updated_at FROM md_quotes_current{clause} "
+                         "ORDER BY instrument_id ASC, provider ASC LIMIT ?", (*params, n))
+        return [self._md_quote_row(r) for r in rows]
+
+    def md_list_quote_history(self, instrument_id: str, provider: str, *, limit: int = 500) -> list[MdQuoteRow]:
+        n = max(1, min(10000, int(limit)))
+        rows = self._all(f"SELECT {self._MD_QUOTE_COLS} FROM md_quote_history "
+                         "WHERE instrument_id=? AND provider=? ORDER BY source_ts ASC LIMIT ?",
+                         (instrument_id, provider, n))
+        return [self._md_quote_row(r) for r in rows]
+
+    def md_append_bar(self, record: dict, *, run_id: str | None = None) -> bool:
+        """Append one immutable provider-neutral bar (duplicate-safe). A late/duplicate bar never overwrites."""
+        now = utcnow_iso()
+        vals = []
+        for col in self._MD_BAR_COL_LIST:
+            if col in self._MD_BAR_MONEY:
+                vals.append(self._m(record.get(col)))
+            elif col == "created_at":
+                vals.append(now)
+            elif col == "import_run_id":
+                vals.append(run_id if run_id is not None else record.get("import_run_id"))
+            elif col == "trade_count":
+                v = record.get(col)
+                vals.append(None if v is None else int(v))
+            elif col == "corporate_action_version":
+                vals.append(int(record.get(col, 0) or 0))
+            else:
+                vals.append(record.get(col))
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO md_bars ({self._MD_BAR_COLS}) "
+                       f"VALUES ({','.join(['?'] * len(self._MD_BAR_COL_LIST))}) "
+                       "ON CONFLICT (instrument_id,provider,interval,ts,adjustment_policy) DO NOTHING",
+                       tuple(vals))
+            appended = cur.rowcount > 0
+            if run_id is not None:
+                self._exec(cur, "UPDATE md_import_runs SET bars_written_count=bars_written_count+?, "
+                           "updated_at=? WHERE run_id=? AND status='RUNNING'",
+                           (1 if appended else 0, now, run_id))
+            return appended
+
+    def md_list_bars(self, instrument_id: str, provider: str, *, interval: str | None = None,
+                     limit: int = 5000) -> list[MdBarRow]:
+        n = max(1, min(60000, int(limit)))
+        where, params = ["instrument_id=?", "provider=?"], [instrument_id, provider]
+        if interval:
+            where.append("interval=?"); params.append(interval)
+        rows = self._all(f"SELECT {self._MD_BAR_COLS} FROM md_bars WHERE {' AND '.join(where)} "
+                         "ORDER BY ts ASC LIMIT ?", (*params, n))
+        out = []
+        for r in rows:
+            r = list(r)
+            for idx in self._MD_BAR_MONEY_IDX:
+                r[idx] = to_decimal(r[idx]) if r[idx] is not None else None
+            r[10] = int(r[10]) if r[10] is not None else None    # trade_count
+            r[20] = int(r[20]) if r[20] is not None else 0        # corporate_action_version
+            out.append(MdBarRow(*r))
+        return out
+
+    def md_append_corporate_action(self, record: dict, *, run_id: str | None = None) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO md_corporate_actions ({self._MD_CA_COLS}) VALUES ({','.join(['?'] * 12)}) "
+                       "ON CONFLICT (instrument_id,provider,action_type,effective_date,corporate_action_version) "
+                       "DO NOTHING",
+                       (record["instrument_id"], record["provider"], record["action_type"],
+                        record["effective_date"], int(record.get("corporate_action_version", 0) or 0),
+                        record.get("ex_date"), self._m(record.get("ratio")), self._m(record.get("cash_amount")),
+                        record.get("currency"), record["provenance_checksum"],
+                        run_id if run_id is not None else record.get("import_run_id"), now))
+            return cur.rowcount > 0
+
+    def md_list_corporate_actions(self, instrument_id: str, *, provider: str | None = None,
+                                  limit: int = 500) -> list[MdCorporateActionRow]:
+        n = max(1, min(5000, int(limit)))
+        where, params = ["instrument_id=?"], [instrument_id]
+        if provider:
+            where.append("provider=?"); params.append(provider)
+        rows = self._all(f"SELECT {self._MD_CA_COLS} FROM md_corporate_actions WHERE {' AND '.join(where)} "
+                         "ORDER BY effective_date ASC, corporate_action_version ASC LIMIT ?", (*params, n))
+        out = []
+        for r in rows:
+            r = list(r)
+            r[4] = int(r[4]) if r[4] is not None else 0
+            r[6] = to_decimal(r[6]) if r[6] is not None else None
+            r[7] = to_decimal(r[7]) if r[7] is not None else None
+            out.append(MdCorporateActionRow(*r))
+        return out
+
+    def md_upsert_provider_entitlement(self, record: dict) -> str:
+        """Record an instrument's provider mapping + explicit availability/entitlement/license. Monotonic on
+        last_checked_at so an out-of-order stale probe never regresses a newer one."""
+        now = utcnow_iso()
+        iid, provider, checked = record["instrument_id"], record["provider"], record["last_checked_at"]
+        vals = (iid, provider, record.get("provider_instrument_id"), record["entitlement_status"],
+                record["license"], 1 if record.get("realtime_available") else 0,
+                1 if record.get("available") else 0, record.get("capabilities_json", "{}"),
+                record.get("rate_limit_json", "{}"), record.get("reason"), checked)
+        with self.tx() as cur:
+            self._exec(cur, "SELECT last_checked_at FROM md_provider_entitlements "
+                       "WHERE instrument_id=? AND provider=?", (iid, provider))
+            existing = cur.fetchone()
+            if existing is None:
+                self._exec(cur, f"INSERT INTO md_provider_entitlements ({self._MD_ENT_COLS}) "
+                           "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (*vals, now))
+                return "inserted"
+            if existing[0] is None or str(checked) >= str(existing[0]):
+                self._exec(cur, "UPDATE md_provider_entitlements SET provider_instrument_id=?, "
+                           "entitlement_status=?, license=?, realtime_available=?, available=?, "
+                           "capabilities_json=?, rate_limit_json=?, reason=?, last_checked_at=?, updated_at=? "
+                           "WHERE instrument_id=? AND provider=?", (*vals[2:], now, iid, provider))
+                return "updated"
+            return "stale-ignored"
+
+    def md_get_provider_entitlement(self, instrument_id: str, provider: str) -> MdProviderEntitlementRow | None:
+        r = self._one(f"SELECT {self._MD_ENT_COLS} FROM md_provider_entitlements "
+                      "WHERE instrument_id=? AND provider=?", (instrument_id, provider))
+        if not r:
+            return None
+        r = list(r)
+        r[5], r[6] = bool(r[5]), bool(r[6])
+        return MdProviderEntitlementRow(*r)
+
+    def md_list_provider_entitlements(self, *, provider: str | None = None,
+                                      limit: int = 1000) -> list[MdProviderEntitlementRow]:
+        n = max(1, min(10000, int(limit)))
+        clause, params = "", []
+        if provider:
+            clause, params = " WHERE provider=?", [provider]
+        rows = self._all(f"SELECT {self._MD_ENT_COLS} FROM md_provider_entitlements{clause} "
+                         "ORDER BY instrument_id ASC, provider ASC LIMIT ?", (*params, n))
+        out = []
+        for r in rows:
+            r = list(r)
+            r[5], r[6] = bool(r[5]), bool(r[6])
+            out.append(MdProviderEntitlementRow(*r))
+        return out
+
+    # ---- market-data import runs (resumable, observable, per-provider/market/instrument isolated) ----
+    def md_select_verified_instruments(self, *, exchange: str | None = None,
+                                       limit: int = 1000) -> list[InstrumentRow]:
+        """Fail-closed selection: ONLY instruments whose WP3 qualification_status is exactly VERIFIED."""
+        n = max(1, min(10000, int(limit)))
+        where, params = ["qualification_status='VERIFIED'"], []
+        if exchange:
+            where.append("exchange=?"); params.append(exchange)
+        rows = self._all(f"SELECT {self._IM_INSTR_COLS} FROM instruments WHERE {' AND '.join(where)} "
+                         "ORDER BY exchange ASC, instrument_id ASC LIMIT ?", (*params, n))
+        return [self._im_row(r) for r in rows]
+
+    def _md_insert_event(self, cur, run_id: str, event: dict, now: str) -> None:
+        self._exec(cur, f"INSERT INTO md_import_events ({self._MD_EVENT_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (event["id"], run_id, event.get("seq"), event.get("ts", now), event.get("provider"),
+                    event.get("market"), event.get("instrument_id"), event["event_type"],
+                    event.get("severity"), event.get("status"), event.get("reason"),
+                    json.dumps(event.get("details") or {}), now))
+
+    def md_create_run(self, *, run_id: str, request_checksum: str, run_label: str, provider: str,
+                      kind: str) -> None:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO md_import_runs ({self._MD_RUN_COLS}) VALUES ({','.join(['?'] * 22)})",
+                       (run_id, request_checksum, run_label, provider, kind, "PLANNED", json.dumps([]),
+                        json.dumps([]), json.dumps([]), 0, 0, 0, 0, 0, 0, 0, None, None, now, None, None, now))
+
+    def md_advance_run_status(self, run_id: str, expected_from: str, to: str) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            if to == "RUNNING":
+                self._exec(cur, "UPDATE md_import_runs SET status=?, started_at=?, updated_at=? "
+                           "WHERE run_id=? AND status=?", (to, now, now, run_id, expected_from))
+            else:
+                self._exec(cur, "UPDATE md_import_runs SET status=?, updated_at=? WHERE run_id=? AND status=?",
+                           (to, now, run_id, expected_from))
+            return cur.rowcount > 0
+
+    def md_set_planned_markets(self, run_id: str, markets) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "UPDATE md_import_runs SET planned_markets_json=?, updated_at=? "
+                       "WHERE run_id=? AND status='RUNNING'", (json.dumps(list(markets)), now, run_id))
+            return cur.rowcount > 0
+
+    def md_max_event_seq(self, run_id: str) -> int:
+        r = self._one("SELECT MAX(seq) FROM md_import_events WHERE run_id=?", (run_id,))
+        return int(r[0]) if r and r[0] is not None else 0
+
+    def md_append_run_event(self, run_id: str, *, event: dict) -> None:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._md_insert_event(cur, run_id, event, now)
+
+    def md_bump_counter(self, run_id: str, counter: str | None = None, *, event: dict | None = None) -> bool:
+        """Mark ONE instrument processed (processed_count+1) and optionally bump one outcome counter
+        (no_data_count / skipped_count / error_count), guarded on RUNNING, with an optional event, in one tx.
+        Called exactly once per instrument so processed_count counts instruments, not rows. `counter` is from a
+        fixed allow-list (never caller-interpolated blindly)."""
+        allowed = {"no_data_count", "skipped_count", "error_count"}
+        if counter is not None and counter not in allowed:
+            raise ValueError(f"unknown md counter {counter!r}")
+        now = utcnow_iso()
+        extra = f", {counter}={counter}+1" if counter else ""
+        with self.tx() as cur:
+            self._exec(cur, f"UPDATE md_import_runs SET processed_count=processed_count+1{extra}, "
+                       "updated_at=? WHERE run_id=? AND status='RUNNING'", (now, run_id))
+            ok = cur.rowcount > 0
+            if event is not None and ok:
+                self._md_insert_event(cur, run_id, event, now)
+            return ok
+
+    def md_record_market(self, run_id: str, *, market: str, market_status: str,
+                         event: dict | None = None) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "SELECT completed_markets_json,failed_markets_json FROM md_import_runs "
+                       "WHERE run_id=? AND status='RUNNING'", (run_id,))
+            row = cur.fetchone()
+            if row is None:
+                return False
+            completed = list(json.loads(row[0]))
+            failed = list(json.loads(row[1]))
+            if market_status == "COMPLETED":
+                if market not in completed:
+                    completed.append(market)
+                failed = [x for x in failed if x != market]
+            elif market_status == "FAILED":
+                if market not in failed:
+                    failed.append(market)
+                completed = [x for x in completed if x != market]
+            self._exec(cur, "UPDATE md_import_runs SET completed_markets_json=?, failed_markets_json=?, "
+                       "updated_at=? WHERE run_id=? AND status='RUNNING'",
+                       (json.dumps(completed), json.dumps(failed), now, run_id))
+            if cur.rowcount <= 0:
+                return False
+            if event is not None:
+                self._md_insert_event(cur, run_id, event, now)
+            return True
+
+    def md_finalize_run(self, run_id: str, *, expected_from: str = "RUNNING", status: str,
+                        failure_code: str | None = None, failure_reason: str | None = None) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "UPDATE md_import_runs SET status=?, failure_code=?, failure_reason=?, "
+                       "ended_at=?, updated_at=? WHERE run_id=? AND status=?",
+                       (status, failure_code, failure_reason, now, now, run_id, expected_from))
+            return cur.rowcount > 0
+
+    def md_get_run(self, run_id: str) -> MdImportRunRow | None:
+        r = self._one(f"SELECT {self._MD_RUN_COLS} FROM md_import_runs WHERE run_id=?", (run_id,))
+        return MdImportRunRow(*r) if r else None
+
+    def md_list_runs(self, *, status: str | None = None, provider: str | None = None,
+                     limit: int = 50, offset: int = 0) -> list[MdImportRunRow]:
+        n, off = max(1, min(200, int(limit))), max(0, int(offset))
+        where, params = [], []
+        if status:
+            where.append("status=?"); params.append(status)
+        if provider:
+            where.append("provider=?"); params.append(provider)
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        rows = self._all(f"SELECT {self._MD_RUN_COLS} FROM md_import_runs{clause} "
+                         "ORDER BY created_at DESC, run_id DESC LIMIT ? OFFSET ?", (*params, n, off))
+        return [MdImportRunRow(*r) for r in rows]
+
+    def md_list_run_events(self, run_id: str, *, limit: int = 1000, offset: int = 0) -> list[MdImportEventRow]:
+        n, off = max(1, min(10000, int(limit))), max(0, int(offset))
+        rows = self._all(f"SELECT {self._MD_EVENT_COLS} FROM md_import_events WHERE run_id=? "
+                         "ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?", (run_id, n, off))
+        return [MdImportEventRow(*r) for r in rows]
+
+    def md_reclaim_stale_running(self, cutoff_iso: str, *, failure_code: str, failure_reason: str,
+                                 _probe=None) -> list[str]:
+        """Atomically reclaim crashed/stale RUNNING market-data runs as FAILED, re-checking staleness at the
+        guarded flip so a live heartbeating run is not reclaimed. Immutable RECLAIM event in the same tx."""
+        now = utcnow_iso()
+        candidates = [r[0] for r in self._all(
+            "SELECT run_id FROM md_import_runs WHERE status='RUNNING' AND updated_at < ?", (cutoff_iso,))]
+        reclaimed: list[str] = []
+        for run_id in candidates:
+            if _probe is not None:
+                _probe(run_id)
+            try:
+                with self.tx() as cur:
+                    self._exec(cur, f"INSERT INTO md_import_events ({self._MD_EVENT_COLS}) "
+                               "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                               (f"{run_id}-reclaim", run_id, None, now, None, None, None, "RECLAIM", "ERROR",
+                                None, failure_reason, json.dumps({"failure_code": failure_code}), now))
+                    self._exec(cur, "UPDATE md_import_runs SET status='FAILED', failure_code=?, "
+                               "failure_reason=?, ended_at=?, updated_at=? WHERE run_id=? AND "
+                               "status='RUNNING' AND updated_at < ?",
+                               (failure_code, failure_reason, now, now, run_id, cutoff_iso))
+                    if cur.rowcount <= 0:
+                        raise _ReclaimSkipped()
+                reclaimed.append(run_id)
+            except _ReclaimSkipped:
+                continue
+        return reclaimed
+
+    # ---- § WP5 worldwide news & official filings (RESEARCH DATA ONLY) ----
+    # Immutable original messages + fail-closed instrument mapping + append-only corrections/retractions;
+    # resumable/observable/per-provider-region-isolated import runs. No trading, no orders/execution, no
+    # subscription purchase, no HTTP write path.
+    _NX_MSG_COL_LIST = (
+        "message_id", "provider", "provider_id", "source_id", "source_type", "primacy", "original_title",
+        "original_body", "original_language", "translated_title", "translated_summary", "translation_status",
+        "translation_source", "url", "published_at", "received_at", "correction_at", "event_category",
+        "relevance", "impact_estimate", "uncertainty", "source_confidence", "license_status",
+        "storage_status", "time_status", "content_checksum", "cluster_id", "correction_of_id",
+        "retraction_of_id", "supersedes_id", "duplicate_of_id", "affected_countries_json",
+        "affected_regions_json", "affected_industries_json", "affected_companies_json",
+        "affected_exchanges_json", "provenance_json", "created_at")
+    _NX_MSG_COLS = ",".join(_NX_MSG_COL_LIST)
+    _NX_SRC_COLS = ("source_id,name,source_type,primacy,regions_json,languages_json,update_mode,"
+                    "rate_limit_json,license_status,storage_allowed,redistribution_allowed,"
+                    "commercial_use_allowed,attribution_required,available,last_success_at,last_error,"
+                    "created_at,updated_at")
+    _NX_RUN_COLS = (
+        "run_id,request_checksum,run_label,provider,source_id,cursor,status,completed_regions_json,"
+        "failed_regions_json,fetched_count,stored_count,duplicate_count,ambiguous_count,correction_count,"
+        "retraction_count,unmapped_count,error_count,failure_code,failure_reason,created_at,started_at,"
+        "ended_at,updated_at")
+    _NX_EVENT_COLS = "id,run_id,seq,ts,provider,region,message_id,event_type,severity,reason,details_json,created_at"
+    _NX_MSG_EVENT_COLS = "id,message_id,seq,ts,event_type,severity,related_message_id,details_json,created_at"
+
+    # -- fail-closed instrument mapping (uses the WP2 catalogue only) --
+    def nx_resolve_instruments(self, *, symbol=None, exchange=None, isin=None,
+                               con_id=None) -> list[tuple]:
+        """Resolve a message's identifier hints to catalogue instruments, fail-closed → list of
+        (instrument_id, mapping_status). A stable id (conId/ISIN/symbol+exchange) with exactly ONE match is
+        VERIFIED; >1 is AMBIGUOUS; a symbol ALONE is NEVER unique (any match → AMBIGUOUS); no match → []. No
+        fabricated mapping — only instruments that actually exist are returned."""
+        if con_id is not None:
+            rows = self._all("SELECT instrument_id FROM instruments WHERE con_id=?", (int(con_id),))
+            if len(rows) == 1:                                # defensive: don't rely on the UNIQUE constraint
+                return [(rows[0][0], "VERIFIED")]
+            return [(r[0], "AMBIGUOUS") for r in rows]        # 0 → []; a hypothetical collision → AMBIGUOUS
+        if isin:
+            rows = self._all("SELECT instrument_id FROM instruments WHERE isin=?", (isin,))
+            if len(rows) == 1:
+                return [(rows[0][0], "VERIFIED")]
+            return [(r[0], "AMBIGUOUS") for r in rows]
+        if symbol and exchange:
+            rows = self._all("SELECT instrument_id FROM instruments WHERE symbol=? AND exchange=?",
+                             (symbol, exchange))
+            if len(rows) == 1:
+                return [(rows[0][0], "VERIFIED")]
+            return [(r[0], "AMBIGUOUS") for r in rows]
+        if symbol:
+            rows = self._all("SELECT instrument_id FROM instruments WHERE symbol=?", (symbol,))
+            return [(r[0], "AMBIGUOUS") for r in rows]   # symbol alone can never be VERIFIED
+        return []
+
+    # -- source registry (mutable) --
+    def nx_upsert_source(self, record: dict) -> str:
+        now = utcnow_iso()
+        sid = record["source_id"]
+        vals = (sid, record["name"], record["source_type"], record["primacy"],
+                record.get("regions_json", "[]"), record.get("languages_json", "[]"),
+                record.get("update_mode", "unknown"), record.get("rate_limit_json", "{}"),
+                record["license_status"], 1 if record.get("storage_allowed") else 0,
+                1 if record.get("redistribution_allowed") else 0,
+                1 if record.get("commercial_use_allowed") else 0,
+                1 if record.get("attribution_required", True) else 0, 1 if record.get("available") else 0)
+        with self.tx() as cur:
+            self._exec(cur, "SELECT source_id FROM news_sources WHERE source_id=?", (sid,))
+            if cur.fetchone() is None:
+                self._exec(cur, f"INSERT INTO news_sources ({self._NX_SRC_COLS}) "
+                           "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (*vals, None, None, now, now))
+                return "inserted"
+            self._exec(cur, "UPDATE news_sources SET name=?, source_type=?, primacy=?, regions_json=?, "
+                       "languages_json=?, update_mode=?, rate_limit_json=?, license_status=?, storage_allowed=?, "
+                       "redistribution_allowed=?, commercial_use_allowed=?, attribution_required=?, available=?, "
+                       "updated_at=? WHERE source_id=?", (*vals[1:], now, sid))
+            return "updated"
+
+    def nx_mark_source_result(self, source_id: str, *, available: bool, success: bool,
+                              last_error: str | None = None) -> None:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            if success:
+                self._exec(cur, "UPDATE news_sources SET available=?, last_success_at=?, last_error=?, "
+                           "updated_at=? WHERE source_id=?", (1 if available else 0, now, None, now, source_id))
+            else:
+                self._exec(cur, "UPDATE news_sources SET available=?, last_error=?, updated_at=? "
+                           "WHERE source_id=?", (1 if available else 0, last_error, now, source_id))
+
+    def nx_get_source(self, source_id: str) -> NewsSourceRow | None:
+        r = self._one(f"SELECT {self._NX_SRC_COLS} FROM news_sources WHERE source_id=?", (source_id,))
+        return self._nx_source_row(r) if r else None
+
+    def nx_list_sources(self) -> list[NewsSourceRow]:
+        rows = self._all(f"SELECT {self._NX_SRC_COLS} FROM news_sources ORDER BY source_id ASC")
+        return [self._nx_source_row(r) for r in rows]
+
+    @staticmethod
+    def _nx_source_row(r) -> NewsSourceRow:
+        r = list(r)
+        for idx in (9, 10, 11, 12, 13):   # bool columns
+            r[idx] = bool(r[idx])
+        return NewsSourceRow(*r)
+
+    # -- immutable messages + mappings + events --
+    def nx_find_message_id_by_checksum(self, content_checksum: str) -> str | None:
+        r = self._one("SELECT message_id FROM news_messages WHERE content_checksum=? "
+                      "ORDER BY created_at ASC, message_id ASC LIMIT 1", (content_checksum,))
+        return r[0] if r else None
+
+    def nx_insert_message(self, record: dict, *, mappings=(), run_id: str | None = None,
+                          run_event: dict | None = None, duplicate: bool = False, ambiguous: bool = False,
+                          unmapped: bool = False, is_correction: bool = False,
+                          is_retraction: bool = False) -> str:
+        """Insert one IMMUTABLE message + its fail-closed instrument mappings AND atomically advance the run
+        counters + run event, in ONE transaction. Idempotent per message_id (ON CONFLICT DO NOTHING) — a
+        re-ingest is a no-op and the original is never overwritten. `fetched_count` is bumped for every call;
+        the outcome counters (stored/duplicate/ambiguous/unmapped/correction/retraction) and the run event
+        are applied ONLY when the message is newly inserted, so a stored message is always counted. Returns
+        'inserted' or 'exists'."""
+        now = utcnow_iso()
+        mid = record["message_id"]
+        values = tuple(record.get(c) for c in self._NX_MSG_COL_LIST[:-1]) + (now,)
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO news_messages ({self._NX_MSG_COLS}) "
+                       f"VALUES ({','.join(['?'] * len(self._NX_MSG_COL_LIST))}) "
+                       "ON CONFLICT (message_id) DO NOTHING", values)
+            inserted = cur.rowcount > 0
+            if inserted:
+                for instrument_id, status, *rest in mappings:
+                    conf = rest[0] if rest else None
+                    method = rest[1] if len(rest) > 1 else None
+                    self._exec(cur, "INSERT INTO news_message_instruments "
+                               "(message_id,instrument_id,mapping_status,confidence,method,created_at) "
+                               "VALUES (?,?,?,?,?,?) ON CONFLICT (message_id,instrument_id) DO NOTHING",
+                               (mid, instrument_id, status, conf, method, now))
+                # order-independent, atomic correction/retraction audit links (forward + backfill)
+                self._nx_link_corrections(cur, mid, record, now)
+            if run_id is not None:
+                cols = ["fetched_count=fetched_count+1"]
+                if inserted:
+                    cols.append("stored_count=stored_count+1")
+                    if duplicate:
+                        cols.append("duplicate_count=duplicate_count+1")
+                    if ambiguous:
+                        cols.append("ambiguous_count=ambiguous_count+1")
+                    if unmapped:
+                        cols.append("unmapped_count=unmapped_count+1")
+                    if is_correction:
+                        cols.append("correction_count=correction_count+1")
+                    if is_retraction:
+                        cols.append("retraction_count=retraction_count+1")
+                self._exec(cur, f"UPDATE news_import_runs SET {','.join(cols)}, updated_at=? "
+                           "WHERE run_id=? AND status='RUNNING'", (now, run_id))
+                run_is_live = cur.rowcount > 0   # 0 → run already terminal (e.g. reclaimed) while a straggler
+                # worker kept going; the global message is still stored + dedup-safe, but we must NOT append a
+                # run event to a frozen run (that would desync its counters from its event log). Fail closed.
+                if inserted and run_event is not None and run_is_live:
+                    self._nx_insert_event(cur, run_id, run_event, now)
+            return "inserted" if inserted else "exists"
+
+    def _nx_insert_msg_event(self, cur, message_id: str, event: dict, now: str) -> None:
+        # ON CONFLICT DO NOTHING → the forward (correction-after-original) and backfill (original-after-
+        # correction) links are order-independent and idempotent; a deterministic event id makes the second
+        # path a no-op rather than a duplicate. (A no-op insert does not fire the insert-only UPDATE trigger.)
+        self._exec(cur, f"INSERT INTO news_message_events ({self._NX_MSG_EVENT_COLS}) "
+                   "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING",
+                   (event["id"], message_id, event.get("seq"), event.get("ts", now), event["event_type"],
+                    event.get("severity"), event.get("related_message_id"),
+                    json.dumps(event.get("details") or {}), now))
+
+    def _nx_link_corrections(self, cur, message_id: str, record: dict, now: str) -> None:
+        """Record the append-only CORRECTION/RETRACTION audit events on the IMMUTABLE original, in BOTH
+        directions and order-independently: (forward) this message corrects/retracts an already-stored
+        original; (backfill) this message IS an original that already-stored corrections/retractions
+        reference. Idempotent via deterministic event ids, so it never double-records or depends on arrival
+        order. The original is never mutated — only its append-only event log gains a record."""
+        # forward
+        for target, etype, sev in ((record.get("correction_of_id"), "CORRECTION", "INFO"),
+                                   (record.get("retraction_of_id"), "RETRACTION", "WARN")):
+            if target and self._one("SELECT 1 FROM news_messages WHERE message_id=?", (target,)):
+                self._nx_insert_msg_event(cur, target, {
+                    "id": f"{message_id}-{'corr' if etype == 'CORRECTION' else 'retr'}",
+                    "event_type": etype, "severity": sev, "related_message_id": message_id}, now)
+        # backfill: pre-existing messages that reference THIS message as their original
+        for ref_id, corr_of, retr_of in self._all(
+                "SELECT message_id, correction_of_id, retraction_of_id FROM news_messages "
+                "WHERE correction_of_id=? OR retraction_of_id=?", (message_id, message_id)):
+            if corr_of == message_id:
+                self._nx_insert_msg_event(cur, message_id, {
+                    "id": f"{ref_id}-corr", "event_type": "CORRECTION", "severity": "INFO",
+                    "related_message_id": ref_id}, now)
+            if retr_of == message_id:
+                self._nx_insert_msg_event(cur, message_id, {
+                    "id": f"{ref_id}-retr", "event_type": "RETRACTION", "severity": "WARN",
+                    "related_message_id": ref_id}, now)
+
+    def nx_append_message_event(self, message_id: str, *, event: dict) -> None:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._nx_insert_msg_event(cur, message_id, event, now)
+
+    def nx_get_message(self, message_id: str) -> NewsMessageRow | None:
+        r = self._one(f"SELECT {self._NX_MSG_COLS} FROM news_messages WHERE message_id=?", (message_id,))
+        return NewsMessageRow(*r) if r else None
+
+    def nx_list_messages(self, *, source_id: str | None = None, event_category: str | None = None,
+                         cluster_id: str | None = None, limit: int = 200, offset: int = 0) -> list[NewsMessageRow]:
+        n, off = max(1, min(2000, int(limit))), max(0, int(offset))
+        where, params = [], []
+        if source_id:
+            where.append("source_id=?"); params.append(source_id)
+        if event_category:
+            where.append("event_category=?"); params.append(event_category)
+        if cluster_id:
+            where.append("cluster_id=?"); params.append(cluster_id)
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        rows = self._all(f"SELECT {self._NX_MSG_COLS} FROM news_messages{clause} "
+                         "ORDER BY created_at ASC, message_id ASC LIMIT ? OFFSET ?", (*params, n, off))
+        return [NewsMessageRow(*r) for r in rows]
+
+    def nx_list_message_instruments(self, message_id: str) -> list[NewsMessageInstrumentRow]:
+        rows = self._all("SELECT message_id,instrument_id,mapping_status,confidence,method,created_at "
+                         "FROM news_message_instruments WHERE message_id=? ORDER BY instrument_id ASC",
+                         (message_id,))
+        return [NewsMessageInstrumentRow(*r) for r in rows]
+
+    def nx_list_messages_for_instrument(self, instrument_id: str, *, mapping_status: str | None = None,
+                                        limit: int = 200) -> list[str]:
+        n = max(1, min(2000, int(limit)))
+        where, params = ["instrument_id=?"], [instrument_id]
+        if mapping_status:
+            where.append("mapping_status=?"); params.append(mapping_status)
+        rows = self._all(f"SELECT message_id FROM news_message_instruments WHERE {' AND '.join(where)} "
+                         "ORDER BY created_at DESC LIMIT ?", (*params, n))
+        return [r[0] for r in rows]
+
+    def nx_list_message_events(self, message_id: str, *, limit: int = 200) -> list[NewsMessageEventRow]:
+        n = max(1, min(2000, int(limit)))
+        rows = self._all(f"SELECT {self._NX_MSG_EVENT_COLS} FROM news_message_events WHERE message_id=? "
+                         "ORDER BY created_at ASC, id ASC LIMIT ?", (message_id, n))
+        return [NewsMessageEventRow(*r) for r in rows]
+
+    def nx_derived_message_status(self, message_id: str) -> str:
+        """Fail-closed DERIVED lifecycle (never a mutation of the immutable original): RETRACTED if a
+        retraction message references it, CORRECTED if a correction does, else ACTIVE."""
+        if self._one("SELECT 1 FROM news_messages WHERE retraction_of_id=? LIMIT 1", (message_id,)):
+            return "RETRACTED"
+        if self._one("SELECT 1 FROM news_messages WHERE correction_of_id=? LIMIT 1", (message_id,)):
+            return "CORRECTED"
+        return "ACTIVE"
+
+    # -- import runs (resumable, observable, per-provider/region isolated) --
+    def _nx_insert_event(self, cur, run_id: str, event: dict, now: str) -> None:
+        self._exec(cur, f"INSERT INTO news_import_events ({self._NX_EVENT_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (event["id"], run_id, event.get("seq"), event.get("ts", now), event.get("provider"),
+                    event.get("region"), event.get("message_id"), event["event_type"], event.get("severity"),
+                    event.get("reason"), json.dumps(event.get("details") or {}), now))
+
+    def nx_create_run(self, *, run_id: str, request_checksum: str, run_label: str, provider: str,
+                      source_id: str) -> None:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO news_import_runs ({self._NX_RUN_COLS}) VALUES ({','.join(['?'] * 23)})",
+                       (run_id, request_checksum, run_label, provider, source_id, None, "PLANNED",
+                        json.dumps([]), json.dumps([]), 0, 0, 0, 0, 0, 0, 0, 0, None, None, now, None, None, now))
+
+    def nx_advance_run_status(self, run_id: str, expected_from: str, to: str) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            if to == "RUNNING":
+                self._exec(cur, "UPDATE news_import_runs SET status=?, started_at=?, updated_at=? "
+                           "WHERE run_id=? AND status=?", (to, now, now, run_id, expected_from))
+            else:
+                self._exec(cur, "UPDATE news_import_runs SET status=?, updated_at=? WHERE run_id=? AND status=?",
+                           (to, now, run_id, expected_from))
+            return cur.rowcount > 0
+
+    def nx_set_cursor(self, run_id: str, cursor: str | None) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "UPDATE news_import_runs SET cursor=?, updated_at=? "
+                       "WHERE run_id=? AND status='RUNNING'", (cursor, now, run_id))
+            return cur.rowcount > 0
+
+    _NX_COUNTERS = frozenset({"fetched_count", "stored_count", "duplicate_count", "ambiguous_count",
+                              "correction_count", "retraction_count", "unmapped_count", "error_count"})
+
+    def nx_bump(self, run_id: str, counters: dict, *, event: dict | None = None) -> bool:
+        """Increment one or more run counters (from a fixed allow-list) guarded on RUNNING, with an optional
+        event, in one transaction."""
+        deltas = {k: int(v) for k, v in counters.items() if k in self._NX_COUNTERS and v}
+        now = utcnow_iso()
+        with self.tx() as cur:
+            if deltas:
+                sets = ",".join(f"{k}={k}+?" for k in deltas)
+                self._exec(cur, f"UPDATE news_import_runs SET {sets}, updated_at=? "
+                           "WHERE run_id=? AND status='RUNNING'", (*deltas.values(), now, run_id))
+            else:
+                self._exec(cur, "UPDATE news_import_runs SET updated_at=? WHERE run_id=? AND status='RUNNING'",
+                           (now, run_id))
+            ok = cur.rowcount > 0
+            if event is not None and ok:
+                self._nx_insert_event(cur, run_id, event, now)
+            return ok
+
+    def nx_record_region(self, run_id: str, *, region: str, region_status: str,
+                         event: dict | None = None) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "SELECT completed_regions_json,failed_regions_json FROM news_import_runs "
+                       "WHERE run_id=? AND status='RUNNING'", (run_id,))
+            row = cur.fetchone()
+            if row is None:
+                return False
+            completed = list(json.loads(row[0]))
+            failed = list(json.loads(row[1]))
+            if region_status == "COMPLETED":
+                if region not in completed:
+                    completed.append(region)
+                failed = [x for x in failed if x != region]
+            elif region_status == "FAILED":
+                if region not in failed:
+                    failed.append(region)
+                completed = [x for x in completed if x != region]
+            self._exec(cur, "UPDATE news_import_runs SET completed_regions_json=?, failed_regions_json=?, "
+                       "updated_at=? WHERE run_id=? AND status='RUNNING'",
+                       (json.dumps(completed), json.dumps(failed), now, run_id))
+            if cur.rowcount <= 0:
+                return False
+            if event is not None:
+                self._nx_insert_event(cur, run_id, event, now)
+            return True
+
+    def nx_append_run_event(self, run_id: str, *, event: dict) -> None:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._nx_insert_event(cur, run_id, event, now)
+
+    def nx_max_event_seq(self, run_id: str) -> int:
+        r = self._one("SELECT MAX(seq) FROM news_import_events WHERE run_id=?", (run_id,))
+        return int(r[0]) if r and r[0] is not None else 0
+
+    def nx_finalize_run(self, run_id: str, *, expected_from: str = "RUNNING", status: str,
+                        failure_code: str | None = None, failure_reason: str | None = None) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            self._exec(cur, "UPDATE news_import_runs SET status=?, failure_code=?, failure_reason=?, "
+                       "ended_at=?, updated_at=? WHERE run_id=? AND status=?",
+                       (status, failure_code, failure_reason, now, now, run_id, expected_from))
+            return cur.rowcount > 0
+
+    def nx_get_run(self, run_id: str) -> NewsImportRunRow | None:
+        r = self._one(f"SELECT {self._NX_RUN_COLS} FROM news_import_runs WHERE run_id=?", (run_id,))
+        return NewsImportRunRow(*r) if r else None
+
+    def nx_list_runs(self, *, status: str | None = None, limit: int = 50,
+                     offset: int = 0) -> list[NewsImportRunRow]:
+        n, off = max(1, min(200, int(limit))), max(0, int(offset))
+        clause, params = "", []
+        if status:
+            clause, params = " WHERE status=?", [status]
+        rows = self._all(f"SELECT {self._NX_RUN_COLS} FROM news_import_runs{clause} "
+                         "ORDER BY created_at DESC, run_id DESC LIMIT ? OFFSET ?", (*params, n, off))
+        return [NewsImportRunRow(*r) for r in rows]
+
+    def nx_list_run_events(self, run_id: str, *, limit: int = 1000, offset: int = 0) -> list[NewsImportEventRow]:
+        n, off = max(1, min(10000, int(limit))), max(0, int(offset))
+        rows = self._all(f"SELECT {self._NX_EVENT_COLS} FROM news_import_events WHERE run_id=? "
+                         "ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?", (run_id, n, off))
+        return [NewsImportEventRow(*r) for r in rows]
+
+    def nx_reclaim_stale_running(self, cutoff_iso: str, *, failure_code: str, failure_reason: str,
+                                 _probe=None) -> list[str]:
+        """Atomically reclaim crashed/stale RUNNING news-import runs as FAILED (parallel-worker safe: the
+        staleness predicate is re-checked at the guarded flip, so a live heartbeating run is not reclaimed).
+        Immutable RECLAIM event in the same tx."""
+        now = utcnow_iso()
+        candidates = [r[0] for r in self._all(
+            "SELECT run_id FROM news_import_runs WHERE status='RUNNING' AND updated_at < ?", (cutoff_iso,))]
+        reclaimed: list[str] = []
+        for run_id in candidates:
+            if _probe is not None:
+                _probe(run_id)
+            try:
+                with self.tx() as cur:
+                    # ON CONFLICT DO NOTHING → two concurrent reclaimers do not collide on this event PK; the
+                    # guarded UPDATE below (re-checked staleness → _ReclaimSkipped) remains the sole arbiter.
+                    self._exec(cur, f"INSERT INTO news_import_events ({self._NX_EVENT_COLS}) "
+                               "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING",
+                               (f"{run_id}-reclaim", run_id, None, now, None, None, None, "RECLAIM", "ERROR",
+                                failure_reason, json.dumps({"failure_code": failure_code}), now))
+                    self._exec(cur, "UPDATE news_import_runs SET status='FAILED', failure_code=?, "
+                               "failure_reason=?, ended_at=?, updated_at=? WHERE run_id=? AND "
+                               "status='RUNNING' AND updated_at < ?",
+                               (failure_code, failure_reason, now, now, run_id, cutoff_iso))
+                    if cur.rowcount <= 0:
+                        raise _ReclaimSkipped()
+                reclaimed.append(run_id)
+            except _ReclaimSkipped:
+                continue
+        return reclaimed
+
+    # -- read-only observability aggregates --
+    def nx_count_messages(self, *, source_id: str | None = None) -> int:
+        clause, params = ("", ())
+        if source_id:
+            clause, params = " WHERE source_id=?", (source_id,)
+        r = self._one(f"SELECT COUNT(*) FROM news_messages{clause}", params)
+        return int(r[0]) if r else 0
+
+    def nx_dedup_stats(self) -> dict:
+        total = self.nx_count_messages()
+        dups = self._one("SELECT COUNT(*) FROM news_messages WHERE duplicate_of_id IS NOT NULL")
+        dup = int(dups[0]) if dups else 0
+        return {"total": total, "exact_duplicates": dup,
+                "duplicate_rate": (dup / total) if total else 0.0}
+
+    def nx_count_ambiguous_mappings(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM news_message_instruments WHERE mapping_status='AMBIGUOUS'")
+        return int(r[0]) if r else 0
+
+    def nx_corrections_retractions(self) -> dict:
+        c = self._one("SELECT COUNT(*) FROM news_messages WHERE correction_of_id IS NOT NULL")
+        r = self._one("SELECT COUNT(*) FROM news_messages WHERE retraction_of_id IS NOT NULL")
+        return {"corrections": int(c[0]) if c else 0, "retractions": int(r[0]) if r else 0}
+
+    # === § WP6 — macro / geopolitical event overlay + registry (read-only research data) =================
+    _MX_EVENT_COL_LIST = (
+        "message_id", "macro_type", "source_class", "geo_scope", "severity", "policy_area",
+        "affected_regions_json", "affected_countries_json", "affected_blocs_json",
+        "affected_asset_classes_json", "link_status", "macro_cluster_id", "macro_checksum",
+        "correction_of_id", "retraction_of_id", "provenance_json", "created_at")
+    _MX_EVENT_COLS = ",".join(_MX_EVENT_COL_LIST)
+    _MX_SRC_COL_LIST = (
+        "source_id", "name", "source_class", "regions_json", "languages_json", "mandate", "update_mode",
+        "rate_limit_json", "license_status", "storage_allowed", "redistribution_allowed",
+        "commercial_use_allowed", "attribution_required", "available", "last_success_at", "last_error",
+        "created_at", "updated_at")
+    _MX_SRC_COLS = ",".join(_MX_SRC_COL_LIST)
+
+    # -- macro source registry (mutable) --
+    def mx_upsert_macro_source(self, record: dict) -> str:
+        """Idempotent upsert of a macro source (registry). Availability / license / mandate are updated; the
+        source is fail-closed (unavailable, unlicensed) until an entitled channel attaches."""
+        now = utcnow_iso()
+        cols = self._MX_SRC_COL_LIST
+        vals = tuple(record.get(c) for c in cols[:-2]) + (now, now)
+        upd = ",".join(f"{c}=excluded.{c}" for c in cols if c not in ("source_id", "created_at"))
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO macro_sources ({self._MX_SRC_COLS}) "
+                       f"VALUES ({','.join(['?'] * len(cols))}) "
+                       f"ON CONFLICT (source_id) DO UPDATE SET {upd}", vals)
+        return record["source_id"]
+
+    def mx_mark_macro_source_result(self, source_id: str, *, available: bool, success: bool,
+                                    last_error: str | None = None) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            if success:
+                self._exec(cur, "UPDATE macro_sources SET available=?, last_success_at=?, last_error=?, "
+                           "updated_at=? WHERE source_id=?", (available, now, None, now, source_id))
+            else:
+                self._exec(cur, "UPDATE macro_sources SET available=?, last_error=?, updated_at=? "
+                           "WHERE source_id=?", (available, last_error, now, source_id))
+            return cur.rowcount > 0
+
+    def mx_get_macro_source(self, source_id: str) -> MacroSourceRow | None:
+        r = self._one(f"SELECT {self._MX_SRC_COLS} FROM macro_sources WHERE source_id=?", (source_id,))
+        return self._mx_source_row(r) if r else None
+
+    def mx_list_macro_sources(self) -> list[MacroSourceRow]:
+        rows = self._all(f"SELECT {self._MX_SRC_COLS} FROM macro_sources ORDER BY source_id ASC")
+        return [self._mx_source_row(r) for r in rows]
+
+    @staticmethod
+    def _mx_source_row(r) -> MacroSourceRow:
+        return MacroSourceRow(*r[:9], bool(r[9]), bool(r[10]), bool(r[11]), bool(r[12]), bool(r[13]),
+                              *r[14:])
+
+    # -- macro event overlay (immutable) --
+    def mx_insert_macro_event(self, message_record: dict, macro_record: dict, *, mappings=(),
+                              run_id: str | None = None, run_event: dict | None = None,
+                              duplicate: bool = False, ambiguous: bool = False, unmapped: bool = False,
+                              is_correction: bool = False, is_retraction: bool = False) -> str:
+        """Insert one IMMUTABLE newsroom message + its macro OVERLAY + fail-closed instrument mappings AND
+        atomically advance the run counters + run event, in ONE transaction. Idempotent per message_id (ON
+        CONFLICT DO NOTHING on BOTH the message and the overlay) — a re-ingest is a no-op and neither the
+        original nor its overlay is overwritten. The WP6 unit of work is the macro EVENT (the overlay): the
+        overlay is inserted UNCONDITIONALLY (not gated on the message being new), so a message that already
+        exists in the SHARED news_messages namespace still gets its required overlay backfilled instead of
+        silently dropped. Message-scoped writes (mappings + correction links) stay gated on the message being
+        newly inserted. `fetched_count` is bumped every call; the outcome counters + run event apply when the
+        OVERLAY is newly inserted. Returns 'inserted' (overlay newly created) or 'exists'."""
+        now = utcnow_iso()
+        mid = message_record["message_id"]
+        msg_values = tuple(message_record.get(c) for c in self._NX_MSG_COL_LIST[:-1]) + (now,)
+        macro_values = tuple(macro_record.get(c) for c in self._MX_EVENT_COL_LIST[:-1]) + (now,)
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO news_messages ({self._NX_MSG_COLS}) "
+                       f"VALUES ({','.join(['?'] * len(self._NX_MSG_COL_LIST))}) "
+                       "ON CONFLICT (message_id) DO NOTHING", msg_values)
+            msg_inserted = cur.rowcount > 0
+            if msg_inserted:
+                # mappings + correction links belong to the MESSAGE — only when it is newly inserted
+                for instrument_id, status, *rest in mappings:
+                    conf = rest[0] if rest else None
+                    method = rest[1] if len(rest) > 1 else None
+                    self._exec(cur, "INSERT INTO news_message_instruments "
+                               "(message_id,instrument_id,mapping_status,confidence,method,created_at) "
+                               "VALUES (?,?,?,?,?,?) ON CONFLICT (message_id,instrument_id) DO NOTHING",
+                               (mid, instrument_id, status, conf, method, now))
+                self._nx_link_corrections(cur, mid, message_record, now)
+            # the macro overlay is a required 1:1 child unique to WP6 → insert it UNCONDITIONALLY in the same
+            # tx (idempotent): a no-op when the overlay already exists, a backfill when only the message did.
+            self._exec(cur, f"INSERT INTO macro_events ({self._MX_EVENT_COLS}) "
+                       f"VALUES ({','.join(['?'] * len(self._MX_EVENT_COL_LIST))}) "
+                       "ON CONFLICT (message_id) DO NOTHING", macro_values)
+            overlay_inserted = cur.rowcount > 0
+            if run_id is not None:
+                cols = ["fetched_count=fetched_count+1"]
+                if overlay_inserted:
+                    cols.append("stored_count=stored_count+1")
+                    if duplicate:
+                        cols.append("duplicate_count=duplicate_count+1")
+                    if ambiguous:
+                        cols.append("ambiguous_count=ambiguous_count+1")
+                    if unmapped:
+                        cols.append("unmapped_count=unmapped_count+1")
+                    if is_correction:
+                        cols.append("correction_count=correction_count+1")
+                    if is_retraction:
+                        cols.append("retraction_count=retraction_count+1")
+                self._exec(cur, f"UPDATE news_import_runs SET {','.join(cols)}, updated_at=? "
+                           "WHERE run_id=? AND status='RUNNING'", (now, run_id))
+                run_is_live = cur.rowcount > 0   # a reclaimed/terminal run gets no event/counter drift
+                if overlay_inserted and run_event is not None and run_is_live:
+                    self._nx_insert_event(cur, run_id, run_event, now)
+            return "inserted" if overlay_inserted else "exists"
+
+    def mx_get_macro_event(self, message_id: str) -> MacroEventRow | None:
+        r = self._one(f"SELECT {self._MX_EVENT_COLS} FROM macro_events WHERE message_id=?", (message_id,))
+        return MacroEventRow(*r) if r else None
+
+    def mx_list_macro_events(self, *, macro_type: str | None = None, source_class: str | None = None,
+                             geo_scope: str | None = None, limit: int = 100,
+                             offset: int = 0) -> list[MacroEventRow]:
+        n, off = max(1, min(1000, int(limit))), max(0, int(offset))
+        clauses, params = [], []
+        for col, val in (("macro_type", macro_type), ("source_class", source_class), ("geo_scope", geo_scope)):
+            if val:
+                clauses.append(f"{col}=?")
+                params.append(val)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = self._all(f"SELECT {self._MX_EVENT_COLS} FROM macro_events{where} "
+                         "ORDER BY created_at DESC, message_id DESC LIMIT ? OFFSET ?", (*params, n, off))
+        return [MacroEventRow(*r) for r in rows]
+
+    def mx_list_events_in_cluster(self, macro_cluster_id: str, *, limit: int = 200) -> list[MacroEventRow]:
+        n = max(1, min(1000, int(limit)))
+        rows = self._all(f"SELECT {self._MX_EVENT_COLS} FROM macro_events WHERE macro_cluster_id=? "
+                         "ORDER BY created_at ASC, message_id ASC LIMIT ?", (macro_cluster_id, n))
+        return [MacroEventRow(*r) for r in rows]
+
+    def mx_count_macro_events(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM macro_events")
+        return int(r[0]) if r else 0
+
+    def mx_macro_type_breakdown(self) -> dict:
+        rows = self._all("SELECT macro_type, COUNT(*) FROM macro_events GROUP BY macro_type")
+        return {str(t): int(c) for t, c in sorted(rows)}
+
+    def mx_link_status_breakdown(self) -> dict:
+        rows = self._all("SELECT link_status, COUNT(*) FROM macro_events GROUP BY link_status")
+        return {str(s): int(c) for s, c in sorted(rows)}
+
+    def mx_macro_cluster_count(self) -> int:
+        r = self._one("SELECT COUNT(DISTINCT macro_cluster_id) FROM macro_events "
+                      "WHERE macro_cluster_id IS NOT NULL")
+        return int(r[0]) if r else 0
+
+    # === § WP7 — fundamentals / macro-series intake (read-only research data) ============================
+    _FX_SRC_COL_LIST = (
+        "source_id", "name", "source_type", "regions_json", "languages_json", "update_mode",
+        "rate_limit_json", "license_status", "storage_allowed", "redistribution_allowed",
+        "commercial_use_allowed", "attribution_required", "available", "last_success_at", "last_error",
+        "created_at", "updated_at")
+    _FX_SRC_COLS = ",".join(_FX_SRC_COL_LIST)
+    _FX_SERIES_COL_LIST = (
+        "series_id", "source_id", "series_key", "category", "metric", "unit", "frequency", "region",
+        "country", "currency", "description", "link_status", "provenance_json", "created_at", "updated_at")
+    _FX_SERIES_COLS = ",".join(_FX_SERIES_COL_LIST)
+    _FX_OBS_COL_LIST = (
+        "observation_id", "series_id", "provider", "provider_id", "source_id", "period", "period_start",
+        "period_end", "value", "value_text", "value_status", "revision_seq", "revision_of_id",
+        "is_preliminary", "published_at", "received_at", "time_status", "license_status", "storage_status",
+        "content_checksum", "duplicate_of_id", "provenance_json", "created_at")
+    _FX_OBS_COLS = ",".join(_FX_OBS_COL_LIST)
+
+    # -- source registry (mutable) --
+    def fx_upsert_source(self, record: dict) -> str:
+        """Idempotent upsert of a fundamentals source (registry). Fail-closed (unavailable, unlicensed) until
+        an entitled source attaches. Re-seeding refreshes the registry metadata but PRESERVES the operational
+        history (last_success_at/last_error are owned by fx_mark_source_result), matching the newsroom sibling."""
+        now = utcnow_iso()
+        cols = self._FX_SRC_COL_LIST
+        vals = tuple(record.get(c) for c in cols[:-2]) + (now, now)
+        upd = ",".join(f"{c}=excluded.{c}" for c in cols
+                       if c not in ("source_id", "created_at", "last_success_at", "last_error"))
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO fundamental_sources ({self._FX_SRC_COLS}) "
+                       f"VALUES ({','.join(['?'] * len(cols))}) "
+                       f"ON CONFLICT (source_id) DO UPDATE SET {upd}", vals)
+        return record["source_id"]
+
+    def fx_mark_source_result(self, source_id: str, *, available: bool, success: bool,
+                              last_error: str | None = None) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            if success:
+                self._exec(cur, "UPDATE fundamental_sources SET available=?, last_success_at=?, last_error=?, "
+                           "updated_at=? WHERE source_id=?", (available, now, None, now, source_id))
+            else:
+                self._exec(cur, "UPDATE fundamental_sources SET available=?, last_error=?, updated_at=? "
+                           "WHERE source_id=?", (available, last_error, now, source_id))
+            return cur.rowcount > 0
+
+    def fx_get_source(self, source_id: str) -> FundamentalSourceRow | None:
+        r = self._one(f"SELECT {self._FX_SRC_COLS} FROM fundamental_sources WHERE source_id=?", (source_id,))
+        return self._fx_source_row(r) if r else None
+
+    def fx_list_sources(self) -> list[FundamentalSourceRow]:
+        rows = self._all(f"SELECT {self._FX_SRC_COLS} FROM fundamental_sources ORDER BY source_id ASC")
+        return [self._fx_source_row(r) for r in rows]
+
+    @staticmethod
+    def _fx_source_row(r) -> FundamentalSourceRow:
+        return FundamentalSourceRow(*r[:8], bool(r[8]), bool(r[9]), bool(r[10]), bool(r[11]), bool(r[12]),
+                                    *r[13:])
+
+    # -- series registry (mutable) + fail-closed instrument mapping (immutable) --
+    def fx_upsert_series(self, record: dict, *, mappings=(), had_hints: bool = False) -> str:
+        """Idempotent upsert of a series definition + its fail-closed instrument mapping rows (immutable,
+        first-wins). ``link_status`` is DERIVED from the ACTUAL stored (immutable) mapping rows plus a sticky
+        'had hints' signal — NOT from the caller-supplied value — so the series summary always agrees with the
+        stored mapping rows and can never be an order-dependent fabricated VERIFIED. Sticky had-hints: a series
+        that once had a usable hint (link_status != NONE) stays 'had hints', so it never regresses NONE."""
+        now = utcnow_iso()
+        cols = self._FX_SERIES_COL_LIST
+        vals = tuple(record.get(c) for c in cols[:-2]) + (now, now)
+        upd = ",".join(f"{c}=excluded.{c}" for c in cols if c not in ("series_id", "created_at", "link_status"))
+        sid = record["series_id"]
+        with self.tx() as cur:
+            prev = self._one("SELECT link_status FROM fundamental_series WHERE series_id=?", (sid,))
+            sticky_hints = had_hints or (prev is not None and prev[0] != "NONE")
+            # upsert metadata FIRST (FK target for the mapping rows). link_status is excluded from the UPDATE
+            # set and derived below, so a per-observation recompute can never overwrite the stored truth.
+            self._exec(cur, f"INSERT INTO fundamental_series ({self._FX_SERIES_COLS}) "
+                       f"VALUES ({','.join(['?'] * len(cols))}) "
+                       f"ON CONFLICT (series_id) DO UPDATE SET {upd}", vals)
+            for instrument_id, status, *rest in mappings:
+                conf = rest[0] if rest else None
+                method = rest[1] if len(rest) > 1 else None
+                self._exec(cur, "INSERT INTO fundamental_series_instruments "
+                           "(series_id,instrument_id,mapping_status,confidence,method,created_at) "
+                           "VALUES (?,?,?,?,?,?) ON CONFLICT (series_id,instrument_id) DO NOTHING",
+                           (sid, instrument_id, status, conf, method, now))
+            # DERIVE link_status from the immutable stored rows: any non-VERIFIED row → AMBIGUOUS; all VERIFIED
+            # → VERIFIED; no rows → UNMAPPED if the series ever had a usable hint, else NONE (macro series).
+            stored = [r[0] for r in self._all(
+                "SELECT mapping_status FROM fundamental_series_instruments WHERE series_id=?", (sid,))]
+            if stored:
+                link = "AMBIGUOUS" if any(s != "VERIFIED" for s in stored) else "VERIFIED"
+            else:
+                link = "UNMAPPED" if sticky_hints else "NONE"
+            self._exec(cur, "UPDATE fundamental_series SET link_status=?, updated_at=? WHERE series_id=?",
+                       (link, now, sid))
+        return sid
+
+    def fx_get_series(self, series_id: str) -> FundamentalSeriesRow | None:
+        r = self._one(f"SELECT {self._FX_SERIES_COLS} FROM fundamental_series WHERE series_id=?", (series_id,))
+        return FundamentalSeriesRow(*r) if r else None
+
+    def fx_list_series(self, *, source_id: str | None = None, category: str | None = None,
+                       limit: int = 200, offset: int = 0) -> list[FundamentalSeriesRow]:
+        n, off = max(1, min(1000, int(limit))), max(0, int(offset))
+        clauses, params = [], []
+        for col, val in (("source_id", source_id), ("category", category)):
+            if val:
+                clauses.append(f"{col}=?")
+                params.append(val)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = self._all(f"SELECT {self._FX_SERIES_COLS} FROM fundamental_series{where} "
+                         "ORDER BY series_id ASC LIMIT ? OFFSET ?", (*params, n, off))
+        return [FundamentalSeriesRow(*r) for r in rows]
+
+    def fx_list_series_instruments(self, series_id: str) -> list[FundamentalSeriesInstrumentRow]:
+        rows = self._all("SELECT series_id,instrument_id,mapping_status,confidence,method,created_at "
+                         "FROM fundamental_series_instruments WHERE series_id=? ORDER BY instrument_id ASC",
+                         (series_id,))
+        return [FundamentalSeriesInstrumentRow(*r) for r in rows]
+
+    # -- observations (immutable) --
+    def fx_find_observation_by_checksum(self, content_checksum: str) -> str | None:
+        r = self._one("SELECT observation_id FROM fundamental_observations WHERE content_checksum=? "
+                      "ORDER BY created_at ASC, observation_id ASC LIMIT 1", (content_checksum,))
+        return r[0] if r else None
+
+    def fx_insert_observation(self, record: dict, *, run_id: str | None = None, run_event: dict | None = None,
+                              duplicate: bool = False, revised: bool = False) -> str:
+        """Insert one IMMUTABLE observation AND atomically advance the run counters + run event, in ONE
+        transaction. Idempotent per observation_id (ON CONFLICT DO NOTHING) — a re-ingest is a no-op and the
+        original is never overwritten; a REVISION is a distinct observation_id, so it is stored as a new row
+        (not a duplicate). `fetched_count` is bumped every call; the outcome counters + run event apply only
+        when the observation is newly inserted, and the run event only while the run is still RUNNING (a
+        reclaimed/terminal run never desyncs). Returns 'inserted'/'exists'."""
+        now = utcnow_iso()
+        values = tuple(record.get(c) for c in self._FX_OBS_COL_LIST[:-1]) + (now,)
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO fundamental_observations ({self._FX_OBS_COLS}) "
+                       f"VALUES ({','.join(['?'] * len(self._FX_OBS_COL_LIST))}) "
+                       "ON CONFLICT (observation_id) DO NOTHING", values)
+            inserted = cur.rowcount > 0
+            if run_id is not None:
+                cols = ["fetched_count=fetched_count+1"]
+                if inserted:
+                    cols.append("stored_count=stored_count+1")
+                    if duplicate:
+                        cols.append("duplicate_count=duplicate_count+1")
+                    if revised:
+                        cols.append("correction_count=correction_count+1")   # reused slot: 'revisions'
+                self._exec(cur, f"UPDATE news_import_runs SET {','.join(cols)}, updated_at=? "
+                           "WHERE run_id=? AND status='RUNNING'", (now, run_id))
+                run_is_live = cur.rowcount > 0
+                if inserted and run_event is not None and run_is_live:
+                    self._nx_insert_event(cur, run_id, run_event, now)
+            return "inserted" if inserted else "exists"
+
+    def fx_get_observation(self, observation_id: str) -> FundamentalObservationRow | None:
+        r = self._one(f"SELECT {self._FX_OBS_COLS} FROM fundamental_observations WHERE observation_id=?",
+                      (observation_id,))
+        return FundamentalObservationRow(*r) if r else None
+
+    def fx_list_observations(self, *, series_id: str | None = None, period: str | None = None,
+                             limit: int = 200, offset: int = 0) -> list[FundamentalObservationRow]:
+        n, off = max(1, min(1000, int(limit))), max(0, int(offset))
+        clauses, params = [], []
+        for col, val in (("series_id", series_id), ("period", period)):
+            if val:
+                clauses.append(f"{col}=?")
+                params.append(val)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = self._all(f"SELECT {self._FX_OBS_COLS} FROM fundamental_observations{where} "
+                         "ORDER BY published_at DESC, revision_seq DESC, observation_id DESC LIMIT ? OFFSET ?",
+                         (*params, n, off))
+        return [FundamentalObservationRow(*r) for r in rows]
+
+    def fx_current_observation(self, series_id: str, period: str) -> FundamentalObservationRow | None:
+        """The DERIVED current data point for a series+period: the highest revision, tie-broken by the latest
+        publish time then id. Never mutates — the original + every revision remain immutable rows."""
+        rows = self.fx_list_revisions(series_id, period)
+        return rows[-1] if rows else None
+
+    def fx_list_revisions(self, series_id: str, period: str) -> list[FundamentalObservationRow]:
+        """All revisions for a series+period, ordered oldest→current (revision_seq, then publish time, id).
+        The ``CASE WHEN published_at IS NULL`` key forces NULL publish times LAST on BOTH dialects (SQLite
+        sorts NULLs first, Postgres last by default), so the derived 'current' pick is deterministic."""
+        rows = self._all(f"SELECT {self._FX_OBS_COLS} FROM fundamental_observations "
+                         "WHERE series_id=? AND period=? "
+                         "ORDER BY revision_seq ASC, CASE WHEN published_at IS NULL THEN 1 ELSE 0 END ASC, "
+                         "published_at ASC, observation_id ASC", (series_id, period))
+        return [FundamentalObservationRow(*r) for r in rows]
+
+    # -- read-only observability aggregates --
+    def fx_count_observations(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM fundamental_observations")
+        return int(r[0]) if r else 0
+
+    def fx_dedup_stats(self) -> dict:
+        total = self.fx_count_observations()
+        d = self._one("SELECT COUNT(*) FROM fundamental_observations WHERE duplicate_of_id IS NOT NULL")
+        dup = int(d[0]) if d else 0
+        return {"total": total, "exact_duplicates": dup, "duplicate_rate": (dup / total) if total else 0.0}
+
+    def fx_revision_count(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM fundamental_observations WHERE revision_of_id IS NOT NULL")
+        return int(r[0]) if r else 0
+
+    def fx_value_status_breakdown(self) -> dict:
+        rows = self._all("SELECT value_status, COUNT(*) FROM fundamental_observations GROUP BY value_status")
+        return {str(s): int(c) for s, c in sorted(rows)}
+
+    def fx_series_link_breakdown(self) -> dict:
+        rows = self._all("SELECT link_status, COUNT(*) FROM fundamental_series GROUP BY link_status")
+        return {str(s): int(c) for s, c in sorted(rows)}
+
+    def fx_count_series(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM fundamental_series")
+        return int(r[0]) if r else 0
 
     # -- durable PAPER-canary lifecycle + ledger -------------------------
     _PAPER_RUN_COLS = (

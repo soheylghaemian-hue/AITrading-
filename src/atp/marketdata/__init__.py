@@ -5,6 +5,7 @@ autonomous pipeline consumes ONLY normalized, quality-gated quotes — it never 
 directly, never sees delayed/stale/invalid/fabricated prices.
 """
 
+from .ingest import IngestConfig, IngestSummary, ingest_market_data, ingest_request_checksum
 from .manager import MarketDataManager
 from .massive_provider import (
     MASSIVE_SYMBOLS,
@@ -12,6 +13,31 @@ from .massive_provider import (
     MassiveEntitlementError,
     MassiveError,
     MassiveProvider,
+)
+from .model import (
+    AdjustmentPolicy,
+    BarObservation,
+    CorporateAction,
+    DataStatus,
+    EntitlementStatus,
+    LicenseType,
+    ProviderEntitlement,
+    QualityFlag,
+    QuoteObservation,
+    classify_data_status,
+    classify_quality,
+)
+from .provider_base import (
+    InstrumentRef,
+    MarketDataEntitlementError,
+    MarketDataProvider,
+    MarketDataProviderError,
+    MarketDataUnavailableError,
+    ProviderBar,
+    ProviderCorporateAction,
+    ProviderEntitlementResult,
+    ProviderQuote,
+    StubMarketDataProvider,
 )
 from .quality import QualityStatus, quality_gate
 from .quote import NormalizedQuote
@@ -22,4 +48,12 @@ __all__ = [
     "GLOBAL_UNIVERSE", "InstrumentSpec",
     "MassiveProvider", "MASSIVE_SYMBOLS",
     "MassiveError", "MassiveAuthError", "MassiveEntitlementError",
+    # WP4 — provider-neutral persistent market-data foundation
+    "DataStatus", "EntitlementStatus", "LicenseType", "QualityFlag", "AdjustmentPolicy",
+    "QuoteObservation", "BarObservation", "CorporateAction", "ProviderEntitlement",
+    "classify_data_status", "classify_quality",
+    "MarketDataProvider", "StubMarketDataProvider", "InstrumentRef",
+    "MarketDataProviderError", "MarketDataEntitlementError", "MarketDataUnavailableError",
+    "ProviderQuote", "ProviderBar", "ProviderCorporateAction", "ProviderEntitlementResult",
+    "IngestConfig", "IngestSummary", "ingest_market_data", "ingest_request_checksum",
 ]

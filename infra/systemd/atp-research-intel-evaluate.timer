@@ -1,0 +1,16 @@
+[Unit]
+Description=Mature research intel outcomes after collection (UTC)
+
+[Timer]
+Unit=atp-research-intel-evaluate.service
+# UTC (host pinned by infra/bootstrap.sh). 22:10 follows the last collection window; 06:10 re-runs once
+# overnight research datasets have completed. Keep in sync with EVALUATE_ONCALENDAR in
+# src/atp/research/intel/readmodel.py (a test asserts they match).
+OnCalendar=*-*-* 22:10:00
+OnCalendar=*-*-* 06:10:00
+AccuracySec=1min
+RandomizedDelaySec=2min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -67,10 +67,23 @@ install -m 644 "$APP/infra/systemd/atp-control.service"    /etc/systemd/system/
 install -m 644 "$APP/infra/systemd/atp-broker.service"     /etc/systemd/system/
 install -m 644 "$APP/infra/systemd/atp-market-catalog.service" /etc/systemd/system/
 install -m 644 "$APP/infra/systemd/atp-market-catalog.timer"   /etc/systemd/system/
+# § R3.1A.2 research one-shot workers (collection after the US session, then evaluation + validation).
+# RESEARCH DATA ONLY — these units never trade, never place an order and never enable execution.
+install -m 644 "$APP/infra/systemd/atp-research-intel-collect.service"  /etc/systemd/system/
+install -m 644 "$APP/infra/systemd/atp-research-intel-collect.timer"   /etc/systemd/system/
+install -m 644 "$APP/infra/systemd/atp-research-intel-evaluate.service" /etc/systemd/system/
+install -m 644 "$APP/infra/systemd/atp-research-intel-evaluate.timer"  /etc/systemd/system/
+install -m 644 "$APP/infra/systemd/atp-research-validation.service"    /etc/systemd/system/
+install -m 644 "$APP/infra/systemd/atp-research-validation.timer"      /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable atp-marketdata atp-trading atp-control atp-broker
 systemctl enable --now atp-market-catalog.timer
 systemctl start atp-market-catalog.service
+# Enable the research timers only — the one-shot services are NOT started here: collection is valid only
+# inside its post-close window, and an out-of-window run would just record an honest skip.
+systemctl enable --now atp-research-intel-collect.timer atp-research-intel-evaluate.timer \
+                       atp-research-validation.timer
+systemctl list-timers --no-pager 'atp-research-*' || true
 systemctl restart atp-marketdata atp-trading atp-control atp-broker   # restart to load new code (enable --now won't)
 sleep 5
 systemctl is-active atp-marketdata atp-trading atp-control atp-broker

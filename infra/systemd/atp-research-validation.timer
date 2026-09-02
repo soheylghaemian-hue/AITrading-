@@ -1,0 +1,14 @@
+[Unit]
+Description=Run the immutable research validation gate after evaluation (UTC)
+
+[Timer]
+Unit=atp-research-validation.service
+# UTC (host pinned by infra/bootstrap.sh). Runs after the 06:10 evaluation pass. Keep in sync with
+# VALIDATE_ONCALENDAR in src/atp/research/intel/readmodel.py (a test asserts they match).
+OnCalendar=*-*-* 06:40:00
+AccuracySec=1min
+RandomizedDelaySec=2min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
