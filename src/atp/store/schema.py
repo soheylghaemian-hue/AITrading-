@@ -1394,6 +1394,320 @@ def _migration_028(dialect: str) -> list[str]:
     return tables + indexes + triggers
 
 
+
+# --------------------------------------------------------------------------- § WP5 news / filings triggers
+# Original news messages, their instrument mappings, message events (corrections/retractions/audit) and
+# import events are INSERT-ONLY: any update or delete is rejected — an original is never overwritten, a
+# correction/retraction is a NEW record. `news_import_runs` is status-terminal (frozen once terminal). The
+# `news_sources` registry is intentionally mutable (availability / last-success / last-error change).
+_NEWS_IMMUTABLE_TABLES = ("news_messages", "news_message_instruments", "news_message_events",
+                          "news_import_events")
+_NEWS_RUN_TERMINAL = "('COMPLETED','PARTIAL','FAILED')"
+
+
+def _news_triggers_sqlite() -> list[str]:
+    out: list[str] = []
+    for tbl in _NEWS_IMMUTABLE_TABLES:
+        out += [
+            f"""CREATE TRIGGER IF NOT EXISTS trg_{tbl}_no_update BEFORE UPDATE ON {tbl}
+                BEGIN SELECT RAISE(ABORT, '{tbl}: rows are immutable (insert-only)'); END""",
+            f"""CREATE TRIGGER IF NOT EXISTS trg_{tbl}_no_delete BEFORE DELETE ON {tbl}
+                BEGIN SELECT RAISE(ABORT, '{tbl}: rows cannot be deleted'); END""",
+        ]
+    out += [
+        f"""CREATE TRIGGER IF NOT EXISTS trg_news_import_runs_no_update_terminal
+            BEFORE UPDATE ON news_import_runs WHEN OLD.status IN {_NEWS_RUN_TERMINAL}
+            BEGIN SELECT RAISE(ABORT, 'news_import_runs: terminal run is immutable'); END""",
+        """CREATE TRIGGER IF NOT EXISTS trg_news_import_runs_no_delete
+            BEFORE DELETE ON news_import_runs
+            BEGIN SELECT RAISE(ABORT, 'news_import_runs: runs cannot be deleted'); END""",
+    ]
+    return out
+
+
+def _news_triggers_postgres() -> list[str]:
+    # `%%` is the psycopg literal-percent escape → PL/pgSQL receives a single `%` (the RAISE placeholder).
+    out = [
+        """CREATE OR REPLACE FUNCTION atp_news_block_mutate() RETURNS trigger AS $$
+           BEGIN RAISE EXCEPTION '%%: rows are immutable (insert-only)', TG_TABLE_NAME; END; $$ LANGUAGE plpgsql""",
+        """CREATE OR REPLACE FUNCTION atp_news_block_run_update() RETURNS trigger AS $$
+           BEGIN IF OLD.status IN ('COMPLETED','PARTIAL','FAILED') THEN
+             RAISE EXCEPTION 'news_import_runs: terminal run is immutable'; END IF;
+             RETURN NEW; END; $$ LANGUAGE plpgsql""",
+        """CREATE OR REPLACE FUNCTION atp_news_block_run_delete() RETURNS trigger AS $$
+           BEGIN RAISE EXCEPTION 'news_import_runs: runs cannot be deleted'; END; $$ LANGUAGE plpgsql""",
+    ]
+    for tbl in _NEWS_IMMUTABLE_TABLES:
+        out += [
+            f"DROP TRIGGER IF EXISTS trg_{tbl}_no_upd ON {tbl}",
+            f"CREATE TRIGGER trg_{tbl}_no_upd BEFORE UPDATE ON {tbl} FOR EACH ROW EXECUTE FUNCTION atp_news_block_mutate()",
+            f"DROP TRIGGER IF EXISTS trg_{tbl}_no_del ON {tbl}",
+            f"CREATE TRIGGER trg_{tbl}_no_del BEFORE DELETE ON {tbl} FOR EACH ROW EXECUTE FUNCTION atp_news_block_mutate()",
+        ]
+    out += [
+        "DROP TRIGGER IF EXISTS trg_news_import_runs_no_update ON news_import_runs",
+        "CREATE TRIGGER trg_news_import_runs_no_update BEFORE UPDATE ON news_import_runs "
+        "FOR EACH ROW EXECUTE FUNCTION atp_news_block_run_update()",
+        "DROP TRIGGER IF EXISTS trg_news_import_runs_no_delete ON news_import_runs",
+        "CREATE TRIGGER trg_news_import_runs_no_delete BEFORE DELETE ON news_import_runs "
+        "FOR EACH ROW EXECUTE FUNCTION atp_news_block_run_delete()",
+    ]
+    return out
+
+
+def _migration_029(dialect: str) -> list[str]:
+    """§ WP5 — worldwide company news, official filings & regulatory publications (RESEARCH DATA ONLY).
+
+    Purely additive: six new tables, no existing table touched (`news_items`/`companies` stay as they are).
+    The ORIGINAL message (`news_messages`) is immutable and never overwritten; corrections/retractions are
+    NEW rows linked via correction_of_id/retraction_of_id, and `news_message_events` is an append-only,
+    DB-immutable correction/retraction/audit log. Instrument mapping (`news_message_instruments`, FK to the
+    WP2 `instruments`) is fail-closed (VERIFIED/AMBIGUOUS/UNMAPPED) — a symbol alone never maps uniquely, and
+    symbols of different exchanges stay separate. `news_sources` records each source's explicit license +
+    usage rights + availability. `news_import_runs`/`news_import_events` are a resumable, observable,
+    per-provider/region-isolated import lifecycle. NO trading, NO orders/execution, NO news/subscription
+    purchase, NO HTTP write path. Classification/relevance/sentiment/impact are research metadata, not facts."""
+    t = _types(dialect)
+    ts, txt, i, b = t["TS"], t["TXT"], t["INT"], t["BOOL"]
+    tables = [
+        f"""CREATE TABLE IF NOT EXISTS news_messages (
+            message_id {txt} PRIMARY KEY, provider {txt} NOT NULL, provider_id {txt} NOT NULL,
+            source_id {txt} NOT NULL, source_type {txt} NOT NULL, primacy {txt} NOT NULL,
+            original_title {txt} NOT NULL, original_body {txt}, original_language {txt},
+            translated_title {txt}, translated_summary {txt}, translation_status {txt} NOT NULL,
+            translation_source {txt}, url {txt},
+            published_at {ts}, received_at {ts}, correction_at {ts},
+            event_category {txt} NOT NULL, relevance {txt} NOT NULL, impact_estimate {txt} NOT NULL,
+            uncertainty {txt} NOT NULL, source_confidence {txt} NOT NULL,
+            license_status {txt} NOT NULL, storage_status {txt} NOT NULL, time_status {txt} NOT NULL,
+            content_checksum {txt} NOT NULL, cluster_id {txt},
+            correction_of_id {txt}, retraction_of_id {txt}, supersedes_id {txt}, duplicate_of_id {txt},
+            affected_countries_json {txt} NOT NULL DEFAULT '[]', affected_regions_json {txt} NOT NULL DEFAULT '[]',
+            affected_industries_json {txt} NOT NULL DEFAULT '[]', affected_companies_json {txt} NOT NULL DEFAULT '[]',
+            affected_exchanges_json {txt} NOT NULL DEFAULT '[]', provenance_json {txt} NOT NULL DEFAULT '{{}}',
+            created_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS news_message_instruments (
+            message_id {txt} NOT NULL REFERENCES news_messages(message_id),
+            instrument_id {txt} NOT NULL REFERENCES instruments(instrument_id),
+            mapping_status {txt} NOT NULL, confidence {txt}, method {txt}, created_at {ts} NOT NULL,
+            PRIMARY KEY (message_id, instrument_id))""",
+        f"""CREATE TABLE IF NOT EXISTS news_message_events (
+            id {txt} PRIMARY KEY, message_id {txt} NOT NULL REFERENCES news_messages(message_id),
+            seq {i}, ts {ts}, event_type {txt} NOT NULL, severity {txt}, related_message_id {txt},
+            details_json {txt}, created_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS news_sources (
+            source_id {txt} PRIMARY KEY, name {txt} NOT NULL, source_type {txt} NOT NULL, primacy {txt} NOT NULL,
+            regions_json {txt} NOT NULL DEFAULT '[]', languages_json {txt} NOT NULL DEFAULT '[]',
+            update_mode {txt} NOT NULL, rate_limit_json {txt} NOT NULL DEFAULT '{{}}',
+            license_status {txt} NOT NULL, storage_allowed {b} NOT NULL DEFAULT 0,
+            redistribution_allowed {b} NOT NULL DEFAULT 0, commercial_use_allowed {b} NOT NULL DEFAULT 0,
+            attribution_required {b} NOT NULL DEFAULT 1, available {b} NOT NULL DEFAULT 0,
+            last_success_at {ts}, last_error {txt}, created_at {ts} NOT NULL, updated_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS news_import_runs (
+            run_id {txt} PRIMARY KEY, request_checksum {txt} NOT NULL, run_label {txt} NOT NULL,
+            provider {txt} NOT NULL, source_id {txt} NOT NULL, cursor {txt},
+            status {txt} NOT NULL CHECK (status IN ('PLANNED','RUNNING','COMPLETED','PARTIAL','FAILED')),
+            completed_regions_json {txt} NOT NULL, failed_regions_json {txt} NOT NULL,
+            fetched_count {i} NOT NULL DEFAULT 0, stored_count {i} NOT NULL DEFAULT 0,
+            duplicate_count {i} NOT NULL DEFAULT 0, ambiguous_count {i} NOT NULL DEFAULT 0,
+            correction_count {i} NOT NULL DEFAULT 0, retraction_count {i} NOT NULL DEFAULT 0,
+            unmapped_count {i} NOT NULL DEFAULT 0, error_count {i} NOT NULL DEFAULT 0,
+            failure_code {txt}, failure_reason {txt},
+            created_at {ts} NOT NULL, started_at {ts}, ended_at {ts}, updated_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS news_import_events (
+            id {txt} PRIMARY KEY, run_id {txt} NOT NULL REFERENCES news_import_runs(run_id),
+            seq {i}, ts {ts}, provider {txt}, region {txt}, message_id {txt}, event_type {txt} NOT NULL,
+            severity {txt}, reason {txt}, details_json {txt}, created_at {ts} NOT NULL)""",
+    ]
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS ix_news_messages_checksum ON news_messages(content_checksum)",
+        "CREATE INDEX IF NOT EXISTS ix_news_messages_cluster ON news_messages(cluster_id)",
+        "CREATE INDEX IF NOT EXISTS ix_news_messages_published ON news_messages(published_at)",
+        "CREATE INDEX IF NOT EXISTS ix_news_messages_source ON news_messages(source_id, event_category)",
+        "CREATE INDEX IF NOT EXISTS ix_news_msg_instruments_inst ON news_message_instruments(instrument_id, mapping_status)",
+        "CREATE INDEX IF NOT EXISTS ix_news_message_events_msg ON news_message_events(message_id, event_type)",
+        "CREATE INDEX IF NOT EXISTS ix_news_import_runs_req ON news_import_runs(request_checksum, status)",
+        "CREATE INDEX IF NOT EXISTS ix_news_import_events_run ON news_import_events(run_id, event_type)",
+    ]
+    triggers = _news_triggers_postgres() if dialect == "postgres" else _news_triggers_sqlite()
+    return tables + indexes + triggers
+
+
+# --------------------------------------------------------------------------- § WP6 macro / geopolitical events
+# `macro_events` is an INSERT-ONLY overlay on the immutable WP5 `news_messages`: one macro row per newsroom
+# message, never updated or deleted (corrections/retractions are NEW newsroom records, mirrored here). The
+# `macro_sources` registry is intentionally mutable (availability / last-success / last-error change).
+_MACRO_IMMUTABLE_TABLES = ("macro_events",)
+
+
+def _macro_triggers_sqlite() -> list[str]:
+    out: list[str] = []
+    for tbl in _MACRO_IMMUTABLE_TABLES:
+        out += [
+            f"""CREATE TRIGGER IF NOT EXISTS trg_{tbl}_no_update BEFORE UPDATE ON {tbl}
+                BEGIN SELECT RAISE(ABORT, '{tbl}: rows are immutable (insert-only)'); END""",
+            f"""CREATE TRIGGER IF NOT EXISTS trg_{tbl}_no_delete BEFORE DELETE ON {tbl}
+                BEGIN SELECT RAISE(ABORT, '{tbl}: rows cannot be deleted'); END""",
+        ]
+    return out
+
+
+def _macro_triggers_postgres() -> list[str]:
+    out = [
+        """CREATE OR REPLACE FUNCTION atp_macro_block_mutate() RETURNS trigger AS $$
+           BEGIN RAISE EXCEPTION '%%: rows are immutable (insert-only)', TG_TABLE_NAME; END; $$ LANGUAGE plpgsql""",
+    ]
+    for tbl in _MACRO_IMMUTABLE_TABLES:
+        out += [
+            f"DROP TRIGGER IF EXISTS trg_{tbl}_no_upd ON {tbl}",
+            f"CREATE TRIGGER trg_{tbl}_no_upd BEFORE UPDATE ON {tbl} FOR EACH ROW EXECUTE FUNCTION atp_macro_block_mutate()",
+            f"DROP TRIGGER IF EXISTS trg_{tbl}_no_del ON {tbl}",
+            f"CREATE TRIGGER trg_{tbl}_no_del BEFORE DELETE ON {tbl} FOR EACH ROW EXECUTE FUNCTION atp_macro_block_mutate()",
+        ]
+    return out
+
+
+def _migration_030(dialect: str) -> list[str]:
+    """§ WP6 — worldwide macro / geopolitical / regulatory event intake (RESEARCH DATA ONLY).
+
+    Purely additive: two new tables, no existing table touched. `macro_events` is a per-message OVERLAY on the
+    immutable WP5 `news_messages` (FK message_id) that adds macro-specific structure — event sub-type, source
+    class, geographic scope, severity (research metadata, not a fact), affected regions/countries/blocs/asset
+    CLASSES, a fail-closed instrument link-status, and a macro-situation cluster id. It is INSERT-ONLY and
+    DB-immutable; corrections/retractions are NEW newsroom records (mirrored here). Instrument linkage reuses
+    the fail-closed WP5 `news_message_instruments`. `macro_sources` records each macro channel's explicit
+    mandate + license + usage rights + availability (fail-closed until an entitled source attaches). The
+    import lifecycle REUSES the WP5 `news_import_runs`/`news_import_events` (a macro event is a newsroom
+    record). NO trading, NO orders/execution, NO subscription purchase, NO HTTP write path. (WP8 integration:
+    renumbered to 30 — after WP3's 27 IBKR-qualification and WP4's 28 market-data — for a unique, contiguous,
+    dependency-conformant sequence across the whole WP1–WP7 train.)
+    """
+    t = _types(dialect)
+    ts, txt, b = t["TS"], t["TXT"], t["BOOL"]      # macro tables use no INT columns
+    tables = [
+        f"""CREATE TABLE IF NOT EXISTS macro_events (
+            message_id {txt} PRIMARY KEY REFERENCES news_messages(message_id),
+            macro_type {txt} NOT NULL, source_class {txt} NOT NULL, geo_scope {txt} NOT NULL,
+            severity {txt} NOT NULL, policy_area {txt},
+            affected_regions_json {txt} NOT NULL DEFAULT '[]', affected_countries_json {txt} NOT NULL DEFAULT '[]',
+            affected_blocs_json {txt} NOT NULL DEFAULT '[]', affected_asset_classes_json {txt} NOT NULL DEFAULT '[]',
+            link_status {txt} NOT NULL, macro_cluster_id {txt}, macro_checksum {txt} NOT NULL,
+            correction_of_id {txt}, retraction_of_id {txt}, provenance_json {txt} NOT NULL DEFAULT '{{}}',
+            created_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS macro_sources (
+            source_id {txt} PRIMARY KEY, name {txt} NOT NULL, source_class {txt} NOT NULL,
+            regions_json {txt} NOT NULL DEFAULT '[]', languages_json {txt} NOT NULL DEFAULT '[]',
+            mandate {txt} NOT NULL, update_mode {txt} NOT NULL, rate_limit_json {txt} NOT NULL DEFAULT '{{}}',
+            license_status {txt} NOT NULL, storage_allowed {b} NOT NULL DEFAULT 0,
+            redistribution_allowed {b} NOT NULL DEFAULT 0, commercial_use_allowed {b} NOT NULL DEFAULT 0,
+            attribution_required {b} NOT NULL DEFAULT 1, available {b} NOT NULL DEFAULT 0,
+            last_success_at {ts}, last_error {txt}, created_at {ts} NOT NULL, updated_at {ts} NOT NULL)""",
+    ]
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS ix_macro_events_cluster ON macro_events(macro_cluster_id)",
+        "CREATE INDEX IF NOT EXISTS ix_macro_events_type ON macro_events(macro_type, geo_scope)",
+        "CREATE INDEX IF NOT EXISTS ix_macro_events_checksum ON macro_events(macro_checksum)",
+        "CREATE INDEX IF NOT EXISTS ix_macro_events_link ON macro_events(link_status)",
+        "CREATE INDEX IF NOT EXISTS ix_macro_events_source_class ON macro_events(source_class)",
+    ]
+    triggers = _macro_triggers_postgres() if dialect == "postgres" else _macro_triggers_sqlite()
+    return tables + indexes + triggers
+
+
+# --------------------------------------------------------------------------- § WP7 fundamentals / macro series
+# `fundamental_observations` and `fundamental_series_instruments` are INSERT-ONLY: an original data point is
+# never overwritten, a REVISION is a NEW row linked via revision_of_id, and a series's fail-closed instrument
+# mapping is immutable. The `fundamental_sources` + `fundamental_series` registries are mutable (availability /
+# link status / metadata change).
+_FUND_IMMUTABLE_TABLES = ("fundamental_observations", "fundamental_series_instruments")
+
+
+def _fund_triggers_sqlite() -> list[str]:
+    out: list[str] = []
+    for tbl in _FUND_IMMUTABLE_TABLES:
+        out += [
+            f"""CREATE TRIGGER IF NOT EXISTS trg_{tbl}_no_update BEFORE UPDATE ON {tbl}
+                BEGIN SELECT RAISE(ABORT, '{tbl}: rows are immutable (insert-only)'); END""",
+            f"""CREATE TRIGGER IF NOT EXISTS trg_{tbl}_no_delete BEFORE DELETE ON {tbl}
+                BEGIN SELECT RAISE(ABORT, '{tbl}: rows cannot be deleted'); END""",
+        ]
+    return out
+
+
+def _fund_triggers_postgres() -> list[str]:
+    out = [
+        """CREATE OR REPLACE FUNCTION atp_fund_block_mutate() RETURNS trigger AS $$
+           BEGIN RAISE EXCEPTION '%%: rows are immutable (insert-only)', TG_TABLE_NAME; END; $$ LANGUAGE plpgsql""",
+    ]
+    for tbl in _FUND_IMMUTABLE_TABLES:
+        out += [
+            f"DROP TRIGGER IF EXISTS trg_{tbl}_no_upd ON {tbl}",
+            f"CREATE TRIGGER trg_{tbl}_no_upd BEFORE UPDATE ON {tbl} FOR EACH ROW EXECUTE FUNCTION atp_fund_block_mutate()",
+            f"DROP TRIGGER IF EXISTS trg_{tbl}_no_del ON {tbl}",
+            f"CREATE TRIGGER trg_{tbl}_no_del BEFORE DELETE ON {tbl} FOR EACH ROW EXECUTE FUNCTION atp_fund_block_mutate()",
+        ]
+    return out
+
+
+def _migration_031(dialect: str) -> list[str]:
+    """§ WP7 — global fundamentals & macro-series intake (RESEARCH DATA ONLY).
+
+    Purely additive: four new tables, no existing table touched. `fundamental_sources` records each source's
+    explicit license + usage rights + availability (fail-closed). `fundamental_series` defines each metric
+    stream (category / metric / unit / frequency / region / currency) and carries its fail-closed instrument
+    link-status; `fundamental_series_instruments` (immutable, FK the WP2 `instruments`) is the fail-closed
+    per-series instrument mapping (VERIFIED/AMBIGUOUS/UNMAPPED — a symbol alone never maps uniquely).
+    `fundamental_observations` is an INSERT-ONLY, DB-immutable series of data points: a missing value stays
+    NULL (never fabricated), a later REVISION of the same series+period is a NEW row linked via
+    revision_of_id, and the 'current' value is derived at read time, never a mutation. The import lifecycle
+    REUSES the WP5 `news_import_runs`/`news_import_events`. NO trading, NO orders/execution, NO subscription
+    purchase, NO HTTP write path."""
+    t = _types(dialect)
+    ts, txt, i, b = t["TS"], t["TXT"], t["INT"], t["BOOL"]
+    tables = [
+        f"""CREATE TABLE IF NOT EXISTS fundamental_sources (
+            source_id {txt} PRIMARY KEY, name {txt} NOT NULL, source_type {txt} NOT NULL,
+            regions_json {txt} NOT NULL DEFAULT '[]', languages_json {txt} NOT NULL DEFAULT '[]',
+            update_mode {txt} NOT NULL, rate_limit_json {txt} NOT NULL DEFAULT '{{}}',
+            license_status {txt} NOT NULL, storage_allowed {b} NOT NULL DEFAULT 0,
+            redistribution_allowed {b} NOT NULL DEFAULT 0, commercial_use_allowed {b} NOT NULL DEFAULT 0,
+            attribution_required {b} NOT NULL DEFAULT 1, available {b} NOT NULL DEFAULT 0,
+            last_success_at {ts}, last_error {txt}, created_at {ts} NOT NULL, updated_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS fundamental_series (
+            series_id {txt} PRIMARY KEY, source_id {txt} NOT NULL, series_key {txt} NOT NULL,
+            category {txt} NOT NULL, metric {txt} NOT NULL, unit {txt} NOT NULL, frequency {txt} NOT NULL,
+            region {txt}, country {txt}, currency {txt}, description {txt}, link_status {txt} NOT NULL,
+            provenance_json {txt} NOT NULL DEFAULT '{{}}', created_at {ts} NOT NULL, updated_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS fundamental_series_instruments (
+            series_id {txt} NOT NULL REFERENCES fundamental_series(series_id),
+            instrument_id {txt} NOT NULL REFERENCES instruments(instrument_id),
+            mapping_status {txt} NOT NULL, confidence {txt}, method {txt}, created_at {ts} NOT NULL,
+            PRIMARY KEY (series_id, instrument_id))""",
+        f"""CREATE TABLE IF NOT EXISTS fundamental_observations (
+            observation_id {txt} PRIMARY KEY,
+            series_id {txt} NOT NULL REFERENCES fundamental_series(series_id),
+            provider {txt} NOT NULL, provider_id {txt} NOT NULL, source_id {txt} NOT NULL,
+            period {txt} NOT NULL, period_start {ts}, period_end {ts},
+            value {txt}, value_text {txt}, value_status {txt} NOT NULL,
+            revision_seq {i} NOT NULL DEFAULT 0, revision_of_id {txt}, is_preliminary {b} NOT NULL DEFAULT 0,
+            published_at {ts}, received_at {ts}, time_status {txt} NOT NULL,
+            license_status {txt} NOT NULL, storage_status {txt} NOT NULL, content_checksum {txt} NOT NULL,
+            duplicate_of_id {txt}, provenance_json {txt} NOT NULL DEFAULT '{{}}', created_at {ts} NOT NULL)""",
+    ]
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS ix_fund_obs_checksum ON fundamental_observations(content_checksum)",
+        "CREATE INDEX IF NOT EXISTS ix_fund_obs_series_period ON fundamental_observations(series_id, period)",
+        "CREATE INDEX IF NOT EXISTS ix_fund_obs_published ON fundamental_observations(published_at)",
+        "CREATE INDEX IF NOT EXISTS ix_fund_obs_revision ON fundamental_observations(revision_of_id)",
+        "CREATE INDEX IF NOT EXISTS ix_fund_series_source ON fundamental_series(source_id, category)",
+        "CREATE INDEX IF NOT EXISTS ix_fund_series_inst ON fundamental_series_instruments(instrument_id, mapping_status)",
+    ]
+    triggers = _fund_triggers_postgres() if dialect == "postgres" else _fund_triggers_sqlite()
+    return tables + indexes + triggers
+
+
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -1424,6 +1738,9 @@ MIGRATIONS = [
     (26, "global_instrument_model", _migration_026),
     (27, "instrument_ibkr_qualification", _migration_027),
     (28, "wp4_market_data_foundation", _migration_028),
+    (29, "global_news_official_filings", _migration_029),
+    (30, "macro_geopolitical_events", _migration_030),
+    (31, "global_fundamentals_macro_series", _migration_031),
 ]
 
 

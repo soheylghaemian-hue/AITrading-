@@ -29,6 +29,9 @@ from atp.store.schema import (
     _migration_026,
     _migration_027,
     _migration_028,
+    _migration_029,
+    _migration_030,
+    _migration_031,
 )
 
 PG_PLACEHOLDER = PostgresStore.PLACEHOLDER          # "%s"
@@ -83,7 +86,10 @@ def test_postgres_migration_placeholders_are_psycopg_safe():
         + _migration_025("postgres")
         + _migration_026("postgres")
         + _migration_027("postgres")
-        + _migration_028("postgres")
+        + _migration_028("postgres")           # WP4 market-data foundation
+        + _migration_029("postgres")           # WP5 news & official filings
+        + _migration_030("postgres")           # WP6 macro/geopolitical events
+        + _migration_031("postgres")           # WP7 fundamentals & macro series
     )
     psycopg_ran = False
     for raw in stmts:
@@ -133,11 +139,26 @@ def test_postgres_functions_use_escaped_percent_and_sqlite_uses_none():
     assert "'%%: rows are immutable (insert-only)'" in pg27
     assert "'%:" not in pg27
     assert "%" not in "\n".join(_migration_027("sqlite"))
-    # … WP4 migration 28 market-data triggers carry the same `%%` escape and no bare single-% …
+    # … WP4 migration 28 market-data triggers carry the same `%%` escape and no bare single-% … …
     pg28 = "\n".join(_migration_028("postgres"))
     assert "'%%: rows are immutable (insert-only)'" in pg28
     assert "'%:" not in pg28
     assert "%" not in "\n".join(_migration_028("sqlite"))
+    # … WP5 migration 29 news / filings triggers carry the same `%%` escape and no bare single-% … …
+    pg29 = "\n".join(_migration_029("postgres"))
+    assert "'%%: rows are immutable (insert-only)'" in pg29
+    assert "'%:" not in pg29
+    assert "%" not in "\n".join(_migration_029("sqlite"))
+    # … WP6 migration 30 macro-events immutability trigger carries the same `%%` escape and no bare single-% … …
+    pg30 = "\n".join(_migration_030("postgres"))
+    assert "'%%: rows are immutable (insert-only)'" in pg30
+    assert "'%:" not in pg30
+    assert "%" not in "\n".join(_migration_030("sqlite"))
+    # … WP7 migration 31 fundamentals immutability triggers carry the same `%%` escape and no bare single-% … …
+    pg31 = "\n".join(_migration_031("postgres"))
+    assert "'%%: rows are immutable (insert-only)'" in pg31
+    assert "'%:" not in pg31
+    assert "%" not in "\n".join(_migration_031("sqlite"))
     assert _migration_025("postgres") == [
         "ALTER TABLE paper_accounts "
         "DROP CONSTRAINT IF EXISTS paper_accounts_cash_check"
@@ -148,7 +169,7 @@ def test_migrations_18_19_apply_sequentially_after_1_17():
     s = open_store(str(Path(tempfile.mkdtemp()) / "atp.db"))   # applies 1..20 in order
     rows = s._all("SELECT version, name FROM schema_migrations ORDER BY version")
     versions = [int(r[0]) for r in rows]
-    assert versions == list(range(1, 29))          # 1..28 all applied, in order
+    assert versions == list(range(1, 32))          # 1..31 all applied, in order (WP8-integrated)
     names = {int(r[0]): r[1] for r in rows}
     assert names[18] == "research_backtesting" and names[19] == "backtest_actual_risk"
     assert names[20] == "research_datasets"        # R3.0A immutable dataset tables
@@ -160,7 +181,17 @@ def test_migrations_18_19_apply_sequentially_after_1_17():
     assert names[26] == "global_instrument_model"   # WP2 persistent global instrument model
     assert names[27] == "instrument_ibkr_qualification"   # WP3 read-only IBKR qualification
     assert names[28] == "wp4_market_data_foundation"       # WP4 persistent market-data foundation
+    assert names[29] == "global_news_official_filings"     # WP5 worldwide news & official filings
+    assert names[30] == "macro_geopolitical_events"        # WP6 macro/geopolitical/regulatory events
+    assert names[31] == "global_fundamentals_macro_series" # WP7 fundamentals & macro series
     s._one("SELECT instrument_id FROM instruments")                 # 26's tables exist
+    s._one("SELECT message_id FROM news_messages")                  # 29 (news) tables exist
+    s._one("SELECT source_id FROM news_sources")
+    s._one("SELECT message_id FROM macro_events")                   # 30 (macro) tables exist
+    s._one("SELECT source_id FROM macro_sources")
+    s._one("SELECT observation_id FROM fundamental_observations")    # 31 (fundamentals) tables exist
+    s._one("SELECT series_id FROM fundamental_series")
+    s._one("SELECT source_id FROM fundamental_sources")
     s._one("SELECT run_id FROM instrument_import_runs")
     s._one("SELECT qualification_status FROM instruments")          # 27's column exists
     s._one("SELECT run_id FROM instrument_qualification_runs")      # 27's tables exist
@@ -181,7 +212,8 @@ def test_migrations_18_19_apply_sequentially_after_1_17():
     same_path = str(Path(tempfile.mkdtemp()) / "atp.db")
     a = _open(same_path)
     b = _open(same_path)                                    # migrate again over an already-migrated db
-    assert [int(r[0]) for r in b._all("SELECT version FROM schema_migrations ORDER BY version")] == list(range(1, 29))
+    assert [int(r[0]) for r in b._all("SELECT version FROM schema_migrations ORDER BY version")] \
+        == list(range(1, 32))
 
 
 def test_failed_migration_version_is_not_recorded_and_retry_is_safe():

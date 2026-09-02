@@ -22,7 +22,12 @@ from atp.runtime import (
 )
 from atp.runtime.lifecycle import RECOVERY_STEPS
 from atp.store import D, open_store
+from atp.store import schema as store_schema
 from atp.store.base import FillRow, utcnow_iso
+
+# the applied set must equal exactly the DECLARED migrations — derived from MIGRATIONS so it is robust to
+# intentional version gaps (e.g. WP6's 29 skipping WP4's 28 on this stack) and to future additions.
+_EXPECTED_MIGRATIONS = sorted(v for v, *_ in store_schema.MIGRATIONS)
 
 
 def _db(tmp_path):
@@ -39,7 +44,7 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
     s = _db(tmp_path)
     assert s.ping()
     applied = sorted(r[0] for r in s._all("SELECT version FROM schema_migrations"))
-    assert applied == list(range(1, 29))
+    assert applied == _EXPECTED_MIGRATIONS
     # tables exist
     for t in ("runtime_state", "orders", "fills", "positions", "kill_switch", "daily_pnl",
               "audit_events", "service_heartbeats", "market_data_health", "ohlc_bars", "news_items",
@@ -119,7 +124,7 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
            "FROM runtime_state")
     s._one("SELECT quote_ts FROM market_data_health")
     s2 = _reopen(tmp_path, s)                     # re-open re-runs migrator → no-op
-    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == list(range(1, 29))
+    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == _EXPECTED_MIGRATIONS
 
 
 def test_migration_025_upgrades_existing_sqlite_accounts_without_losing_rows(
