@@ -29,6 +29,7 @@ from atp.store.schema import (
     _migration_026,
     _migration_027,
     _migration_029,
+    _migration_030,
 )
 
 PG_PLACEHOLDER = PostgresStore.PLACEHOLDER          # "%s"
@@ -84,6 +85,7 @@ def test_postgres_migration_placeholders_are_psycopg_safe():
         + _migration_026("postgres")
         + _migration_027("postgres")
         + _migration_029("postgres")           # WP6 macro/geopolitical events (28 is on the sibling stack)
+        + _migration_030("postgres")           # WP7 fundamentals & macro series
     )
     psycopg_ran = False
     for raw in stmts:
@@ -137,6 +139,11 @@ def test_postgres_functions_use_escaped_percent_and_sqlite_uses_none():
     assert "'%%: rows are immutable (insert-only)'" in pg29
     assert "'%:" not in pg29
     assert "%" not in "\n".join(_migration_029("sqlite"))
+    # … WP7 migration 30 fundamentals immutability triggers carry the same `%%` escape and no bare single-% …
+    pg30 = "\n".join(_migration_030("postgres"))
+    assert "'%%: rows are immutable (insert-only)'" in pg30
+    assert "'%:" not in pg30
+    assert "%" not in "\n".join(_migration_030("sqlite"))
     assert _migration_025("postgres") == [
         "ALTER TABLE paper_accounts "
         "DROP CONSTRAINT IF EXISTS paper_accounts_cash_check"
@@ -149,7 +156,7 @@ def test_migrations_18_19_apply_sequentially_after_1_17():
     versions = [int(r[0]) for r in rows]
     # 1..27 all applied in order, then WP6's 29 (28 is intentionally on the sibling stack — the framework
     # applies by set-difference, so the gap is expected here)
-    assert versions == list(range(1, 28)) + [29]
+    assert versions == list(range(1, 28)) + [29, 30]
     names = {int(r[0]): r[1] for r in rows}
     assert names[18] == "research_backtesting" and names[19] == "backtest_actual_risk"
     assert names[20] == "research_datasets"        # R3.0A immutable dataset tables
@@ -161,11 +168,15 @@ def test_migrations_18_19_apply_sequentially_after_1_17():
     assert names[26] == "global_instrument_model"   # WP2 persistent global instrument model
     assert names[27] == "global_news_official_filings"   # WP5 worldwide news & official filings
     assert names[29] == "macro_geopolitical_events"      # WP6 macro/geopolitical/regulatory events
+    assert names[30] == "global_fundamentals_macro_series"   # WP7 fundamentals & macro series
     s._one("SELECT instrument_id FROM instruments")                 # 26's tables exist
     s._one("SELECT message_id FROM news_messages")                  # 27's tables exist
     s._one("SELECT source_id FROM news_sources")
     s._one("SELECT message_id FROM macro_events")                   # 29's tables exist
     s._one("SELECT source_id FROM macro_sources")
+    s._one("SELECT observation_id FROM fundamental_observations")    # 30's tables exist
+    s._one("SELECT series_id FROM fundamental_series")
+    s._one("SELECT source_id FROM fundamental_sources")
     s._one("SELECT run_id FROM instrument_import_runs")
     s._one(
         "SELECT trade_date,risk_capital_baseline,cumulative_equity_delta,version "
@@ -183,7 +194,7 @@ def test_migrations_18_19_apply_sequentially_after_1_17():
     a = _open(same_path)
     b = _open(same_path)                                    # migrate again over an already-migrated db
     assert [int(r[0]) for r in b._all("SELECT version FROM schema_migrations ORDER BY version")] \
-        == list(range(1, 28)) + [29]
+        == list(range(1, 28)) + [29, 30]
 
 
 def test_failed_migration_version_is_not_recorded_and_retry_is_safe():

@@ -1264,6 +1264,91 @@ class MacroSourceRow:
     updated_at: str
 
 
+@dataclass(slots=True)
+class FundamentalSourceRow:
+    """§ WP7 — a fundamentals/macro data source in the mutable registry."""
+
+    source_id: str
+    name: str
+    source_type: str
+    regions_json: str
+    languages_json: str
+    update_mode: str
+    rate_limit_json: str
+    license_status: str
+    storage_allowed: bool
+    redistribution_allowed: bool
+    commercial_use_allowed: bool
+    attribution_required: bool
+    available: bool
+    last_success_at: str | None
+    last_error: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(slots=True)
+class FundamentalSeriesRow:
+    """§ WP7 — the definition of a fundamental/macro metric stream (mutable registry)."""
+
+    series_id: str
+    source_id: str
+    series_key: str
+    category: str
+    metric: str
+    unit: str
+    frequency: str
+    region: str | None
+    country: str | None
+    currency: str | None
+    description: str | None
+    link_status: str
+    provenance_json: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(slots=True)
+class FundamentalSeriesInstrumentRow:
+    """§ WP7 — one immutable fail-closed series→instrument mapping row."""
+
+    series_id: str
+    instrument_id: str
+    mapping_status: str
+    confidence: str | None
+    method: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
+class FundamentalObservationRow:
+    """§ WP7 — one immutable fundamental/macro data point (a specific revision)."""
+
+    observation_id: str
+    series_id: str
+    provider: str
+    provider_id: str
+    source_id: str
+    period: str
+    period_start: str | None
+    period_end: str | None
+    value: str | None
+    value_text: str | None
+    value_status: str
+    revision_seq: int
+    revision_of_id: str | None
+    is_preliminary: bool
+    published_at: str | None
+    received_at: str | None
+    time_status: str
+    license_status: str
+    storage_status: str
+    content_checksum: str
+    duplicate_of_id: str | None
+    provenance_json: str
+    created_at: str
+
+
 # --------------------------------------------------------------------------- shared SQL impl
 class SqlStore(Store):
     """DB-agnostic SQL implementation. Subclasses supply a DB-API connection, the parameter
@@ -3956,6 +4041,225 @@ class SqlStore(Store):
     def mx_macro_cluster_count(self) -> int:
         r = self._one("SELECT COUNT(DISTINCT macro_cluster_id) FROM macro_events "
                       "WHERE macro_cluster_id IS NOT NULL")
+        return int(r[0]) if r else 0
+
+    # === § WP7 — fundamentals / macro-series intake (read-only research data) ============================
+    _FX_SRC_COL_LIST = (
+        "source_id", "name", "source_type", "regions_json", "languages_json", "update_mode",
+        "rate_limit_json", "license_status", "storage_allowed", "redistribution_allowed",
+        "commercial_use_allowed", "attribution_required", "available", "last_success_at", "last_error",
+        "created_at", "updated_at")
+    _FX_SRC_COLS = ",".join(_FX_SRC_COL_LIST)
+    _FX_SERIES_COL_LIST = (
+        "series_id", "source_id", "series_key", "category", "metric", "unit", "frequency", "region",
+        "country", "currency", "description", "link_status", "provenance_json", "created_at", "updated_at")
+    _FX_SERIES_COLS = ",".join(_FX_SERIES_COL_LIST)
+    _FX_OBS_COL_LIST = (
+        "observation_id", "series_id", "provider", "provider_id", "source_id", "period", "period_start",
+        "period_end", "value", "value_text", "value_status", "revision_seq", "revision_of_id",
+        "is_preliminary", "published_at", "received_at", "time_status", "license_status", "storage_status",
+        "content_checksum", "duplicate_of_id", "provenance_json", "created_at")
+    _FX_OBS_COLS = ",".join(_FX_OBS_COL_LIST)
+
+    # -- source registry (mutable) --
+    def fx_upsert_source(self, record: dict) -> str:
+        """Idempotent upsert of a fundamentals source (registry). Fail-closed (unavailable, unlicensed) until
+        an entitled source attaches. Re-seeding refreshes the registry metadata but PRESERVES the operational
+        history (last_success_at/last_error are owned by fx_mark_source_result), matching the newsroom sibling."""
+        now = utcnow_iso()
+        cols = self._FX_SRC_COL_LIST
+        vals = tuple(record.get(c) for c in cols[:-2]) + (now, now)
+        upd = ",".join(f"{c}=excluded.{c}" for c in cols
+                       if c not in ("source_id", "created_at", "last_success_at", "last_error"))
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO fundamental_sources ({self._FX_SRC_COLS}) "
+                       f"VALUES ({','.join(['?'] * len(cols))}) "
+                       f"ON CONFLICT (source_id) DO UPDATE SET {upd}", vals)
+        return record["source_id"]
+
+    def fx_mark_source_result(self, source_id: str, *, available: bool, success: bool,
+                              last_error: str | None = None) -> bool:
+        now = utcnow_iso()
+        with self.tx() as cur:
+            if success:
+                self._exec(cur, "UPDATE fundamental_sources SET available=?, last_success_at=?, last_error=?, "
+                           "updated_at=? WHERE source_id=?", (available, now, None, now, source_id))
+            else:
+                self._exec(cur, "UPDATE fundamental_sources SET available=?, last_error=?, updated_at=? "
+                           "WHERE source_id=?", (available, last_error, now, source_id))
+            return cur.rowcount > 0
+
+    def fx_get_source(self, source_id: str) -> FundamentalSourceRow | None:
+        r = self._one(f"SELECT {self._FX_SRC_COLS} FROM fundamental_sources WHERE source_id=?", (source_id,))
+        return self._fx_source_row(r) if r else None
+
+    def fx_list_sources(self) -> list[FundamentalSourceRow]:
+        rows = self._all(f"SELECT {self._FX_SRC_COLS} FROM fundamental_sources ORDER BY source_id ASC")
+        return [self._fx_source_row(r) for r in rows]
+
+    @staticmethod
+    def _fx_source_row(r) -> FundamentalSourceRow:
+        return FundamentalSourceRow(*r[:8], bool(r[8]), bool(r[9]), bool(r[10]), bool(r[11]), bool(r[12]),
+                                    *r[13:])
+
+    # -- series registry (mutable) + fail-closed instrument mapping (immutable) --
+    def fx_upsert_series(self, record: dict, *, mappings=(), had_hints: bool = False) -> str:
+        """Idempotent upsert of a series definition + its fail-closed instrument mapping rows (immutable,
+        first-wins). ``link_status`` is DERIVED from the ACTUAL stored (immutable) mapping rows plus a sticky
+        'had hints' signal — NOT from the caller-supplied value — so the series summary always agrees with the
+        stored mapping rows and can never be an order-dependent fabricated VERIFIED. Sticky had-hints: a series
+        that once had a usable hint (link_status != NONE) stays 'had hints', so it never regresses NONE."""
+        now = utcnow_iso()
+        cols = self._FX_SERIES_COL_LIST
+        vals = tuple(record.get(c) for c in cols[:-2]) + (now, now)
+        upd = ",".join(f"{c}=excluded.{c}" for c in cols if c not in ("series_id", "created_at", "link_status"))
+        sid = record["series_id"]
+        with self.tx() as cur:
+            prev = self._one("SELECT link_status FROM fundamental_series WHERE series_id=?", (sid,))
+            sticky_hints = had_hints or (prev is not None and prev[0] != "NONE")
+            # upsert metadata FIRST (FK target for the mapping rows). link_status is excluded from the UPDATE
+            # set and derived below, so a per-observation recompute can never overwrite the stored truth.
+            self._exec(cur, f"INSERT INTO fundamental_series ({self._FX_SERIES_COLS}) "
+                       f"VALUES ({','.join(['?'] * len(cols))}) "
+                       f"ON CONFLICT (series_id) DO UPDATE SET {upd}", vals)
+            for instrument_id, status, *rest in mappings:
+                conf = rest[0] if rest else None
+                method = rest[1] if len(rest) > 1 else None
+                self._exec(cur, "INSERT INTO fundamental_series_instruments "
+                           "(series_id,instrument_id,mapping_status,confidence,method,created_at) "
+                           "VALUES (?,?,?,?,?,?) ON CONFLICT (series_id,instrument_id) DO NOTHING",
+                           (sid, instrument_id, status, conf, method, now))
+            # DERIVE link_status from the immutable stored rows: any non-VERIFIED row → AMBIGUOUS; all VERIFIED
+            # → VERIFIED; no rows → UNMAPPED if the series ever had a usable hint, else NONE (macro series).
+            stored = [r[0] for r in self._all(
+                "SELECT mapping_status FROM fundamental_series_instruments WHERE series_id=?", (sid,))]
+            if stored:
+                link = "AMBIGUOUS" if any(s != "VERIFIED" for s in stored) else "VERIFIED"
+            else:
+                link = "UNMAPPED" if sticky_hints else "NONE"
+            self._exec(cur, "UPDATE fundamental_series SET link_status=?, updated_at=? WHERE series_id=?",
+                       (link, now, sid))
+        return sid
+
+    def fx_get_series(self, series_id: str) -> FundamentalSeriesRow | None:
+        r = self._one(f"SELECT {self._FX_SERIES_COLS} FROM fundamental_series WHERE series_id=?", (series_id,))
+        return FundamentalSeriesRow(*r) if r else None
+
+    def fx_list_series(self, *, source_id: str | None = None, category: str | None = None,
+                       limit: int = 200, offset: int = 0) -> list[FundamentalSeriesRow]:
+        n, off = max(1, min(1000, int(limit))), max(0, int(offset))
+        clauses, params = [], []
+        for col, val in (("source_id", source_id), ("category", category)):
+            if val:
+                clauses.append(f"{col}=?")
+                params.append(val)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = self._all(f"SELECT {self._FX_SERIES_COLS} FROM fundamental_series{where} "
+                         "ORDER BY series_id ASC LIMIT ? OFFSET ?", (*params, n, off))
+        return [FundamentalSeriesRow(*r) for r in rows]
+
+    def fx_list_series_instruments(self, series_id: str) -> list[FundamentalSeriesInstrumentRow]:
+        rows = self._all("SELECT series_id,instrument_id,mapping_status,confidence,method,created_at "
+                         "FROM fundamental_series_instruments WHERE series_id=? ORDER BY instrument_id ASC",
+                         (series_id,))
+        return [FundamentalSeriesInstrumentRow(*r) for r in rows]
+
+    # -- observations (immutable) --
+    def fx_find_observation_by_checksum(self, content_checksum: str) -> str | None:
+        r = self._one("SELECT observation_id FROM fundamental_observations WHERE content_checksum=? "
+                      "ORDER BY created_at ASC, observation_id ASC LIMIT 1", (content_checksum,))
+        return r[0] if r else None
+
+    def fx_insert_observation(self, record: dict, *, run_id: str | None = None, run_event: dict | None = None,
+                              duplicate: bool = False, revised: bool = False) -> str:
+        """Insert one IMMUTABLE observation AND atomically advance the run counters + run event, in ONE
+        transaction. Idempotent per observation_id (ON CONFLICT DO NOTHING) — a re-ingest is a no-op and the
+        original is never overwritten; a REVISION is a distinct observation_id, so it is stored as a new row
+        (not a duplicate). `fetched_count` is bumped every call; the outcome counters + run event apply only
+        when the observation is newly inserted, and the run event only while the run is still RUNNING (a
+        reclaimed/terminal run never desyncs). Returns 'inserted'/'exists'."""
+        now = utcnow_iso()
+        values = tuple(record.get(c) for c in self._FX_OBS_COL_LIST[:-1]) + (now,)
+        with self.tx() as cur:
+            self._exec(cur, f"INSERT INTO fundamental_observations ({self._FX_OBS_COLS}) "
+                       f"VALUES ({','.join(['?'] * len(self._FX_OBS_COL_LIST))}) "
+                       "ON CONFLICT (observation_id) DO NOTHING", values)
+            inserted = cur.rowcount > 0
+            if run_id is not None:
+                cols = ["fetched_count=fetched_count+1"]
+                if inserted:
+                    cols.append("stored_count=stored_count+1")
+                    if duplicate:
+                        cols.append("duplicate_count=duplicate_count+1")
+                    if revised:
+                        cols.append("correction_count=correction_count+1")   # reused slot: 'revisions'
+                self._exec(cur, f"UPDATE news_import_runs SET {','.join(cols)}, updated_at=? "
+                           "WHERE run_id=? AND status='RUNNING'", (now, run_id))
+                run_is_live = cur.rowcount > 0
+                if inserted and run_event is not None and run_is_live:
+                    self._nx_insert_event(cur, run_id, run_event, now)
+            return "inserted" if inserted else "exists"
+
+    def fx_get_observation(self, observation_id: str) -> FundamentalObservationRow | None:
+        r = self._one(f"SELECT {self._FX_OBS_COLS} FROM fundamental_observations WHERE observation_id=?",
+                      (observation_id,))
+        return FundamentalObservationRow(*r) if r else None
+
+    def fx_list_observations(self, *, series_id: str | None = None, period: str | None = None,
+                             limit: int = 200, offset: int = 0) -> list[FundamentalObservationRow]:
+        n, off = max(1, min(1000, int(limit))), max(0, int(offset))
+        clauses, params = [], []
+        for col, val in (("series_id", series_id), ("period", period)):
+            if val:
+                clauses.append(f"{col}=?")
+                params.append(val)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = self._all(f"SELECT {self._FX_OBS_COLS} FROM fundamental_observations{where} "
+                         "ORDER BY published_at DESC, revision_seq DESC, observation_id DESC LIMIT ? OFFSET ?",
+                         (*params, n, off))
+        return [FundamentalObservationRow(*r) for r in rows]
+
+    def fx_current_observation(self, series_id: str, period: str) -> FundamentalObservationRow | None:
+        """The DERIVED current data point for a series+period: the highest revision, tie-broken by the latest
+        publish time then id. Never mutates — the original + every revision remain immutable rows."""
+        rows = self.fx_list_revisions(series_id, period)
+        return rows[-1] if rows else None
+
+    def fx_list_revisions(self, series_id: str, period: str) -> list[FundamentalObservationRow]:
+        """All revisions for a series+period, ordered oldest→current (revision_seq, then publish time, id).
+        The ``CASE WHEN published_at IS NULL`` key forces NULL publish times LAST on BOTH dialects (SQLite
+        sorts NULLs first, Postgres last by default), so the derived 'current' pick is deterministic."""
+        rows = self._all(f"SELECT {self._FX_OBS_COLS} FROM fundamental_observations "
+                         "WHERE series_id=? AND period=? "
+                         "ORDER BY revision_seq ASC, CASE WHEN published_at IS NULL THEN 1 ELSE 0 END ASC, "
+                         "published_at ASC, observation_id ASC", (series_id, period))
+        return [FundamentalObservationRow(*r) for r in rows]
+
+    # -- read-only observability aggregates --
+    def fx_count_observations(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM fundamental_observations")
+        return int(r[0]) if r else 0
+
+    def fx_dedup_stats(self) -> dict:
+        total = self.fx_count_observations()
+        d = self._one("SELECT COUNT(*) FROM fundamental_observations WHERE duplicate_of_id IS NOT NULL")
+        dup = int(d[0]) if d else 0
+        return {"total": total, "exact_duplicates": dup, "duplicate_rate": (dup / total) if total else 0.0}
+
+    def fx_revision_count(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM fundamental_observations WHERE revision_of_id IS NOT NULL")
+        return int(r[0]) if r else 0
+
+    def fx_value_status_breakdown(self) -> dict:
+        rows = self._all("SELECT value_status, COUNT(*) FROM fundamental_observations GROUP BY value_status")
+        return {str(s): int(c) for s, c in sorted(rows)}
+
+    def fx_series_link_breakdown(self) -> dict:
+        rows = self._all("SELECT link_status, COUNT(*) FROM fundamental_series GROUP BY link_status")
+        return {str(s): int(c) for s, c in sorted(rows)}
+
+    def fx_count_series(self) -> int:
+        r = self._one("SELECT COUNT(*) FROM fundamental_series")
         return int(r[0]) if r else 0
 
     # -- durable PAPER-canary lifecycle + ledger -------------------------

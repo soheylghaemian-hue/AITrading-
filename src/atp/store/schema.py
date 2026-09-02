@@ -1373,6 +1373,98 @@ def _migration_029(dialect: str) -> list[str]:
     return tables + indexes + triggers
 
 
+# --------------------------------------------------------------------------- § WP7 fundamentals / macro series
+# `fundamental_observations` and `fundamental_series_instruments` are INSERT-ONLY: an original data point is
+# never overwritten, a REVISION is a NEW row linked via revision_of_id, and a series's fail-closed instrument
+# mapping is immutable. The `fundamental_sources` + `fundamental_series` registries are mutable (availability /
+# link status / metadata change).
+_FUND_IMMUTABLE_TABLES = ("fundamental_observations", "fundamental_series_instruments")
+
+
+def _fund_triggers_sqlite() -> list[str]:
+    out: list[str] = []
+    for tbl in _FUND_IMMUTABLE_TABLES:
+        out += [
+            f"""CREATE TRIGGER IF NOT EXISTS trg_{tbl}_no_update BEFORE UPDATE ON {tbl}
+                BEGIN SELECT RAISE(ABORT, '{tbl}: rows are immutable (insert-only)'); END""",
+            f"""CREATE TRIGGER IF NOT EXISTS trg_{tbl}_no_delete BEFORE DELETE ON {tbl}
+                BEGIN SELECT RAISE(ABORT, '{tbl}: rows cannot be deleted'); END""",
+        ]
+    return out
+
+
+def _fund_triggers_postgres() -> list[str]:
+    out = [
+        """CREATE OR REPLACE FUNCTION atp_fund_block_mutate() RETURNS trigger AS $$
+           BEGIN RAISE EXCEPTION '%%: rows are immutable (insert-only)', TG_TABLE_NAME; END; $$ LANGUAGE plpgsql""",
+    ]
+    for tbl in _FUND_IMMUTABLE_TABLES:
+        out += [
+            f"DROP TRIGGER IF EXISTS trg_{tbl}_no_upd ON {tbl}",
+            f"CREATE TRIGGER trg_{tbl}_no_upd BEFORE UPDATE ON {tbl} FOR EACH ROW EXECUTE FUNCTION atp_fund_block_mutate()",
+            f"DROP TRIGGER IF EXISTS trg_{tbl}_no_del ON {tbl}",
+            f"CREATE TRIGGER trg_{tbl}_no_del BEFORE DELETE ON {tbl} FOR EACH ROW EXECUTE FUNCTION atp_fund_block_mutate()",
+        ]
+    return out
+
+
+def _migration_030(dialect: str) -> list[str]:
+    """§ WP7 — global fundamentals & macro-series intake (RESEARCH DATA ONLY).
+
+    Purely additive: four new tables, no existing table touched. `fundamental_sources` records each source's
+    explicit license + usage rights + availability (fail-closed). `fundamental_series` defines each metric
+    stream (category / metric / unit / frequency / region / currency) and carries its fail-closed instrument
+    link-status; `fundamental_series_instruments` (immutable, FK the WP2 `instruments`) is the fail-closed
+    per-series instrument mapping (VERIFIED/AMBIGUOUS/UNMAPPED — a symbol alone never maps uniquely).
+    `fundamental_observations` is an INSERT-ONLY, DB-immutable series of data points: a missing value stays
+    NULL (never fabricated), a later REVISION of the same series+period is a NEW row linked via
+    revision_of_id, and the 'current' value is derived at read time, never a mutation. The import lifecycle
+    REUSES the WP5 `news_import_runs`/`news_import_events`. NO trading, NO orders/execution, NO subscription
+    purchase, NO HTTP write path."""
+    t = _types(dialect)
+    ts, txt, i, b = t["TS"], t["TXT"], t["INT"], t["BOOL"]
+    tables = [
+        f"""CREATE TABLE IF NOT EXISTS fundamental_sources (
+            source_id {txt} PRIMARY KEY, name {txt} NOT NULL, source_type {txt} NOT NULL,
+            regions_json {txt} NOT NULL DEFAULT '[]', languages_json {txt} NOT NULL DEFAULT '[]',
+            update_mode {txt} NOT NULL, rate_limit_json {txt} NOT NULL DEFAULT '{{}}',
+            license_status {txt} NOT NULL, storage_allowed {b} NOT NULL DEFAULT 0,
+            redistribution_allowed {b} NOT NULL DEFAULT 0, commercial_use_allowed {b} NOT NULL DEFAULT 0,
+            attribution_required {b} NOT NULL DEFAULT 1, available {b} NOT NULL DEFAULT 0,
+            last_success_at {ts}, last_error {txt}, created_at {ts} NOT NULL, updated_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS fundamental_series (
+            series_id {txt} PRIMARY KEY, source_id {txt} NOT NULL, series_key {txt} NOT NULL,
+            category {txt} NOT NULL, metric {txt} NOT NULL, unit {txt} NOT NULL, frequency {txt} NOT NULL,
+            region {txt}, country {txt}, currency {txt}, description {txt}, link_status {txt} NOT NULL,
+            provenance_json {txt} NOT NULL DEFAULT '{{}}', created_at {ts} NOT NULL, updated_at {ts} NOT NULL)""",
+        f"""CREATE TABLE IF NOT EXISTS fundamental_series_instruments (
+            series_id {txt} NOT NULL REFERENCES fundamental_series(series_id),
+            instrument_id {txt} NOT NULL REFERENCES instruments(instrument_id),
+            mapping_status {txt} NOT NULL, confidence {txt}, method {txt}, created_at {ts} NOT NULL,
+            PRIMARY KEY (series_id, instrument_id))""",
+        f"""CREATE TABLE IF NOT EXISTS fundamental_observations (
+            observation_id {txt} PRIMARY KEY,
+            series_id {txt} NOT NULL REFERENCES fundamental_series(series_id),
+            provider {txt} NOT NULL, provider_id {txt} NOT NULL, source_id {txt} NOT NULL,
+            period {txt} NOT NULL, period_start {ts}, period_end {ts},
+            value {txt}, value_text {txt}, value_status {txt} NOT NULL,
+            revision_seq {i} NOT NULL DEFAULT 0, revision_of_id {txt}, is_preliminary {b} NOT NULL DEFAULT 0,
+            published_at {ts}, received_at {ts}, time_status {txt} NOT NULL,
+            license_status {txt} NOT NULL, storage_status {txt} NOT NULL, content_checksum {txt} NOT NULL,
+            duplicate_of_id {txt}, provenance_json {txt} NOT NULL DEFAULT '{{}}', created_at {ts} NOT NULL)""",
+    ]
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS ix_fund_obs_checksum ON fundamental_observations(content_checksum)",
+        "CREATE INDEX IF NOT EXISTS ix_fund_obs_series_period ON fundamental_observations(series_id, period)",
+        "CREATE INDEX IF NOT EXISTS ix_fund_obs_published ON fundamental_observations(published_at)",
+        "CREATE INDEX IF NOT EXISTS ix_fund_obs_revision ON fundamental_observations(revision_of_id)",
+        "CREATE INDEX IF NOT EXISTS ix_fund_series_source ON fundamental_series(source_id, category)",
+        "CREATE INDEX IF NOT EXISTS ix_fund_series_inst ON fundamental_series_instruments(instrument_id, mapping_status)",
+    ]
+    triggers = _fund_triggers_postgres() if dialect == "postgres" else _fund_triggers_sqlite()
+    return tables + indexes + triggers
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -1405,6 +1497,7 @@ MIGRATIONS = [
     # NOTE: 28 is intentionally skipped on this stack — it belongs to WP4 on the sibling stack. The migrator
     # applies by set-difference (no contiguity requirement), so the gap is harmless and avoids a collision.
     (29, "macro_geopolitical_events", _migration_029),
+    (30, "global_fundamentals_macro_series", _migration_030),
 ]
 
 
