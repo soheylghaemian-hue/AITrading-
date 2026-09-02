@@ -39,7 +39,7 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
     s = _db(tmp_path)
     assert s.ping()
     applied = sorted(r[0] for r in s._all("SELECT version FROM schema_migrations"))
-    assert applied == list(range(1, 26))
+    assert applied == list(range(1, 29))
     # tables exist
     for t in ("runtime_state", "orders", "fills", "positions", "kill_switch", "daily_pnl",
               "audit_events", "service_heartbeats", "market_data_health", "ohlc_bars", "news_items",
@@ -119,7 +119,7 @@ def test_migrations_apply_and_are_idempotent(tmp_path):
            "FROM runtime_state")
     s._one("SELECT quote_ts FROM market_data_health")
     s2 = _reopen(tmp_path, s)                     # re-open re-runs migrator → no-op
-    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == list(range(1, 26))
+    assert sorted(r[0] for r in s2._all("SELECT version FROM schema_migrations")) == list(range(1, 29))
 
 
 def test_migration_025_upgrades_existing_sqlite_accounts_without_losing_rows(
