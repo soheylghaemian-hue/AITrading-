@@ -260,29 +260,47 @@ class QualificationClient:
 
 
 class IbkrQualificationClient:
-    """Adapter over a connected `ib_insync.IB`-like client. The ONLY IBKR call made is
-    `reqContractDetailsAsync` (read-only security-definition lookup). `ib_insync` is imported lazily so
-    importing this module pulls in no broker SDK."""
+    """Adapter over a connected `ib_async.IB`-like client. The ONLY IBKR call made is
+    `reqContractDetailsAsync` (read-only security-definition lookup) — never an order, market-data
+    subscription, scanner or any account-mutating call. `ib_async` is imported lazily so importing this
+    module pulls in no broker SDK (the import-graph guard enforces this)."""
 
-    def __init__(self, ib: Any, *, contract_factory: Callable[[QualificationRequest], Any] | None = None) -> None:
+    def __init__(self, ib: Any, *, contract_factory: Callable[[QualificationRequest], Any] | None = None,
+                 request_timeout: float | None = 15.0) -> None:
         self._ib = ib
         self._contract_factory = contract_factory or self._build_contract
+        self._request_timeout = request_timeout   # hard per-request timeout (s); None disables it
 
     async def fetch_contract_details(self, request: QualificationRequest) -> list[Any]:
         if self._ib is None or (hasattr(self._ib, "isConnected") and not self._ib.isConnected()):
             raise ConnectionUnavailableError("IBKR connection unavailable", code="no_connection")
         contract = self._contract_factory(request)
         try:
-            details = await self._ib.reqContractDetailsAsync(contract)
+            call = self._ib.reqContractDetailsAsync(contract)
+            if self._request_timeout and self._request_timeout > 0:
+                details = await asyncio.wait_for(call, self._request_timeout)
+            else:
+                details = await call
         except QualificationError:
             raise
-        except Exception as exc:  # surface any client fault as a classified retryable error
+        except TimeoutError as exc:                 # hard per-request time budget hit → retryable
+            raise RetryableQualificationError(
+                f"contract-details request timed out after {self._request_timeout}s", code="timeout") from exc
+        except ConnectionError as exc:                      # socket drop (refused/reset/aborted/broken pipe)
+            raise ConnectionUnavailableError(f"IBKR connection lost during request: {exc}",
+                                             code="connection_lost") from exc
+        except Exception as exc:
+            # a fault that dropped the connection mid-request is a connection loss (orchestrator aborts the
+            # run); anything else is a per-instrument retryable fault (isolated by the orchestrator).
+            if hasattr(self._ib, "isConnected") and not self._ib.isConnected():
+                raise ConnectionUnavailableError(f"IBKR connection lost during request: {exc}",
+                                                 code="connection_lost") from exc
             raise RetryableQualificationError(f"contract-details request failed: {exc}") from exc
         return list(details or [])
 
     @staticmethod
     def _build_contract(request: QualificationRequest) -> Any:
-        import ib_insync  # lazy: no broker SDK is imported at module load
+        import ib_async  # lazy: no broker SDK is imported at module load
 
         kwargs: dict[str, Any] = {
             "symbol": request.symbol,
@@ -304,7 +322,7 @@ class IbkrQualificationClient:
             kwargs["right"] = request.right
         if request.local_symbol:
             kwargs["localSymbol"] = request.local_symbol
-        return ib_insync.Contract(**kwargs)
+        return ib_async.Contract(**kwargs)
 
 
 # --------------------------------------------------------------------------- orchestrator
