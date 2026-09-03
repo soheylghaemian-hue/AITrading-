@@ -135,7 +135,7 @@ no business logic and no credentials.
 
 The public dashboard is **structurally incapable** of trading:
 
-- It **never** connects to IB Gateway (`localhost:4002/4001`), never imports `ib_insync`, never
+- It **never** connects to IB Gateway (`localhost:4002/4001`), never imports `ib_async`, never
   calls `placeOrder`/`cancelOrder`/`reqMktData`. A unit test enforces this by scanning the source.
 - It reads **only** `/dashboard/*` endpoints. The **Emergency Stop** sends a token-authenticated
   `POST /dashboard/emergency-stop` to the backend; the authoritative kill switch lives in the

@@ -63,7 +63,7 @@ class QualificationResult:
 
 
 class IBKRContractQualifier:
-    """Qualify listing contracts against a connected ``ib_insync.IB`` client."""
+    """Qualify listing contracts against a connected ``ib_async.IB`` client."""
 
     def __init__(
         self,
@@ -127,10 +127,10 @@ def _candidate_label(candidate: Any) -> str:
 def _ib_contract(candidate: Any) -> Any:
     if hasattr(candidate, "secType"):
         return candidate
-    import ib_insync
+    import ib_async
 
     sec_type = "STK" if getattr(candidate, "sec_type", "") == "ETF" else candidate.sec_type
-    return ib_insync.Contract(
+    return ib_async.Contract(
         symbol=candidate.symbol,
         secType=sec_type,
         exchange="SMART" if sec_type == "STK" else candidate.exchange,

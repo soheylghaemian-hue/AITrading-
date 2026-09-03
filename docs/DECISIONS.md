@@ -111,7 +111,7 @@ Round focused on the broker-independent gaps needed before real market data conn
   → momentum/anomaly → rank) that narrows the global universe to the shortlist worth deep
   real-time data. Input is caller-supplied summaries; no fabricated data.
 * **IBKR adapter prepared** (`atp.brokers.ibkr`) — added historical bars, executions, open
-  orders, reconnect (`ensure_connected`) and error/disconnect hooks (real lazy `ib_insync`,
+  orders, reconnect (`ensure_connected`) and error/disconnect hooks (real lazy `ib_async`,
   live-only), with pure `bar_from_ib_historical` mapper unit-tested. `docs/IBKR_SETUP.md`
   documents exactly the credentials, ports and market-data subscriptions needed tomorrow.
 * **Docker** — `Dockerfile` + `docker-compose.yml` (Postgres journal + Redis state + app; IB
@@ -234,7 +234,7 @@ Adds the derivative data ebene the concept lists (§5), exact and offline-tested
 
 * **Instrument** gains optional `expiry`/`strike`/`right`/`underlying`; `key` stays unchanged
   for non-derivatives and becomes unique per option. The IBKR adapter now maps **futures and
-  options** via a pure `contract_spec` (ib_insync-free, tested) — closing the ADR-6 gap. (The
+  options** via a pure `contract_spec` (ib_async-free, tested) — closing the ADR-6 gap. (The
   futures *exchange* is left for IB to qualify; a fuller impl carries the venue.)
 * **Black–Scholes** pricing, Greeks (Δ/Γ/vega/θ/ρ) and an **implied-vol** solver (Newton +
   bisection), pure `math`, verified against textbook values and put–call parity. `implied_vol`
@@ -345,7 +345,7 @@ governance monitor over the journal (§19), so a decaying strategy is suspended 
 and the desk stops acting on it — the learning loop, live.
 
 * **Feed seam.** `ReplayFeed` (offline, deterministic, drives paper trading and the tests) and
-  `IBKRMarketFeed` (live, lazy `ib_insync`) implement one interface. The live event bridge is
+  `IBKRMarketFeed` (live, lazy `ib_async`) implement one interface. The live event bridge is
   live-only, but the IB→atp mapping (`bar_from_rt`, `quote_from_ticker`) is pure and unit
   tested — same honesty boundary as the broker adapter (ADR-6).
 * **Broker-agnostic, one exception.** The runner forwards quotes to a `PaperBroker` so it can
@@ -401,8 +401,8 @@ The IBKR adapter (`atp.brokers.ibkr`) is deliberately thin. The logic that can a
 *wrong* — mapping an `atp` `Order`/`Instrument` onto an IB order/contract, and parsing IB's
 account/position/fill objects back — is isolated behind two injected seams (`ib` client and
 `factory`) and a pure `describe_order()` function. That whole surface is unit-tested with a
-`FakeIB` mirroring the `ib_insync` methods used, so it needs neither a live gateway nor the
-`ib_insync` dependency (which is lazy-imported only inside `connect()`/`IBFactory`).
+`FakeIB` mirroring the `ib_async` methods used, so it needs neither a live gateway nor the
+`ib_async` dependency (which is lazy-imported only inside `connect()`/`IBFactory`).
 
 What the offline suite does **not** prove: a real socket connection, live market data, and
 real fills. Those require a running IB Gateway (paper account, port 4002) and are validated

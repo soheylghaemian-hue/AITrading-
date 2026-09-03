@@ -49,10 +49,10 @@ DATA_DEPENDENT_AGENTS = ["volatility", "cross_asset", "stat_arb", "macro", "fx_c
 
 def _preflight() -> bool:
     try:
-        import ib_insync  # noqa: F401
+        import ib_async  # noqa: F401
         return True
     except ImportError:
-        print("✗ ib_insync not installed. Run:  pip install -e \".[live]\"")
+        print("✗ ib_async not installed. Run:  pip install -e \".[live]\"")
         return False
 
 
@@ -84,7 +84,7 @@ async def _probe_market_data(broker: IBKRBroker) -> list[dict]:
     ib = broker._require()  # noqa: SLF001 — read-only raw client access, like the smoke test
     errors: dict[str, tuple[int, str]] = {}
 
-    def _on_error(reqId, code, msg, contract=None):  # ib_insync errorEvent signature
+    def _on_error(reqId, code, msg, contract=None):  # ib_async errorEvent signature
         sym = getattr(contract, "symbol", None)
         if sym is not None:
             errors[sym] = (int(code), str(msg))
