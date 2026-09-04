@@ -11,14 +11,14 @@ This adapter is thin on purpose. The two things that actually carry risk of bein
 account/position/fill objects back into `atp` types. Both are isolated behind an injected
 seam:
 
-* `ib` — the client. In production it's an `ib_insync.IB()`; `connect()` lazy-imports it so
-  importing this module never requires `ib_insync`. In tests a `FakeIB` mirrors the small
+* `ib` — the client. In production it's an `ib_async.IB()`; `connect()` lazy-imports it so
+  importing this module never requires `ib_async`. In tests a `FakeIB` mirrors the small
   surface used here.
-* `factory` — builds IB contract/order objects. Defaults to an `ib_insync`-backed factory;
+* `factory` — builds IB contract/order objects. Defaults to an `ib_async`-backed factory;
   tests inject a fake that returns plain namespaces.
 
 The mapping/parsing logic is therefore fully unit-testable without a live gateway or the
-`ib_insync` dependency. What is *not* simulated (a real connection, market data, fills) is
+`ib_async` dependency. What is *not* simulated (a real connection, market data, fills) is
 honestly out of scope for the offline suite — see docs/DECISIONS.md ADR-6.
 """
 
@@ -75,10 +75,10 @@ _SECTYPE_MAP = {
 
 @dataclass(slots=True)
 class OrderSpec:
-    """Broker-neutral description of an order — the mapping decision, ib_insync-free.
+    """Broker-neutral description of an order — the mapping decision, ib_async-free.
 
     Isolated here so the atp-Order -> IB translation (action, kind, prices) is unit-testable
-    without the `ib_insync` dependency. `IBFactory` just materializes this into IB objects.
+    without the `ib_async` dependency. `IBFactory` just materializes this into IB objects.
     """
 
     action: str            # "BUY" | "SELL"
@@ -102,7 +102,7 @@ def describe_order(o: Order) -> OrderSpec:
 
 
 def bar_from_ib_historical(ib_bar: Any, instrument: Instrument) -> Bar:
-    """Pure IB historical BarData -> atp Bar (ib_insync-free, unit-tested)."""
+    """Pure IB historical BarData -> atp Bar (ib_async-free, unit-tested)."""
     ts = getattr(ib_bar, "date", None)
     if not isinstance(ts, datetime):
         # IB may return a date/str; normalize what we can, else stamp now (UTC).
@@ -120,7 +120,7 @@ def bar_from_ib_historical(ib_bar: Any, instrument: Instrument) -> Bar:
 
 
 def contract_spec(instrument: Instrument) -> dict:
-    """Pure atp-Instrument -> IB contract fields (ib_insync-free, so it's unit-testable).
+    """Pure atp-Instrument -> IB contract fields (ib_async-free, so it's unit-testable).
 
     Futures need `expiry` (+ exchange); options need `expiry`/`strike`/`right`. Missing terms
     raise, rather than building a silently-wrong contract (ADR-6/ADR-15)."""
@@ -156,21 +156,21 @@ def contract_spec(instrument: Instrument) -> dict:
 
 
 class IBFactory:
-    """Default contract/order factory backed by ``ib_insync`` (lazy-imported)."""
+    """Default contract/order factory backed by ``ib_async`` (lazy-imported)."""
 
     def __init__(self) -> None:
         self._ibi: Any = None
 
     def _mod(self) -> Any:
         if self._ibi is None:
-            import ib_insync  # noqa: PLC0415 — lazy so the module imports without the dep
+            import ib_async  # noqa: PLC0415 — lazy so the module imports without the dep
 
-            self._ibi = ib_insync
+            self._ibi = ib_async
         return self._ibi
 
     def contract(self, instrument: Instrument) -> Any:
         ibi = self._mod()
-        spec = contract_spec(instrument)   # pure mapping (validated, ib_insync-free)
+        spec = contract_spec(instrument)   # pure mapping (validated, ib_async-free)
         sec = spec["secType"]
         if sec == "STK":
             return ibi.Stock(spec["symbol"], spec["exchange"], spec["currency"])
@@ -225,9 +225,9 @@ class IBKRBroker(Broker):
     # ------------------------------------------------------------- lifecycle
     async def connect(self) -> None:
         if self._ib is None:
-            import ib_insync  # noqa: PLC0415 — lazy import; only needed for a real connection
+            import ib_async  # noqa: PLC0415 — lazy import; only needed for a real connection
 
-            self._ib = ib_insync.IB()
+            self._ib = ib_async.IB()
         await self._ib.connectAsync(
             self._cfg.host,
             self._cfg.port,

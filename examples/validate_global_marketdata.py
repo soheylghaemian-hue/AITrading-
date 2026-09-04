@@ -33,7 +33,7 @@ async def main(client_id: int, settle: float) -> None:
     broker = IBKRBroker(IBKRConfig(host="127.0.0.1", port=4002, client_id=client_id, readonly=True))
     await broker.connect()
     ib = broker._require()
-    from ib_insync import Forex, Stock  # noqa: PLC0415
+    from ib_async import Forex, Stock  # noqa: PLC0415
 
     errors: dict[str, tuple[int, str]] = {}
 

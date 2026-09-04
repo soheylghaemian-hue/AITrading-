@@ -6,7 +6,7 @@ events from it and never knows the source. Two implementations:
 * `ReplayFeed` — deterministic, offline. Replays a list of bars, synthesizing a bid/ask quote
   around each (as the backtester does), optionally pacing in real time. This is what drives
   paper trading and the offline tests.
-* `IBKRMarketFeed` — live, backed by `ib_insync` real-time bars/tickers (lazy-imported). Its
+* `IBKRMarketFeed` — live, backed by `ib_async` real-time bars/tickers (lazy-imported). Its
   event plumbing runs only against a real gateway, but the IB→atp mapping is factored into the
   pure `bar_from_rt` / `quote_from_ticker` helpers, which ARE unit-tested (same honesty
   boundary as the broker adapter, ADR-6/ADR-10).
@@ -61,9 +61,9 @@ class ReplayFeed(MarketFeed):
                 await asyncio.sleep(self._delay)
 
 
-# --- pure IB → atp mappers (unit-tested without ib_insync) -------------------
+# --- pure IB → atp mappers (unit-tested without ib_async) -------------------
 def bar_from_rt(rt: Any, instrument: Instrument) -> Bar:
-    """Map an ib_insync RealTimeBar (or compatible) to an atp Bar."""
+    """Map an ib_async RealTimeBar (or compatible) to an atp Bar."""
     ts = getattr(rt, "time", None)
     if not isinstance(ts, datetime):
         ts = datetime.now(timezone.utc)
@@ -79,7 +79,7 @@ def bar_from_rt(rt: Any, instrument: Instrument) -> Bar:
 
 
 def quote_from_ticker(ticker: Any, instrument: Instrument) -> QuoteEvent | None:
-    """Map an ib_insync Ticker to an atp QuoteEvent; None if bid/ask aren't both present."""
+    """Map an ib_async Ticker to an atp QuoteEvent; None if bid/ask aren't both present."""
     bid = getattr(ticker, "bid", None)
     ask = getattr(ticker, "ask", None)
     if bid is None or ask is None or bid != bid or ask != ask:  # None or NaN
@@ -105,9 +105,9 @@ class IBKRMarketFeed(MarketFeed):
 
     async def connect(self) -> None:
         if self._ib is None:
-            import ib_insync  # noqa: PLC0415 — lazy; only needed for a live connection
+            import ib_async  # noqa: PLC0415 — lazy; only needed for a live connection
 
-            self._ib = ib_insync.IB()
+            self._ib = ib_async.IB()
             await self._ib.connectAsync()
         if self._factory is None:
             from ..brokers.ibkr import IBFactory  # noqa: PLC0415
@@ -121,7 +121,7 @@ class IBKRMarketFeed(MarketFeed):
             ticker.updateEvent += self._make_quote_handler(inst)
 
     def _make_bar_handler(self, inst: Instrument):
-        def handler(bars, has_new_bar):  # ib_insync signature
+        def handler(bars, has_new_bar):  # ib_async signature
             if has_new_bar and bars:
                 self._queue.put_nowait(bar_from_rt(bars[-1], inst))
         return handler

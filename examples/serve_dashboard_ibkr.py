@@ -1,7 +1,7 @@
 """Run the READ-ONLY Dashboard API backed by REAL IBKR data (Phase 7).
 
 Data context = the existing IBKR adapter in READ-ONLY mode (not the PaperBroker). IBKR runs in
-its OWN thread + event loop (ib_insync's natural habitat, avoiding the uvicorn-loop import issue
+its OWN thread + event loop (ib_async's natural habitat, avoiding the uvicorn-loop import issue
 on Python 3.14); FastAPI serves a thread-safe cache. NO orders, NO placeOrder/cancelOrder/
 modifyOrder, NO execution. On any IBKR failure it shows **IBKR DATA UNAVAILABLE** with the real
 error — it NEVER falls back to the PaperBroker and NEVER fabricates data.

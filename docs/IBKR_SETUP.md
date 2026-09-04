@@ -14,7 +14,7 @@ gateway answers, live calls simply return `DATA_NOT_AVAILABLE`-style errors, nev
   - ✅ (recommended) Read-Only API off only when you actually want to trade
   - Add the host running `atp` to **Trusted IPs** (e.g. `127.0.0.1`)
   - Note the **Socket port**.
-- `pip install -e ".[live]"` (installs `ib_insync`).
+- `pip install -e ".[live]"` (installs `ib_async`).
 
 ## 2. Ports (default)
 
@@ -61,7 +61,7 @@ Per the decision rule (§19), these are the inputs the system cannot infer:
    first run, US equities real-time (or delayed) is enough.
 4. **Install the live extra** on the machine running `atp`:
    ```bash
-   pip install -e ".[live]"     # ib_insync
+   pip install -e ".[live]"     # ib_async
    ```
 5. **Run the READ-ONLY smoke test** (sends NO orders):
    ```bash

@@ -1,6 +1,6 @@
 """Broker adapters (§3/§17). Strategy code depends only on the `Broker` interface.
 
-`ibkr` is safe to import without `ib_insync` installed — the dependency is lazy-loaded only
+`ibkr` is safe to import without `ib_async` installed — the dependency is lazy-loaded only
 when a real connection is opened.
 """
 

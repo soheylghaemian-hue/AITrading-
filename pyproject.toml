@@ -12,7 +12,7 @@ dependencies = []
 [project.optional-dependencies]
 # Live/production extras (not needed for the offline test suite).
 live = [
-    "ib-insync>=0.9.86",   # IBKR / IB Gateway adapter (§17)
+    "ib-async>=2.0",   # IBKR / IB Gateway adapter (§17)
     "fastapi>=0.110",      # backend API (§21)
     "uvicorn>=0.29",
     "redis>=5.0",          # realtime state (§21)

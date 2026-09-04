@@ -4,7 +4,7 @@ Strictly read-only. It **cannot** place, modify or cancel orders — that capabi
 this script. The default path is a *provably read-only* connectivity + market-data test and
 issues **no order-management request at all**. It only:
 
-  1. checks `ib_insync` is installed,
+  1. checks `ib_async` is installed,
   2. connects to a running IB Gateway / TWS,
   3. confirms the account and reads the account summary + cash,
   4. reads current positions,
@@ -42,10 +42,10 @@ from atp.core.events import Instrument
 
 def _preflight() -> bool:
     try:
-        import ib_insync  # noqa: F401
+        import ib_async  # noqa: F401
         return True
     except ImportError:
-        print("✗ ib_insync not installed. Run:  pip install -e \".[live]\"")
+        print("✗ ib_async not installed. Run:  pip install -e \".[live]\"")
         return False
 
 
@@ -71,7 +71,7 @@ async def _market_data_snapshots(broker: IBKRBroker, symbols: list[str]) -> None
             if q is not None:
                 await q(contract)
             ticker = ib.reqMktData(contract, "", True, False)   # snapshot=True (read-only)
-            # Yield to the running loop so ib_insync can process incoming ticks. Must be
+            # Yield to the running loop so ib_async can process incoming ticks. Must be
             # asyncio.sleep, NOT ib.sleep() — the latter drives the loop itself and raises
             # "event loop is already running" when we're already inside asyncio.run(main()).
             await asyncio.sleep(2.0)
