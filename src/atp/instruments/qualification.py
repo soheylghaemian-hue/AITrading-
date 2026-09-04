@@ -23,6 +23,7 @@ AUTONOMOUS=DISABLED · EXECUTION=DISABLED · IBKR ORDERS=0.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import uuid
@@ -33,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 
 from .global_catalog import GlobalContract
 from .ibkr_catalog import contract_detail_to_global
+from .ibkr_venue import is_ibkr_exchange, resolve_ibkr_exchanges
 from .model import canon_decimal_text
 
 if TYPE_CHECKING:  # avoid importing the store at runtime — keeps the import graph free of persistence
@@ -92,6 +94,17 @@ class ConnectionUnavailableError(RetryableQualificationError):
     """No usable IBKR connection. Produces a visible ERROR_RETRYABLE status and aborts the run early."""
 
 
+class VenueResolutionError(RetryableQualificationError):
+    """§ WP10 — the request could not be resolved to a real IBKR venue/contract because it used an
+    unmapped/invalid venue (a FIRDS MIC is NOT an IBKR exchange code), lacked a usable identifier, or IBKR
+    rejected the destination / contract spec (error 200 "destination or exchange selected is Invalid" /
+    "Invalid value in field # NNN"). This is a QUERY / venue-resolution failure — explicitly NOT a verdict
+    on tradability. It maps to a re-selectable ERROR_RETRYABLE that is BUDGET-NEUTRAL (never consumes the
+    retry budget and so never auto-escalates to ERROR_PERMANENT), so an instrument is never permanently
+    marked failed while the query itself is at fault. A future migration could give it a dedicated
+    VENUE_UNRESOLVED status; until then the reason text carries the distinction."""
+
+
 # Best-effort IBKR error-code taxonomy (used by the adapter to classify surfaced IBKR errors). Conservative:
 # unknown codes are treated as retryable so nothing is silently marked permanent.
 _MDNE_CODES = frozenset({10089, 10090, 10091, 10167, 10168, 10197, 354})
@@ -115,6 +128,46 @@ def classify_ibkr_error(code: int | None, message: str = "") -> QualificationErr
     return RetryableQualificationError(msg, code=str(code) if code is not None else "")
 
 
+# § WP10 — IBKR reuses error code 200 for TWO very different situations: a genuine "No security definition
+# has been found for the request" (a real not-found for a WELL-FORMED query) AND venue/contract-spec
+# rejections such as "The destination or exchange selected is Invalid" or "Invalid value in field # NNN"
+# (field 541 was seen for FUT/OPT). Only the former is evidence about tradability; the latter is a
+# query/venue-resolution problem. These markers separate them by message text (lower-cased).
+_VENUE_ERROR_MARKERS = (
+    "destination or exchange selected is invalid",
+    "invalid destination",
+    "invalid value in field",
+    "the exchange is closed",
+    "no trading permissions",  # entitlement to the venue, not a tradability verdict
+)
+_NO_SECURITY_DEF_MARKERS = ("no security definition",)
+
+
+def classify_contract_query_error(captured: Iterable[tuple[int | None, str]]) -> QualificationError | None:
+    """§ WP10 — given the IBKR error events captured during a contract-details request that returned NO
+    contracts, decide whether the emptiness is a venue/query-resolution failure (→ VenueResolutionError) or
+    a genuine "no security definition" (→ None, so the caller records the ordinary NOT_TRADABLE outcome).
+    Fail-open toward re-query: an error-200 we cannot positively attribute to "no security definition" is
+    treated as venue-resolution, never as proof of non-tradability. Non-200 codes defer to
+    classify_ibkr_error but only when they carry a meaningful (non-informational) classification."""
+    for code, message in captured:
+        msg = (message or "").lower()
+        if code == 200:
+            if any(m in msg for m in _VENUE_ERROR_MARKERS):
+                return VenueResolutionError(f"venue/query resolution failed (IBKR 200): {message}",
+                                            code="venue_unresolved")
+            if any(m in msg for m in _NO_SECURITY_DEF_MARKERS):
+                continue   # genuine not-found → fall through to NOT_TRADABLE
+            # an error 200 we cannot attribute to a genuine not-found: do NOT assert non-tradability
+            return VenueResolutionError(f"unattributed IBKR error 200: {message}", code="venue_unresolved")
+        if code is not None:
+            err = classify_ibkr_error(code, message)
+            if isinstance(err, (NotTradableError, MarketDataNotEntitledError, PermanentQualificationError,
+                                ConnectionUnavailableError)):
+                return err
+    return None  # genuine "no security definition" (or nothing captured) → empty result → NOT_TRADABLE
+
+
 # --------------------------------------------------------------------------- read-only request + matching
 _IB_SEC_TYPE = {
     "equity": "STK", "etf": "STK", "index": "IND", "fx": "CASH", "bond": "BOND",
@@ -133,14 +186,15 @@ class QualificationRequest:
 
     symbol: str
     sec_type: str
-    exchange: str
-    primary_exchange: str
+    exchange: str            # § WP10: this is the FIRDS ISO-10383 MIC, NOT an IBKR exchange code
+    primary_exchange: str    # § WP10: also a FIRDS MIC (FIRDS copies the venue MIC here)
     currency: str
     expiry: str = ""
     strike: float | None = None
     right: str = ""
     con_id: int | None = None
     local_symbol: str = ""
+    isin: str = ""           # § WP10: drives ISIN-based discovery (secIdType='ISIN', secId=<isin>)
 
 
 def build_request_spec(instrument: InstrumentRow) -> QualificationRequest:
@@ -155,6 +209,7 @@ def build_request_spec(instrument: InstrumentRow) -> QualificationRequest:
         right=instrument.option_right or "",
         con_id=(int(instrument.con_id) if instrument.con_id is not None else None),
         local_symbol=instrument.local_symbol or "",
+        isin=getattr(instrument, "isin", "") or "",
     )
 
 
@@ -184,6 +239,16 @@ def _class_compatible(instrument_class: str, candidate_class: str) -> bool:
     return {a, b} <= {"equity", "etf"}
 
 
+def _venue_resolvable(instrument: InstrumentRow) -> bool:
+    """§ WP10 — can the instrument's stored venue be translated to an IBKR exchange code (or is it already
+    one)? If not, we can neither VERIFY the venue nor declare NOT_TRADABLE on a venue basis: a returned
+    contract that is inconsistent only because the venue is unconfirmable is a venue-resolution gap, not a
+    tradability verdict (handled in _qualify_one)."""
+    e, p = getattr(instrument, "exchange", ""), getattr(instrument, "primary_exchange", "")
+    return bool(resolve_ibkr_exchanges(e) or resolve_ibkr_exchanges(p)
+                or is_ibkr_exchange(e) or is_ibkr_exchange(p))
+
+
 def _consistent(instrument: InstrumentRow, c: GlobalContract) -> bool:
     """True iff candidate `c` is consistent with EVERY known identity field of `instrument`. Currency, venue
     and asset class are always required, so a symbol alone can never make a candidate consistent."""
@@ -197,9 +262,21 @@ def _consistent(instrument: InstrumentRow, c: GlobalContract) -> bool:
     # Venue must match on a shared REAL exchange. Empty strings and routing pseudo-venues (SMART, …) are
     # excluded, so neither a NULL venue nor the ubiquitous "SMART" routing token can satisfy the constraint
     # by coincidence — that would verify an instrument whose actual listing venue was never confirmed.
-    inst_venues = _real_venues(instrument.exchange, instrument.primary_exchange)
-    cand_venues = _real_venues(c.exchange, c.primary_exchange)
-    if not (inst_venues & cand_venues):
+    # § WP10 — the instrument's stored venue is a FIRDS MIC; the returned contract's venue is an IBKR
+    # exchange code. They live in different namespaces (XPAR vs SBF), so we translate the MIC to its IBKR
+    # code(s) via the fail-closed registry before intersecting. An unmapped MIC yields NO expected venue, so
+    # this function returns False (the venue is unconfirmable → never VERIFIED). Whether that unconfirmable
+    # outcome should be NOT_TRADABLE or a re-queryable venue-resolution gap is decided in _qualify_one (see
+    # _venue_resolvable): a returned-but-inconsistent contract on an unmapped MIC is NEVER a false
+    # NOT_TRADABLE — it is reclassified ERROR_RETRYABLE.
+    expected_venues = {v.upper() for v in
+                       (*resolve_ibkr_exchanges(instrument.exchange),
+                        *resolve_ibkr_exchanges(instrument.primary_exchange)) if v}
+    for raw in (instrument.exchange, instrument.primary_exchange):   # US sources store IBKR codes, not MICs
+        if is_ibkr_exchange(raw):
+            expected_venues.add(_norm(raw))
+    cand_venues = _real_venues(c.exchange, c.primary_exchange)   # IBKR codes, SMART/routing excluded
+    if not expected_venues or not (expected_venues & cand_venues):
         return False
     if instrument.con_id is not None and int(instrument.con_id) != c.con_id:
         return False
@@ -274,7 +351,26 @@ class IbkrQualificationClient:
     async def fetch_contract_details(self, request: QualificationRequest) -> list[Any]:
         if self._ib is None or (hasattr(self._ib, "isConnected") and not self._ib.isConnected()):
             raise ConnectionUnavailableError("IBKR connection unavailable", code="no_connection")
-        contract = self._contract_factory(request)
+        contract = self._contract_factory(request)   # may raise VenueResolutionError (unmapped MIC / no id)
+
+        # § WP10 — capture IBKR error events for this (sequential, one-at-a-time) request so an EMPTY result
+        # can be classified by its cause instead of being blindly treated as NOT_TRADABLE.
+        captured: list[tuple[int | None, str]] = []
+        err_event = getattr(self._ib, "errorEvent", None)
+
+        def _on_error(*args: Any) -> None:
+            code = args[1] if len(args) > 1 else None
+            message = str(args[2]) if len(args) > 2 else ""
+            try:
+                captured.append((int(code) if code is not None else None, message))
+            except (TypeError, ValueError):
+                captured.append((None, message))
+
+        if err_event is not None:
+            try:
+                err_event += _on_error
+            except Exception:  # noqa: BLE001 — an ib without a real Event just stays uninstrumented
+                err_event = None
         try:
             call = self._ib.reqContractDetailsAsync(contract)
             if self._request_timeout and self._request_timeout > 0:
@@ -296,32 +392,78 @@ class IbkrQualificationClient:
                 raise ConnectionUnavailableError(f"IBKR connection lost during request: {exc}",
                                                  code="connection_lost") from exc
             raise RetryableQualificationError(f"contract-details request failed: {exc}") from exc
-        return list(details or [])
+        finally:
+            if err_event is not None:
+                with contextlib.suppress(Exception):
+                    err_event -= _on_error
+
+        details = list(details or [])
+        if not details:
+            # An empty result is NOT automatically NOT_TRADABLE. A venue/query-resolution error 200 →
+            # VenueResolutionError (re-queryable); a genuine "no security definition" (or no captured error)
+            # → return empty so the matcher records the ordinary NOT_TRADABLE outcome.
+            err = classify_contract_query_error(captured)
+            if err is not None:
+                raise err
+        return details
 
     @staticmethod
     def _build_contract(request: QualificationRequest) -> Any:
-        import ib_async  # lazy: no broker SDK is imported at module load
+        """§ WP10 — build a read-only contract-details query WITHOUT the two namespace bugs that produced the
+        canary's spurious NOT_TRADABLE results:
+          * The FIRDS symbol is the ISIN, not an IBKR ticker — so we NEVER put it in Contract.symbol and
+            instead discover by ISIN (secIdType='ISIN', secId=<isin>), or by a previously-resolved conId.
+          * The FIRDS MIC is NOT an IBKR exchange code — so we NEVER send it raw. Cash uses exchange='SMART'
+            (search/routing only) plus, when the MIC is in the fail-closed venue registry, an IBKR
+            primaryExchange to disambiguate. Derivatives need a concrete IBKR exchange, resolved via the
+            registry; an unmapped MIC raises VenueResolutionError (re-queryable) rather than sending a bad
+            destination and being misread as NOT_TRADABLE.
+        """
+        sec_type = request.sec_type
+        is_derivative = sec_type in ("FUT", "OPT", "FOP")
+        venue = request.exchange or request.primary_exchange
+        kwargs: dict[str, Any] = {"secType": sec_type, "currency": request.currency}
 
-        kwargs: dict[str, Any] = {
-            "symbol": request.symbol,
-            "secType": request.sec_type,
-            "currency": request.currency,
-        }
+        # --- venue: translate a FIRDS MIC to its IBKR code; accept a token that is ALREADY an IBKR code
+        # (US listing sources); never send a raw ISO MIC ---
+        mapped = resolve_ibkr_exchanges(venue)
+        if is_derivative:
+            ibkr_ex = mapped or ((venue,) if is_ibkr_exchange(venue) else ())
+            if not ibkr_ex:
+                raise VenueResolutionError(
+                    f"no IBKR exchange for venue {venue!r} ({sec_type}); cannot build a valid derivative "
+                    "query — re-query once the venue registry maps this MIC", code="venue_unresolved")
+            kwargs["exchange"] = ibkr_ex[0]
+        else:
+            kwargs["exchange"] = "SMART"                      # search/routing only, never a venue assertion
+            prim = mapped[0] if mapped else (venue if is_ibkr_exchange(venue) else "")
+            if prim:
+                kwargs["primaryExchange"] = prim             # disambiguate SMART when the IBKR venue is known
+
+        # --- identity: conId (most precise) > ISIN discovery > a real ticker on an already-IBKR venue.
+        # A FIRDS row's symbol IS the ISIN on an ISO MIC (is_ibkr_exchange False), so it never takes the
+        # ticker branch — we never send symbol==ISIN. ---
         if request.con_id:
             kwargs["conId"] = request.con_id
-        if request.sec_type == "STK":
-            kwargs["exchange"] = "SMART"
-            kwargs["primaryExchange"] = request.primary_exchange or request.exchange
+        elif request.isin:
+            kwargs["secIdType"] = "ISIN"
+            kwargs["secId"] = request.isin
+        elif request.symbol and not is_derivative and is_ibkr_exchange(venue):
+            kwargs["symbol"] = request.symbol
         else:
-            kwargs["exchange"] = request.exchange
+            raise VenueResolutionError(
+                "no ISIN, conId or IBKR-venue ticker available — cannot build a reliable IBKR query (a FIRDS "
+                "symbol is the ISIN, not an IBKR ticker); re-query once an identifier is available",
+                code="venue_unresolved")
+
+        # --- derivative identity (always required for a derivative) ---
         if request.expiry:
             kwargs["lastTradeDateOrContractMonth"] = request.expiry
         if request.strike:
             kwargs["strike"] = request.strike
         if request.right:
             kwargs["right"] = request.right
-        if request.local_symbol:
-            kwargs["localSymbol"] = request.local_symbol
+        import ib_async  # lazy: no broker SDK at module load, and only after the query is validated
         return ib_async.Contract(**kwargs)
 
 
@@ -414,7 +556,7 @@ async def qualify_instruments(store, client: QualificationClient, *, run_label: 
                 batch = insts[start:start + max(1, config.batch_size)]
                 for inst in batch:
                     attempts = store.iq_mark_pending(inst.instrument_id, run_id)
-                    status, matched, reason, cand_count, conn_lost = await _qualify_one(
+                    status, matched, reason, cand_count, conn_lost, count_attempt = await _qualify_one(
                         client, inst, attempts, config.max_attempts)
                     verification, tradability, market_data, con_id, set_lv = _outcome_fields(status, matched)
                     # Fail-closed conId collision guard: never overwrite another instrument's verified conId.
@@ -429,7 +571,7 @@ async def qualify_instruments(store, client: QualificationClient, *, run_label: 
                         inst.instrument_id, run_id=run_id, qualification_status=status.value, reason=reason,
                         verification_status=verification, tradability_status=tradability,
                         market_data_status=market_data, con_id=con_id, set_last_verified=set_lv,
-                        count_attempt=not conn_lost,   # a broker outage must not consume the retry budget
+                        count_attempt=count_attempt,   # False for broker-outage AND venue-resolution faults
                         event={"id": f"{run_id}-e{seq}", "seq": seq, "market": market,
                                "instrument_id": inst.instrument_id, "event_type": "QUALIFY_RESULT",
                                "severity": "ERROR" if "ERROR" in status.value else "INFO",
@@ -478,33 +620,51 @@ async def qualify_instruments(store, client: QualificationClient, *, run_label: 
 
 async def _qualify_one(client: QualificationClient, inst, attempts: int, max_attempts: int):
     """Qualify a single instrument with full per-instrument error isolation → (status, matched, reason,
-    candidate_count, connection_lost). Never raises. `connection_lost` is set ONLY for a
-    ConnectionUnavailableError (by exception TYPE, never by message text), so the run-abort decision cannot
-    be spoofed or missed by an instrument's error message. `attempts` is the count of prior RECORDED
-    outcomes, so this attempt is number `attempts + 1` for the escalation check."""
+    candidate_count, connection_lost, count_attempt). Never raises.
+
+    `connection_lost` is set ONLY for a ConnectionUnavailableError (by exception TYPE, never by message
+    text), so the run-abort decision cannot be spoofed or missed by an instrument's error message.
+    `count_attempt` (§ WP10) is decoupled from `connection_lost`: it is False for BOTH a broker outage AND a
+    venue/query-resolution failure, so neither consumes the instrument's retry budget nor auto-escalates it
+    to ERROR_PERMANENT — a venue-resolution problem is the query's fault, not the instrument's. A
+    VenueResolutionError is a per-instrument fault (connection_lost stays False, the run is NOT aborted).
+    `attempts` is the count of prior RECORDED outcomes, so this attempt is number `attempts + 1`."""
     this_attempt = attempts + 1
     try:
         request = build_request_spec(inst)
         details = await client.fetch_contract_details(request)
         candidates = [contract_detail_to_global(d) for d in details]
         outcome = match_contract(inst, candidates)
-        return outcome.status, outcome.matched, outcome.reason, outcome.candidate_count, False
+        # § WP10 — contract(s) WERE returned but none is consistent, AND the instrument's FIRDS MIC is not in
+        # the venue registry: the mismatch is a venue-resolution gap (we cannot confirm the venue), NOT a
+        # tradability verdict. Reclassify to a re-queryable, budget-neutral ERROR_RETRYABLE — never a false
+        # terminal NOT_TRADABLE. (A genuinely EMPTY result — candidate_count 0 — on an unmapped MIC stays
+        # NOT_TRADABLE: the ISIN query was well-formed and IBKR found nothing.)
+        if (outcome.status is QualificationStatus.NOT_TRADABLE and outcome.candidate_count > 0
+                and not _venue_resolvable(inst)):
+            return (QualificationStatus.ERROR_RETRYABLE, None,
+                    f"venue_unresolved: {outcome.candidate_count} contract(s) returned but MIC "
+                    f"{inst.exchange!r} is unmapped — cannot confirm venue; re-query once the registry maps it",
+                    outcome.candidate_count, False, False)
+        return outcome.status, outcome.matched, outcome.reason, outcome.candidate_count, False, True
     except MarketDataNotEntitledError as exc:
-        return QualificationStatus.MARKET_DATA_NOT_ENTITLED, None, exc.reason, 0, False
+        return QualificationStatus.MARKET_DATA_NOT_ENTITLED, None, exc.reason, 0, False, True
     except NotTradableError as exc:
-        return QualificationStatus.NOT_TRADABLE, None, exc.reason, 0, False
+        return QualificationStatus.NOT_TRADABLE, None, exc.reason, 0, False, True
     except PermanentQualificationError as exc:
-        return QualificationStatus.ERROR_PERMANENT, None, exc.reason, 0, False
-    except ConnectionUnavailableError as exc:
-        return QualificationStatus.ERROR_RETRYABLE, None, exc.reason, 0, True
+        return QualificationStatus.ERROR_PERMANENT, None, exc.reason, 0, False, True
+    except VenueResolutionError as exc:            # § WP10: re-selectable, budget-neutral, NOT run-aborting
+        return QualificationStatus.ERROR_RETRYABLE, None, exc.reason, 0, False, False
+    except ConnectionUnavailableError as exc:      # broker outage: re-selectable, budget-neutral, aborting
+        return QualificationStatus.ERROR_RETRYABLE, None, exc.reason, 0, True, False
     except RetryableQualificationError as exc:
         status = (QualificationStatus.ERROR_PERMANENT if this_attempt >= max_attempts
                   else QualificationStatus.ERROR_RETRYABLE)
-        return status, None, exc.reason, 0, False
+        return status, None, exc.reason, 0, False, True
     except Exception as exc:  # noqa: BLE001 — unknown fault: conservative retry, escalate when exhausted
         status = (QualificationStatus.ERROR_PERMANENT if this_attempt >= max_attempts
                   else QualificationStatus.ERROR_RETRYABLE)
-        return status, None, f"{type(exc).__name__}: {exc}", 0, False
+        return status, None, f"{type(exc).__name__}: {exc}", 0, False, True
 
 
 def _summary(run, *, resumed: bool, connection_lost: bool) -> QualificationSummary:
