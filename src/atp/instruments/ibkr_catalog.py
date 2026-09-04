@@ -84,7 +84,11 @@ class IBKRContractQualifier:
         unresolved: list[str] = []
         for batch in _batches(items, self._batch_size):
             for candidate in batch:
-                request = self._contract_factory(candidate)
+                try:
+                    request = self._contract_factory(candidate)
+                except ValueError:   # § WP10: unmapped venue / no usable identifier → unresolved, not a crash
+                    unresolved.append(_candidate_label(candidate))
+                    continue
                 details = await self._ib.reqContractDetailsAsync(request)
                 if not details:
                     unresolved.append(_candidate_label(candidate))
@@ -99,7 +103,10 @@ class IBKRContractQualifier:
         """Memory-bounded variant for large exchange listing files."""
         for batch in _batches(candidates, self._batch_size):
             for candidate in batch:
-                request = self._contract_factory(candidate)
+                try:
+                    request = self._contract_factory(candidate)
+                except ValueError:   # § WP10: unmapped venue / no usable identifier → skip, not a crash
+                    continue
                 for detail in await self._ib.reqContractDetailsAsync(request):
                     record = contract_detail_to_global(detail)
                     if record.con_id > 0:
@@ -125,15 +132,51 @@ def _candidate_label(candidate: Any) -> str:
 
 
 def _ib_contract(candidate: Any) -> Any:
+    """§ WP10 — build an IBKR query WITHOUT the raw-MIC / ISIN-in-symbol bugs that made the qualification
+    canary misread venue-resolution failures as NOT_TRADABLE. ISIN-first for FIRDS-style candidates; a real
+    ticker on an already-IBKR venue (US listing sources emit NASDAQ/ARCA, not MICs) is kept as a symbol
+    query; a raw ISO MIC is translated via the fail-closed venue registry. An unmapped derivative venue or a
+    candidate with no usable identifier raises ValueError, which the qualifier records as 'unresolved'
+    instead of sending a bad destination."""
     if hasattr(candidate, "secType"):
         return candidate
-    import ib_async
+    from .ibkr_venue import is_ibkr_exchange, resolve_ibkr_exchanges
 
-    sec_type = "STK" if getattr(candidate, "sec_type", "") == "ETF" else candidate.sec_type
-    return ib_async.Contract(
-        symbol=candidate.symbol,
-        secType=sec_type,
-        exchange="SMART" if sec_type == "STK" else candidate.exchange,
-        primaryExchange=candidate.exchange if sec_type == "STK" else "",
-        currency=candidate.currency,
-    )
+    raw = getattr(candidate, "sec_type", "") or ""
+    sec_type = "STK" if raw == "ETF" else raw
+    is_derivative = sec_type in ("FUT", "OPT", "FOP")
+    venue = getattr(candidate, "exchange", "") or getattr(candidate, "primary_exchange", "") or ""
+    isin = getattr(candidate, "isin", None) or ""
+    con_id = getattr(candidate, "con_id", None)
+    symbol = getattr(candidate, "symbol", "") or ""
+    mapped = resolve_ibkr_exchanges(venue)
+
+    kwargs: dict[str, Any] = {"secType": sec_type, "currency": candidate.currency}
+    # --- venue: never a raw ISO MIC ---
+    if is_derivative:
+        ibkr_ex = mapped or ((venue,) if is_ibkr_exchange(venue) else ())
+        if not ibkr_ex:
+            raise ValueError(f"venue_unresolved: no IBKR exchange for {venue!r} ({sec_type})")
+        kwargs["exchange"] = ibkr_ex[0]
+    else:
+        kwargs["exchange"] = "SMART"
+        prim = mapped[0] if mapped else (venue if is_ibkr_exchange(venue) else "")
+        if prim:
+            kwargs["primaryExchange"] = prim
+    # --- identity: conId > ISIN > (ticker on a known IBKR venue); never symbol==ISIN with a raw MIC ---
+    if con_id:
+        kwargs["conId"] = con_id
+    elif isin:
+        kwargs["secIdType"] = "ISIN"
+        kwargs["secId"] = isin
+    elif symbol and not is_derivative and is_ibkr_exchange(venue):
+        kwargs["symbol"] = symbol
+    else:
+        raise ValueError("venue_unresolved: no ISIN/conId/ticker for a reliable IBKR query")
+    for field, key in (("expiry", "lastTradeDateOrContractMonth"), ("strike", "strike"),
+                       ("option_right", "right")):
+        val = getattr(candidate, field, None)
+        if val:
+            kwargs[key] = val
+    import ib_async  # lazy: no broker SDK at module load, and only after the query is validated
+    return ib_async.Contract(**kwargs)

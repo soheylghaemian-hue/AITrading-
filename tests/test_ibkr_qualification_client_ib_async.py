@@ -108,14 +108,20 @@ def test_build_contract_uses_ib_async_and_maps_fields(monkeypatch):
     monkeypatch.setitem(sys.modules, "ib_async", fake)
 
     IbkrQualificationClient._build_contract(_req("AAPL"))
+    # § WP10: a real ticker on an already-IBKR venue (US listing source) keeps the symbol query.
     assert captured["symbol"] == "AAPL" and captured["secType"] == "STK" and captured["currency"] == "USD"
     assert captured["exchange"] == "SMART" and captured["primaryExchange"] == "NASDAQ"  # STK → SMART routing
+    assert "secId" not in captured          # a genuine ticker query needs no ISIN
     assert "ib_insync" not in sys.modules   # the fix removed ib_insync entirely
 
-    # derivative identity maps onto the contract (venue is the real MIC, never SMART for non-STK)
-    IbkrQualificationClient._build_contract(
-        _req("OPT", sec_type="OPT", exchange="XEUR", currency="EUR", expiry="20261218", strike=100.0, right="C"))
-    assert captured["exchange"] == "XEUR" and captured["lastTradeDateOrContractMonth"] == "20261218"
+    # § WP10: a FIRDS-style derivative — ISIN discovery (secIdType/secId), the FIRDS MIC (XEUR) translated to
+    # the IBKR exchange code (EUREX), full derivative identity, and NEVER the raw MIC or symbol==ISIN.
+    IbkrQualificationClient._build_contract(_req(
+        "DE000TESTOPT1", sec_type="OPT", exchange="XEUR", currency="EUR", isin="DE000TESTOPT1",
+        expiry="20261218", strike=100.0, right="C"))
+    assert captured["secIdType"] == "ISIN" and captured["secId"] == "DE000TESTOPT1"
+    assert captured["exchange"] == "EUREX" and "symbol" not in captured   # MIC translated; never symbol==ISIN
+    assert captured["lastTradeDateOrContractMonth"] == "20261218"
     assert captured["strike"] == 100.0 and captured["right"] == "C"
 
 
