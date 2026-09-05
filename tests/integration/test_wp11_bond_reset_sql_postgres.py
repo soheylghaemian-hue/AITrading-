@@ -118,7 +118,16 @@ def _snapshot(s):
                      f"FROM instrument_qualification_runs WHERE run_id='{SRC}'")[0],
         "events": q("SELECT count(*) FROM instrument_qualification_events")[0][0],
         "con_ids": q("SELECT count(con_id) FROM instruments")[0][0],
+        "target_ids": frozenset(r[0] for r in q(
+            f"SELECT instrument_id FROM instruments WHERE qualification_run_id='{SRC}' "
+            "AND qualification_status='NOT_TRADABLE' AND con_id IS NULL AND asset_class='bond'")),
     }
+
+
+def _runner_ids(proc: subprocess.CompletedProcess) -> list[str]:
+    """The BOND_IDS_FOR_RUNNER lines psql printed (stdout), each split into ids."""
+    lines = [ln for ln in proc.stdout.splitlines() if ln.startswith("BOND_IDS_FOR_RUNNER=")]
+    return [ln.split("=", 1)[1] for ln in lines]
 
 
 def _psql(dsn: str) -> subprocess.CompletedProcess:
@@ -140,6 +149,15 @@ def test_exactly_three_bonds_are_reset_and_nothing_else_moves():
     before, after, proc = _run_case("wp11_bond_reset_ok", 3)
     assert proc.returncode == 0, proc.stderr
     assert "CORRECTION OK: locked=3 updated=3" in proc.stderr + proc.stdout
+    # handover: the ids are printed exactly once, only AFTER the COMMIT, and are EXACTLY the rows that were
+    # locked+updated (UPDATE … RETURNING) — which are the 3 pre-state targets, now DISCOVERED / run NULL
+    ids_lines = _runner_ids(proc)
+    assert len(ids_lines) == 1
+    ids = ids_lines[0].split(",")
+    assert len(ids) == 3 and len(set(ids)) == 3 and set(ids) == set(before["target_ids"])
+    assert proc.stdout.index("COMMIT") < proc.stdout.index("BOND_IDS_FOR_RUNNER=")
+    assert "BOND_IDS_FOR_RUNNER" not in proc.stdout[: proc.stdout.index("COMMIT")]
+    assert after["target_ids"] == frozenset()                             # none left in the pre-state
     assert before["src_not_tradable"] == 3 and after["src_not_tradable"] == 0
     assert after["fully_reset_bonds"] == 3                                   # every documented field reset
     assert after["src_error_retryable"] == before["src_error_retryable"] == 17
@@ -156,3 +174,5 @@ def test_any_other_count_raises_and_rolls_back_completely(n_bonds):
     assert f"ABORT: locked {n_bonds} target rows, expected exactly 3" in proc.stderr + proc.stdout
     assert after == before                                                    # full rollback, byte-for-byte
     assert after["src_not_tradable"] == n_bonds and after["fully_reset_bonds"] == 0
+    assert _runner_ids(proc) == []                                            # no ids handed over on failure
+    assert "BOND_IDS_FOR_RUNNER" not in proc.stdout + proc.stderr

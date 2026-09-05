@@ -21,9 +21,10 @@ Guarantees (mirrors the WP10 canary runner that produced runs ``68a330fb…`` an
     ``--expect``: (a) run mode — ``ERROR_RETRYABLE`` AND ``qualification_run_id == --source-run`` AND
     ``con_id IS NULL`` (the 17); (b) explicit-ID mode — ``--instrument-ids`` names EXACTLY the rows to
     process (the 3 bonds AFTER ``infra/db/wp11_bond_reset.sql`` reset them to ``DISCOVERED`` with a NULL
-    run id — run mode cannot see them; the SQL prints the ids). Every listed id must exist, be re-selectable
-    (``DISCOVERED`` / ``ERROR_RETRYABLE`` / ``QUALIFICATION_PENDING``) and carry no ``con_id``; nothing
-    beyond the listed ids is ever touched and the run-mode selector is not widened.
+    run id — run mode cannot see them; the SQL prints the ids it ACTUALLY corrected, after its COMMIT).
+    Every listed id must be unique, exist, be re-selectable (``DISCOVERED`` / ``ERROR_RETRYABLE`` /
+    ``QUALIFICATION_PENDING``) and carry no ``con_id``; a duplicate id is refused; nothing beyond the
+    listed ids is ever touched and the run-mode selector is not widened.
   * Connection: the low-level ``ib.client.connectAsync`` handshake only (the high-level
     ``IB().connectAsync`` additionally subscribes to positions, account updates and executions — never
     issued here).
@@ -129,7 +130,11 @@ def select_targets(store: Any, *, source_run_id: str, expect: int, max_rows: int
     guess). Run mode: re-selectable rows of ONE prior run, con_id NULL. Explicit-ID mode (``instrument_ids``):
     EXACTLY the listed rows — each must exist, be re-selectable and carry no con_id. Cash first."""
     if instrument_ids:
-        ids = list(dict.fromkeys(i.strip() for i in instrument_ids if i and i.strip()))
+        ids = [i.strip() for i in instrument_ids if i and i.strip()]
+        dupes = sorted({i for i in ids if ids.count(i) > 1})
+        if dupes:
+            raise SelectionMismatch(f"duplicate explicit id(s) {dupes} — refusing (nothing connected, "
+                                    "nothing written)")
         if len(ids) != expect:
             raise SelectionMismatch(f"{len(ids)} explicit id(s) given but --expect is {expect} — refusing "
                                     "(nothing connected, nothing written)")

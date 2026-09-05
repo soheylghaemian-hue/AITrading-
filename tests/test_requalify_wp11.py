@@ -622,3 +622,18 @@ def test_run_mode_cannot_see_reset_bonds_and_explicit_mode_does_not_widen():
     assert rc == 2 and called == []
     rc = asyncio.run(mod.main(_ns(mod, path, expect=17, dry_run=True)))   # the 17-selector is unchanged
     assert rc == 0
+
+
+
+def test_explicit_duplicate_ids_are_refused_not_deduplicated():
+    mod = _load()
+    path, store, _targets, _ = _setup(mod)
+    a, b, _c = _seed_reset_bonds(store)
+    called = []
+    mod.make_ib = lambda: called.append(1) or FakeIB({})
+    for ids, expect in ((f"{a},{a},{b}", 3), (f"{a},{a},{b}", 2), (f"{a}, {a}", 1)):
+        rc = asyncio.run(mod.main(_ns(mod, path, instrument_ids=ids, expect=expect)))
+        assert rc == 2                                            # refused, never silently de-duplicated
+    assert called == [] and _runs(store, mod.RUN_LABEL) == []
+    for i in (a, b):
+        assert store.im_get_instrument(i).qualification_status == "DISCOVERED"
