@@ -1084,6 +1084,11 @@ class InstrumentRow:
     qualification_run_id: str | None = None
     qualification_attempts: int = 0
     last_qualified_at: str | None = None
+    # § WP11 — machine-readable outcome sub-classification + the REAL IBKR venue returned for a VERIFIED
+    # contract (kept separate from the FIRDS-MIC primary_exchange). Both NULL until a qualification pass sets
+    # them; never written by the importer.
+    qualification_detail: str | None = None
+    ibkr_primary_exchange: str | None = None
 
 
 @dataclass(slots=True)
@@ -3487,7 +3492,8 @@ class SqlStore(Store):
     )
     _IM_INSTR_COLS = ("instrument_id,natural_key," + ",".join(_IM_MUTABLE_COLS) + ",created_at,updated_at,"
                       "qualification_status,qualification_reason,qualification_run_id,"
-                      "qualification_attempts,last_qualified_at")
+                      "qualification_attempts,last_qualified_at,"
+                      "qualification_detail,ibkr_primary_exchange")
     _IM_RUN_COLS = (
         "run_id,request_checksum,source_label,planned_markets_json,completed_markets_json,"
         "failed_markets_json,status,discovered_count,inserted_count,updated_count,unchanged_count,"
@@ -3782,7 +3788,8 @@ class SqlStore(Store):
     def iq_apply_outcome(self, instrument_id: str, *, run_id: str, qualification_status: str, reason: str,
                          verification_status: str | None = None, tradability_status: str | None = None,
                          market_data_status: str | None = None, con_id=None, set_last_verified: bool = False,
-                         count_attempt: bool = True, event: dict) -> None:
+                         count_attempt: bool = True, qualification_detail: str | None = None,
+                         ibkr_primary_exchange: str | None = None, event: dict) -> None:
         """Persist one instrument's qualification outcome AND its audit event in ONE transaction, and bump the
         run's liveness heartbeat. Increments the instrument's attempt count when ``count_attempt`` is True
         (attempts track genuine RECORDED qualification attempts, not claims). A broker-outage outcome
@@ -3806,6 +3813,10 @@ class SqlStore(Store):
             sets.append("con_id=?"); params.append(int(con_id))
         if set_last_verified:
             sets.append("last_verified_at=?"); params.append(now)
+        if qualification_detail is not None:                       # § WP11 — sub-classification
+            sets.append("qualification_detail=?"); params.append(qualification_detail)
+        if ibkr_primary_exchange is not None:                     # § WP11 — real returned IBKR venue
+            sets.append("ibkr_primary_exchange=?"); params.append(ibkr_primary_exchange)
         params.append(instrument_id)
         with self.tx() as cur:
             self._exec(cur, f"UPDATE instruments SET {','.join(sets)} WHERE instrument_id=?", tuple(params))

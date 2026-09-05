@@ -57,6 +57,10 @@ class GlobalContract:
     exchange: str
     primary_exchange: str
     currency: str
+    # § WP11 — the ISIN as ECHOED BACK by IBKR in ContractDetails.secIdList (NOT the requested ISIN). Empty
+    # when IBKR did not return one (its presence/casing is undocumented and, for US stocks, subscription-
+    # gated), so it is a fail-closed POSITIVE identity anchor only when present — never assumed.
+    isin: str = ""
     country: str = ""
     description: str = ""
     expiry: str = ""

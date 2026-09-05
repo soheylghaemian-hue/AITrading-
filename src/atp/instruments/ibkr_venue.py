@@ -40,12 +40,19 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class VenueMapping:
-    """One explicit MIC → IBKR-exchange correspondence with its provenance and curator confidence."""
+    """One explicit MIC → IBKR-exchange correspondence with its provenance and curator confidence.
+
+    § WP11 makes the four namespaces the docstring names explicit in the DATA: `mic` is the ISO-10383 code
+    FIRDS carries; `operating_mic` is its ISO parent (a segment MIC's home exchange); `venue_category` says
+    whether it is a real listing exchange or a non-primary venue; `ibkr_exchanges` is the IBKR namespace. A
+    MIC is only ever mapped to an IBKR exchange when it is an actual listing venue with provenance."""
 
     mic: str                              # ISO 10383 MIC as it appears in FIRDS (upper-case)
     ibkr_exchanges: tuple[str, ...]       # IBKR exchange code(s) returned as primaryExchange for this venue
     provenance: str                       # where this correspondence is documented / how it was established
     confidence: str                       # 'high' | 'medium' — curator confidence, pending IBKR validation
+    operating_mic: str = ""               # § WP11 — ISO operating (parent) MIC; "" when the MIC is itself one
+    venue_category: str = "exchange"      # § WP11 — 'exchange' (regulated listing venue) for every _SEED row
 
 
 # --- seed registry -------------------------------------------------------------------------------------
@@ -70,18 +77,25 @@ _SEED: tuple[VenueMapping, ...] = (
     VenueMapping("XSTO", ("SFB",), "REPO: universe.py maps Nasdaq Stockholm listings to IBKR 'SFB'", "high"),
     VenueMapping("XHEL", ("HEX",), "REPO: universe.py maps Nasdaq Helsinki listings to IBKR 'HEX'", "high"),
     VenueMapping("XWBO", ("VSE",), "REPO: universe.py maps Wiener Boerse listings to IBKR 'VSE'", "high"),
+    VenueMapping("XMAD", ("BM",), "REPO: universe.py maps Bolsa de Madrid listings to IBKR 'BM'", "high"),
+    VenueMapping("XTKS", ("TSEJ",), "REPO: universe.py maps Tokyo SE listings to IBKR 'TSEJ'", "high"),
+    VenueMapping("XASX", ("ASX",), "REPO: universe.py maps Australian SE listings to IBKR 'ASX'", "high"),
+    VenueMapping("XSES", ("SGX",), "REPO: universe.py maps Singapore Exchange to IBKR 'SGX'", "high"),
+    # --- IBKR codes cross-referenced by the repo's US listing parsers (REPO grounding) --------------------
+    VenueMapping("XNYS", ("NYSE",), "REPO: listing_sources/directories map NYSE to IBKR 'NYSE'", "high"),
+    VenueMapping("XASE", ("NYSEAMER", "AMEX"), "REPO: listing_sources/directories emit 'NYSEAMER' for NYSE "
+                 "American (MIC XASE); 'AMEX' retained as IBKR's legacy code", "high"),
+    VenueMapping("BATS", ("BATS",), "REPO: listing_sources/directories map Cboe BZX/BATS to IBKR 'BATS'",
+                 "high"),
+    VenueMapping("IEXG", ("IEX",), "REPO: listing_sources/directories map IEX to IBKR 'IEX'", "high"),
     # --- IBKR standard codes not yet cross-referenced in-repo (STD, validate before wide use) --------------
-    VenueMapping("XNYS", ("NYSE",), "STD: IBKR standard US NYSE code", "medium"),
-    VenueMapping("XASE", ("AMEX",), "STD: IBKR standard NYSE American/AMEX code", "medium"),
-    VenueMapping("BATS", ("BATS",), "STD: IBKR standard Cboe BZX/BATS code", "medium"),
-    VenueMapping("IEXG", ("IEX",), "STD: IBKR standard IEX code", "medium"),
     VenueMapping("XAMS", ("AEB",), "STD: IBKR standard Euronext Amsterdam code (AEB)", "medium"),
     VenueMapping("XEUR", ("EUREX",), "STD: IBKR standard Eurex derivatives code", "medium"),
     VenueMapping("XCME", ("CME", "GLOBEX"), "STD: IBKR standard CME futures code", "medium"),
     VenueMapping("XCBT", ("CBOT",), "STD: IBKR standard CBOT futures code", "medium"),
     VenueMapping("XNYM", ("NYMEX",), "STD: IBKR standard NYMEX futures code", "medium"),
     VenueMapping("XCEC", ("COMEX",), "STD: IBKR standard COMEX futures code", "medium"),
-    VenueMapping("XCBO", ("CBOE",), "STD: IBKR standard Cboe Options Exchange code", "medium"),
+    VenueMapping("XCBO", ("CBOE",), "REPO: brokers/ibkr.py + directories map Cboe to IBKR 'CBOE'", "high"),
 )
 
 _BY_MIC: dict[str, VenueMapping] = {m.mic: m for m in _SEED}
@@ -119,3 +133,65 @@ KNOWN_IBKR_EXCHANGES: frozenset[str] = frozenset(x for m in _SEED for x in m.ibk
 def is_ibkr_exchange(code: str | None) -> bool:
     """True iff `code` is already a known IBKR exchange code (not a FIRDS MIC that needs translating)."""
     return bool(code) and code.strip().upper() in KNOWN_IBKR_EXCHANGES
+
+
+# § WP11 — venue-category metadata for FIRDS MICs that are NOT primary listings. A FIRDS trading-venue MIC
+# (RTS 23 Field 6) denotes ANY reporting venue/SI, so many are MTF segments, Systematic Internalisers, OTFs
+# or derivatives segments — which can NEVER be an issuer's primary listing and therefore must NEVER be mapped
+# to an IBKR primaryExchange. This table records that fact (with its ISO operating MIC) so the system can
+# RECOGNISE such a venue and refuse to treat it as a listing — it deliberately carries NO IBKR exchange code
+# (resolve_ibkr_exchanges stays fail-closed for these). Provenance: the official ISO 10383 MIC list
+# (iso20022.org, August 2026 release) — market-name / OPRT-SGMT / category transcribed verbatim.
+# category ∈ {'mtf','si','otf','deriv'} (segment kinds that are not a cash primary listing).
+_NON_PRIMARY_VENUES: dict[str, tuple[str, str, str]] = {   # mic -> (category, operating_mic, market_name)
+    "AURO": ("otf", "AURB", "AUREL - OTF"),
+    "AFSO": ("otf", "AFSA", "AFS - OTF - BONDS"),
+    "ALXP": ("mtf", "XPAR", "EURONEXT GROWTH PARIS"),
+    "BTFE": ("mtf", "BTFE", "BLOOMBERG TRADING FACILITY B.V."),
+    "AQEU": ("mtf", "AQEU", "AQUIS EXCHANGE EUROPE"),
+    "AQED": ("mtf", "AQEU", "AQUIS EXCHANGE EUROPE NON DISPLAY ORDER BOOK (NDOB)"),
+    "AQEA": ("mtf", "AQEU", "AQUIS EXCHANGE EUROPE AUCTION ON DEMAND (AOD)"),
+    "AACA": ("si", "AACA", "CREDIT AGRICOLE CIB"),
+    "BBIS": ("si", "BBIE", "BARCLAYS BANK IRELAND PLC - SYSTEMATIC INTERNALISER"),
+    "BGEM": ("mtf", "XMIL", "BORSA ITALIANA GLOBAL EQUITY MARKET"),
+    "BETA": ("mtf", "XBUD", "BETA MARKET"),
+    "DUSD": ("mtf", "XDUS", "BOERSE DUESSELDORF - QUOTRIX MTF"),
+    "DUSB": ("mtf", "XDUS", "BOERSE DUESSELDORF - FREIVERKEHR"),
+    "BEUP": ("mtf", "CCXE", "CBOE EUROPE - DXE PERIODIC (NL)"),
+    "D2XC": ("deriv", "D2XG", "D2X - CRYPTO DERIVATIVES"),
+    "XBRD": ("deriv", "XBRU", "EURONEXT - EURONEXT BRUSSELS - DERIVATIVES"),
+    "EUWB": ("deriv", "XSTO", "NASDAQ STOCKHOLM AB - EUR WB EQ DERIVATIVES"),
+    "DKFI": ("deriv", "XSTO", "NASDAQ STOCKHOLM AB - DANISH FI DERIVATIVES"),
+    "NOED": ("deriv", "XSTO", "NASDAQ STOCKHOLM AB - NORWEGIAN EQ DERIVATIVES"),
+    "DKED": ("deriv", "XSTO", "NASDAQ STOCKHOLM AB - DANISH EQ DERIVATIVES"),
+}
+
+
+def venue_category(mic: str | None) -> str:
+    """The venue category for a FIRDS MIC: 'exchange' for a mapped listing venue (see _SEED), one of
+    'mtf'/'si'/'otf'/'deriv' for a recognised non-primary venue, or '' when the MIC is unknown."""
+    if not mic:
+        return ""
+    key = mic.strip().upper()
+    if key in _BY_MIC:
+        return _BY_MIC[key].venue_category
+    entry = _NON_PRIMARY_VENUES.get(key)
+    return entry[0] if entry else ""
+
+
+def operating_mic(mic: str | None) -> str:
+    """The ISO 10383 operating (parent) MIC for a segment MIC, or '' if unknown. NEVER used to fabricate an
+    IBKR venue — only to document the segment→operating relationship with provenance."""
+    if not mic:
+        return ""
+    key = mic.strip().upper()
+    if key in _BY_MIC and _BY_MIC[key].operating_mic:
+        return _BY_MIC[key].operating_mic
+    entry = _NON_PRIMARY_VENUES.get(key)
+    return entry[1] if entry else ""
+
+
+def is_non_primary_venue(mic: str | None) -> bool:
+    """True iff the FIRDS MIC is a recognised NON-primary venue (MTF/SI/OTF/derivatives segment) — a venue
+    that must never be equated with an issuer's primary listing exchange."""
+    return bool(mic) and mic.strip().upper() in _NON_PRIMARY_VENUES

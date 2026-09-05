@@ -15,6 +15,25 @@ from typing import Any
 from .global_catalog import GlobalContract
 
 
+def _isin_from_sec_id_list(detail: Any) -> str:
+    """§ WP11 — extract the ISIN that IBKR ECHOED in ``ContractDetails.secIdList`` (a list of TagValue-like
+    objects). Fail-closed: the tag string/casing is not documented by IBKR and, for US stocks, the ISIN is
+    only present with a CUSIP market-data subscription — so an absent/unparseable list yields ``""`` (never a
+    fabricated identifier), and a present ISIN is matched case-insensitively on the tag with the value
+    normalized (strip/upper). This is a POSITIVE identity anchor only when present."""
+    sec_id_list = getattr(detail, "secIdList", None) or []
+    try:
+        for entry in sec_id_list:
+            tag = str(getattr(entry, "tag", "") or "").strip().upper()
+            if tag == "ISIN":
+                value = str(getattr(entry, "value", "") or "").strip().upper()
+                if value:
+                    return value
+    except TypeError:   # not iterable / unexpected shape → treat as absent (fail-closed)
+        return ""
+    return ""
+
+
 def contract_detail_to_global(detail: Any) -> GlobalContract:
     contract = detail.contract
     sec_type = str(getattr(contract, "secType", "") or "")
@@ -35,6 +54,7 @@ def contract_detail_to_global(detail: Any) -> GlobalContract:
         exchange=str(getattr(contract, "exchange", "") or ""),
         primary_exchange=str(getattr(contract, "primaryExchange", "") or ""),
         currency=str(getattr(contract, "currency", "") or ""),
+        isin=_isin_from_sec_id_list(detail),
         country=str(getattr(detail, "country", "") or ""),
         description=str(getattr(detail, "longName", "") or ""),
         expiry=str(getattr(contract, "lastTradeDateOrContractMonth", "") or ""),
@@ -150,6 +170,14 @@ def _ib_contract(candidate: Any) -> Any:
     con_id = getattr(candidate, "con_id", None)
     symbol = getattr(candidate, "symbol", "") or ""
     mapped = resolve_ibkr_exchanges(venue)
+
+    # § WP11 — BOND: IBKR expects the CUSIP/ISIN in Contract.symbol with secType='BOND' (NOT secIdType/secId).
+    # The raw MIC is never a valid destination, so route via SMART. Requires an ISIN identifier.
+    if sec_type == "BOND":
+        if not isin:
+            raise ValueError("venue_unresolved: no ISIN for a BOND security-definition query")
+        import ib_async  # lazy: no broker SDK at module load, and only after the query is validated
+        return ib_async.Contract(secType="BOND", symbol=isin, exchange="SMART", currency=candidate.currency)
 
     kwargs: dict[str, Any] = {"secType": sec_type, "currency": candidate.currency}
     # --- venue: never a raw ISO MIC ---

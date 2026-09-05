@@ -160,7 +160,9 @@ def test_error200_no_security_definition_stays_not_tradable():
 
 # ------------------------------------------------------------------ ISIN-based discovery for all 7 classes
 def test_cash_classes_query_by_isin_never_raw_mic_never_symbol_isin():
-    for ac in ("equity", "etf", "fund", "bond", "warrant"):
+    # § WP11 — BONDs now use a distinct query (ISIN in Contract.symbol, secType=BOND); see the WP11 test
+    # module. The ISIN-in-secIdType discovery below covers the remaining cash classes.
+    for ac in ("equity", "etf", "fund", "warrant"):
         kw = _build(_inst(asset_class=ac, exchange="XPAR"))
         assert kw.get("secIdType") == "ISIN" and kw.get("secId") == "FR0000131104"
         assert kw.get("exchange") == "SMART"                        # SMART for search/routing only
