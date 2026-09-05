@@ -19,6 +19,19 @@ SELECT asset_class, count(*) AS precount FROM instruments
    AND con_id IS NULL
  GROUP BY asset_class;
 
+\echo == THE THREE ROWS (capture BOND_IDS_FOR_RUNNER below for: requalify_wp11.py --instrument-ids ... --expect 3) ==
+SELECT instrument_id, isin, exchange, asset_class FROM instruments
+ WHERE qualification_run_id = 'cb7a88002d074b60862eea807dc2ab8e'
+   AND qualification_status = 'NOT_TRADABLE'
+   AND con_id IS NULL
+ ORDER BY instrument_id;
+SELECT string_agg(instrument_id, ',' ORDER BY instrument_id) AS bond_ids FROM instruments
+ WHERE qualification_run_id = 'cb7a88002d074b60862eea807dc2ab8e'
+   AND qualification_status = 'NOT_TRADABLE'
+   AND con_id IS NULL
+   AND asset_class = 'bond' \gset
+\echo BOND_IDS_FOR_RUNNER=:bond_ids
+
 \echo == GUARDED TRANSACTION ==
 BEGIN;
 DO $$
@@ -60,3 +73,5 @@ COMMIT;
 \echo == POST-COMMIT: the source run should keep exactly its 17 ERROR_RETRYABLE rows and 0 NOT_TRADABLE ==
 SELECT qualification_status, count(*) FROM instruments
  WHERE qualification_run_id = 'cb7a88002d074b60862eea807dc2ab8e' GROUP BY 1;
+\echo == POST-COMMIT: the three ids are now DISCOVERED with a NULL run id (re-qualify them with --instrument-ids) ==
+\echo BOND_IDS_FOR_RUNNER=:bond_ids

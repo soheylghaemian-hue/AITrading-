@@ -17,8 +17,13 @@ and cannot be bounded to one prior run. This runner reuses the engine's per-inst
 ``qualification_detail`` / ``ibkr_primary_exchange`` fields) under a hard, fail-closed selection.
 
 Guarantees (mirrors the WP10 canary runner that produced runs ``68a330fb…`` and ``cb7a8800…``):
-  * Selection: ``ERROR_RETRYABLE`` AND ``qualification_run_id == --source-run`` AND ``con_id IS NULL``,
-    cash first; the count MUST equal ``--expect`` or the runner refuses BEFORE opening any connection.
+  * Selection, two mutually exclusive modes, both refusing BEFORE any connection unless the count equals
+    ``--expect``: (a) run mode — ``ERROR_RETRYABLE`` AND ``qualification_run_id == --source-run`` AND
+    ``con_id IS NULL`` (the 17); (b) explicit-ID mode — ``--instrument-ids`` names EXACTLY the rows to
+    process (the 3 bonds AFTER ``infra/db/wp11_bond_reset.sql`` reset them to ``DISCOVERED`` with a NULL
+    run id — run mode cannot see them; the SQL prints the ids). Every listed id must exist, be re-selectable
+    (``DISCOVERED`` / ``ERROR_RETRYABLE`` / ``QUALIFICATION_PENDING``) and carry no ``con_id``; nothing
+    beyond the listed ids is ever touched and the run-mode selector is not widened.
   * Connection: the low-level ``ib.client.connectAsync`` handshake only (the high-level
     ``IB().connectAsync`` additionally subscribes to positions, account updates and executions — never
     issued here).
@@ -27,10 +32,11 @@ Guarantees (mirrors the WP10 canary runner that produced runs ``68a330fb…`` an
   * Tripwire: any non-benign IBKR error event aborts. It is checked BEFORE every request (a trip between
     requests leaves the next row completely untouched) and AFTER every request (a trip during a request
     leaves that row ``QUALIFICATION_PENDING`` — its outcome is NOT written, so it stays re-selectable).
-  * Two phases: one checkpoint instrument whose PERSISTED values are read back and verified (run id,
-    status, con_id / detail / venue consistency, FIRDS MIC untouched) — any deviation aborts BEFORE the
-    rest; then the documented pause; then the rest. Fixed pause and timeouts; no retries; abort on
-    disconnect / real error / entitlement problem.
+  * Two phases: one checkpoint instrument whose PERSISTED row is read back and compared FIELD-BY-FIELD for
+    EQUALITY with the outcome the engine actually produced (run id, status, con_id, detail, returned venue,
+    reason; FIRDS MIC untouched; not PENDING) — a foreign-but-plausible con_id or venue is a mismatch and
+    aborts BEFORE the rest; then the documented pause; then the rest. Fixed pause and timeouts; no
+    retries; abort on disconnect / real error / entitlement problem.
   * Budget-neutral WP11 outcomes (``venue_unresolved`` / ``currency_conflict`` / ``bond_not_found``) never
     abort — they are the expected, honest results for a still-unmapped venue.
   * Run lifecycle: once the run row is RUNNING, every failure — including SDK construction or the
@@ -46,6 +52,8 @@ simulation lives in tests/test_requalify_wp11.py.
 Usage (on the host, as the service user, env from atp.env — each run needs its own authorization):
     PYTHONPATH=src python3 examples/requalify_wp11.py --dry-run
     PYTHONPATH=src python3 examples/requalify_wp11.py --port 4002 --client-id 9204 --expect 17
+    PYTHONPATH=src python3 examples/requalify_wp11.py --port 4002 --expect 3 \
+        --instrument-ids INS-a,INS-b,INS-c
 """
 
 from __future__ import annotations
@@ -82,6 +90,9 @@ _DERIVATIVES = frozenset({"future", "option"})
 _ABORT_STATUSES = frozenset({QualificationStatus.ERROR_RETRYABLE.value,
                              QualificationStatus.ERROR_PERMANENT.value})
 _VERIFIED_DETAILS = frozenset({"verified_isin_echo", "verified_venue_match"})
+_EXPLICIT_SELECTABLE = frozenset({QualificationStatus.DISCOVERED.value,
+                                  QualificationStatus.ERROR_RETRYABLE.value,
+                                  QualificationStatus.QUALIFICATION_PENDING.value})
 _ROUTING_TOKENS = frozenset({"", "SMART", "SMARTUS", "IBKRATS", "OVERNIGHT", "VALUE", "DARKPOOL"})
 
 _sleep = asyncio.sleep     # indirection so the offline simulation can observe the documented pauses
@@ -112,9 +123,28 @@ def is_derivative(row: Any) -> bool:
     return (getattr(row, "asset_class", "") or "").strip().lower() in _DERIVATIVES
 
 
-def select_targets(store: Any, *, source_run_id: str, expect: int, max_rows: int) -> list:
-    """The bounded selection: re-selectable rows of ONE prior run, con_id NULL, cash first. Exactly
-    ``expect`` rows or SelectionMismatch (fail-closed: never widen, never guess)."""
+def select_targets(store: Any, *, source_run_id: str, expect: int, max_rows: int,
+                   instrument_ids: list | None = None) -> list:
+    """The bounded selection, exactly ``expect`` rows or SelectionMismatch (fail-closed: never widen, never
+    guess). Run mode: re-selectable rows of ONE prior run, con_id NULL. Explicit-ID mode (``instrument_ids``):
+    EXACTLY the listed rows — each must exist, be re-selectable and carry no con_id. Cash first."""
+    if instrument_ids:
+        ids = list(dict.fromkeys(i.strip() for i in instrument_ids if i and i.strip()))
+        if len(ids) != expect:
+            raise SelectionMismatch(f"{len(ids)} explicit id(s) given but --expect is {expect} — refusing "
+                                    "(nothing connected, nothing written)")
+        rows = []
+        for iid in ids:
+            row = store.im_get_instrument(iid)
+            if row is None:
+                raise SelectionMismatch(f"explicit id {iid} not found — refusing (nothing connected, "
+                                        "nothing written)")
+            if row.qualification_status not in _EXPLICIT_SELECTABLE or row.con_id is not None:
+                raise SelectionMismatch(f"explicit id {iid} is {row.qualification_status} with con_id="
+                                        f"{row.con_id} — not re-selectable, refusing")
+            rows.append(row)
+        rows.sort(key=lambda r: (is_derivative(r), r.instrument_id))
+        return rows[:max_rows]
     rows = store.iq_select_instruments(statuses=[QualificationStatus.ERROR_RETRYABLE.value], limit=5000)
     rows = [r for r in rows if r.qualification_run_id == source_run_id and r.con_id is None]
     rows.sort(key=lambda r: (is_derivative(r), r.instrument_id))
@@ -171,52 +201,58 @@ async def connect(ib: Any, host: str, port: int, client_id: int, timeout: float)
     await ib.client.connectAsync(host, port, client_id, timeout)
 
 
-def verify_checkpoint(persisted: Any, *, run_id: str, expected_status: str, original: Any) -> str | None:
-    """Compare the PERSISTED checkpoint row with what the engine reported. Returns None when consistent,
-    else a reason — any deviation must abort before the rest of the selection is processed."""
-    problems: list[str] = []
+def verify_checkpoint(persisted: Any, *, run_id: str, expected: dict, original: Any) -> str | None:
+    """Compare the PERSISTED checkpoint row FIELD-BY-FIELD for EQUALITY with the outcome the engine actually
+    produced (``expected`` = the result dict of qualify_one_instrument). Presence/plausibility is NOT enough:
+    a foreign-but-plausible con_id or venue is a mismatch. Returns None when identical, else a reason —
+    any deviation must abort before the rest of the selection is processed."""
     if persisted is None:
-        return "checkpoint row missing from the store"
+        return "checkpoint verification failed: checkpoint row missing from the store"
+    problems: list[str] = []
     if persisted.qualification_run_id != run_id:
         problems.append(f"run_id={persisted.qualification_run_id!r} != {run_id!r}")
-    if persisted.qualification_status != expected_status:
-        problems.append(f"status={persisted.qualification_status!r} != {expected_status!r}")
     if persisted.qualification_status == QualificationStatus.QUALIFICATION_PENDING.value:
         problems.append("status is still QUALIFICATION_PENDING (outcome not persisted)")
     if persisted.exchange != original.exchange or persisted.primary_exchange != original.primary_exchange:
         problems.append("FIRDS venue fields were modified")
-    if expected_status == QualificationStatus.VERIFIED.value:
-        if persisted.con_id is None:
-            problems.append("VERIFIED without con_id")
-        if persisted.qualification_detail not in _VERIFIED_DETAILS:
-            problems.append(f"VERIFIED with detail={persisted.qualification_detail!r}")
-        venue = (persisted.ibkr_primary_exchange or "").strip().upper()
-        if venue in _ROUTING_TOKENS:
-            problems.append(f"VERIFIED without a real returned venue ({persisted.ibkr_primary_exchange!r})")
-    else:
-        if persisted.con_id is not None:
-            problems.append(f"non-VERIFIED row carries con_id={persisted.con_id}")
-        if persisted.ibkr_primary_exchange is not None:
-            problems.append("non-VERIFIED row carries ibkr_primary_exchange")
+    for column, key in (("qualification_status", "status"), ("con_id", "con_id"),
+                        ("qualification_detail", "detail"),
+                        ("ibkr_primary_exchange", "ibkr_primary_exchange"),
+                        ("qualification_reason", "reason")):
+        got, want = getattr(persisted, column, None), expected.get(key)
+        if got != want:
+            problems.append(f"{column}={got!r} != expected {want!r}")
+    if expected.get("status") == QualificationStatus.VERIFIED.value:      # the expectation must be sane
+        if expected.get("con_id") is None:
+            problems.append("engine reported VERIFIED without a con_id")
+        if (expected.get("ibkr_primary_exchange") or "").strip().upper() in _ROUTING_TOKENS:
+            problems.append("engine reported VERIFIED without a real returned venue")
+        if expected.get("detail") not in _VERIFIED_DETAILS:
+            problems.append(f"engine reported VERIFIED with detail={expected.get('detail')!r}")
     return None if not problems else "checkpoint verification failed: " + "; ".join(problems)
 
 
 async def qualify_one_instrument(store: Any, client: Any, inst: Any, run_id: str, seq: int, guard: dict,
-                                 max_attempts: int) -> tuple[str, bool, bool, str, int]:
-    """One instrument through the engine's exact per-instrument path → (status, has_conid, aborted,
-    reason, seq). A guard tripped BEFORE the request leaves the row untouched; a guard tripped DURING the
-    request leaves it QUALIFICATION_PENDING (outcome NOT written)."""
+                                 max_attempts: int) -> tuple[dict, int]:
+    """One instrument through the engine's exact per-instrument path → (result, seq). ``result`` carries
+    EXACTLY the values written to the store (status / con_id / detail / ibkr_primary_exchange / reason) so
+    the checkpoint read-back can be compared for equality. A guard tripped BEFORE the request leaves the
+    row untouched; a guard tripped DURING the request leaves it QUALIFICATION_PENDING (outcome NOT
+    written); both are ``aborted`` with ``written=False``."""
+    base = {"instrument_id": inst.instrument_id, "asset_class": inst.asset_class, "exchange": inst.exchange,
+            "status": "", "con_id": None, "detail": None, "ibkr_primary_exchange": None, "reason": "",
+            "aborted": False, "written": False}
     if guard_tripped(guard):
-        return ("", False, True,
-                f"tripwire before request: violation={guard['violation']} error_abort={guard['error_abort']} "
-                "(row untouched)", seq)
+        return {**base, "aborted": True,
+                "reason": f"tripwire before request: violation={guard['violation']} "
+                          f"error_abort={guard['error_abort']} (row untouched)"}, seq
     attempts = store.iq_mark_pending(inst.instrument_id, run_id)
     status, matched, reason, cand_count, conn_lost, count_attempt = await _qualify_one(
         client, inst, attempts, max_attempts)
     if guard_tripped(guard):
-        return (status.value, False, True,
-                f"tripwire: violation={guard['violation']} error_abort={guard['error_abort']} "
-                "(outcome NOT written; row left QUALIFICATION_PENDING)", seq)
+        return {**base, "status": status.value, "aborted": True,
+                "reason": f"tripwire: violation={guard['violation']} error_abort={guard['error_abort']} "
+                          "(outcome NOT written; row left QUALIFICATION_PENDING)"}, seq
     verification, tradability, market_data, con_id, set_lv = _outcome_fields(status, matched)
     verified = status is QualificationStatus.VERIFIED and matched is not None
     ibkr_primary_exchange = (_venue_of_record(matched) or None) if verified else None
@@ -241,22 +277,23 @@ async def qualify_one_instrument(store: Any, client: Any, inst: Any, run_id: str
                "detail": detail, "ibkr_primary_exchange": ibkr_primary_exchange, "reason": reason})
     real_error = ((status.value in _ABORT_STATUSES and count_attempt)
                   or status is QualificationStatus.MARKET_DATA_NOT_ENTITLED)
-    return status.value, con_id is not None, bool(conn_lost or real_error), reason, seq
+    return {**base, "status": status.value, "con_id": con_id, "detail": detail,
+            "ibkr_primary_exchange": ibkr_primary_exchange, "reason": reason,
+            "aborted": bool(conn_lost or real_error), "written": True}, seq
 
 
 async def run_phase(store: Any, client: Any, rows: list, run_id: str, seq: int, guard: dict, pause: float,
                     label: str) -> tuple[list, bool, int]:
     results: list = []
     for i, inst in enumerate(rows):
-        status, has_conid, aborted, reason, seq = await qualify_one_instrument(
-            store, client, inst, run_id, seq, guard, MAX_ATTEMPTS)
-        results.append({"instrument_id": inst.instrument_id, "asset_class": inst.asset_class,
-                        "exchange": inst.exchange, "status": status, "con_id": has_conid,
-                        "aborted": aborted, "reason": reason})
-        print(f"[{label} {i + 1}/{len(rows)}] {inst.asset_class}@{inst.exchange} → {status or '-'}"
-              f"{' con_id' if has_conid else ''} | {reason[:120]}")
-        if aborted:
-            print(f"[{label}] ABORT at {inst.asset_class}@{inst.exchange}: {reason}")
+        res, seq = await qualify_one_instrument(store, client, inst, run_id, seq, guard, MAX_ATTEMPTS)
+        results.append(res)
+        print(f"[{label} {i + 1}/{len(rows)}] {inst.asset_class}@{inst.exchange} → {res['status'] or '-'}"
+              f"{' con_id=' + str(res['con_id']) if res['con_id'] is not None else ''}"
+              f"{' venue=' + res['ibkr_primary_exchange'] if res['ibkr_primary_exchange'] else ''}"
+              f" | {res['reason'][:110]}")
+        if res["aborted"]:
+            print(f"[{label}] ABORT at {inst.asset_class}@{inst.exchange}: {res['reason']}")
             return results, True, seq
         if i + 1 < len(rows):
             await _sleep(pause)
@@ -266,11 +303,14 @@ async def run_phase(store: Any, client: Any, rows: list, run_id: str, seq: int, 
 async def main(args: argparse.Namespace) -> int:
     store = open_store(resolve_store_url(args.store_url), migrate=False)
     try:
-        rows = select_targets(store, source_run_id=args.source_run, expect=args.expect, max_rows=args.max)
+        ids = [i for i in (args.instrument_ids or "").split(",") if i.strip()]
+        rows = select_targets(store, source_run_id=args.source_run, expect=args.expect, max_rows=args.max,
+                              instrument_ids=ids or None)
     except SelectionMismatch as exc:
         print(f"REFUSED: {exc}")
         return 2
-    print(f"PLAN source_run={args.source_run} selected={len(rows)} (expect {args.expect}), cash first:")
+    mode = f"explicit ids={len(ids)}" if ids else f"source_run={args.source_run}"
+    print(f"PLAN {mode} selected={len(rows)} (expect {args.expect}), cash first:")
     for r in rows:
         print(f"  {r.instrument_id} {r.asset_class}@{r.exchange} ccy={r.trading_currency} "
               f"status={r.qualification_status} attempts={r.qualification_attempts}")
@@ -307,8 +347,7 @@ async def main(args: argparse.Namespace) -> int:
             results += res
             if not aborted:
                 cp = store.im_get_instrument(rows[0].instrument_id)
-                problem = verify_checkpoint(cp, run_id=run_id, expected_status=results[0]["status"],
-                                            original=rows[0])
+                problem = verify_checkpoint(cp, run_id=run_id, expected=results[0], original=rows[0])
                 print(f"CHECKPOINT read back: status={getattr(cp, 'qualification_status', None)} "
                       f"detail={getattr(cp, 'qualification_detail', None)} "
                       f"venue={getattr(cp, 'ibkr_primary_exchange', None)} "
@@ -362,6 +401,8 @@ def _args() -> argparse.Namespace:
     p.add_argument("--client-id", type=int, default=DEFAULT_CLIENT_ID)
     p.add_argument("--store-url", default=None, help="else ATP_DATABASE_URL / atp.env app creds")
     p.add_argument("--source-run", default=SOURCE_RUN_ID, help="prior run whose ERROR_RETRYABLE rows to redo")
+    p.add_argument("--instrument-ids", default="", help="explicit-ID mode: comma-separated instrument ids "
+                   "(e.g. the 3 bonds after the guarded reset); replaces the run-mode selection")
     p.add_argument("--expect", type=int, default=DEFAULT_EXPECT, help="exact selection size or refuse")
     p.add_argument("--max", type=int, default=DEFAULT_EXPECT, help="hard cap on rows processed")
     p.add_argument("--pause", type=float, default=PAUSE_S)

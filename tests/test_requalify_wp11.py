@@ -225,7 +225,8 @@ def _script():
 
 def _ns(mod, store_path, **over):
     d = dict(host="127.0.0.1", port=4002, client_id=9204, store_url=store_path, source_run=mod.SOURCE_RUN_ID,
-             expect=17, max=17, pause=0.0, request_timeout=None, connect_timeout=1.0, dry_run=False)
+             expect=17, max=17, pause=0.0, request_timeout=None, connect_timeout=1.0, dry_run=False,
+             instrument_ids="")
     d.update(over)
     return argparse.Namespace(**d)
 
@@ -390,32 +391,44 @@ def test_checkpoint_persisted_mismatch_aborts_before_rest():
         assert row.qualification_status == "ERROR_RETRYABLE" and row.qualification_run_id == mod.SOURCE_RUN_ID
 
 
-def test_verify_checkpoint_rules():
+def test_verify_checkpoint_requires_exact_equality_with_engine_outcome():
     mod = _load()
-    base = dict(qualification_run_id="run1", exchange="AFSO", primary_exchange="AFSO")
-    ok = SimpleNamespace(**base, qualification_status="VERIFIED", con_id=9,
-                         qualification_detail="verified_isin_echo",
-                         ibkr_primary_exchange="SBF")
     orig = SimpleNamespace(exchange="AFSO", primary_exchange="AFSO")
-    v = mod.verify_checkpoint
-    assert v(ok, run_id="run1", expected_status="VERIFIED", original=orig) is None
-    assert "run_id=" in v(ok, run_id="other", expected_status="VERIFIED", original=orig)
-    assert "status=" in v(ok, run_id="run1", expected_status="AMBIGUOUS", original=orig)
-    assert "without con_id" in v(SimpleNamespace(**{**ok.__dict__, "con_id": None}), run_id="run1",
-                                 expected_status="VERIFIED", original=orig)
-    assert "real returned venue" in v(SimpleNamespace(**{**ok.__dict__, "ibkr_primary_exchange": "SMART"}),
-                                      run_id="run1", expected_status="VERIFIED", original=orig)
-    assert "venue fields were modified" in v(SimpleNamespace(**{**ok.__dict__, "exchange": "SBF"}),
-                                             run_id="run1", expected_status="VERIFIED", original=orig)
-    bad = SimpleNamespace(**base, qualification_status="ERROR_RETRYABLE", con_id=9, qualification_detail=None,
-                          ibkr_primary_exchange=None)
-    assert "carries con_id" in v(bad, run_id="run1", expected_status="ERROR_RETRYABLE", original=orig)
-    pend = SimpleNamespace(**base, qualification_status="QUALIFICATION_PENDING", con_id=None,
-                           qualification_detail=None, ibkr_primary_exchange=None)
-    assert "QUALIFICATION_PENDING" in v(pend, run_id="run1", expected_status="QUALIFICATION_PENDING",
-                                        original=orig)
-    missing = v(None, run_id="run1", expected_status="VERIFIED", original=orig)
-    assert missing == "checkpoint row missing from the store"
+    exp = {"status": "VERIFIED", "con_id": 9101, "detail": "verified_isin_echo",
+           "ibkr_primary_exchange": "SBF", "reason": "unique contract match"}
+    row = dict(qualification_run_id="run1", exchange="AFSO", primary_exchange="AFSO",
+               qualification_status="VERIFIED", con_id=9101, qualification_detail="verified_isin_echo",
+               ibkr_primary_exchange="SBF", qualification_reason="unique contract match")
+
+    def check(changes=None, run_id="run1", expected=exp):
+        return mod.verify_checkpoint(SimpleNamespace(**{**row, **(changes or {})}), run_id=run_id,
+                                     expected=expected, original=orig)
+
+    assert check() is None
+    # foreign-but-PLAUSIBLE values are mismatches, not merely missing ones
+    assert "con_id=9999 != expected 9101" in check({"con_id": 9999})
+    assert "ibkr_primary_exchange='IBIS' != expected 'SBF'" in check({"ibkr_primary_exchange": "IBIS"})
+    wrong_detail = check({"qualification_detail": "verified_venue_match"})
+    assert "qualification_detail='verified_venue_match'" in wrong_detail
+    assert "qualification_reason=" in check({"qualification_reason": "other"})
+    assert "run_id=" in check(run_id="other")
+    assert "qualification_status=" in check({"qualification_status": "AMBIGUOUS"})
+    assert "venue fields were modified" in check({"exchange": "SBF"})
+    pend_exp = {**exp, "status": "QUALIFICATION_PENDING", "con_id": None}
+    assert "QUALIFICATION_PENDING" in check({"qualification_status": "QUALIFICATION_PENDING", "con_id": None},
+                                            expected=pend_exp)
+    # a non-VERIFIED outcome must match exactly too (None == None); an insane VERIFIED expectation is flagged
+    exp2 = {"status": "ERROR_RETRYABLE", "con_id": None, "detail": "venue_unresolved",
+            "ibkr_primary_exchange": None, "reason": "venue_unresolved: x"}
+    row2 = {"qualification_status": "ERROR_RETRYABLE", "con_id": None,
+            "qualification_detail": "venue_unresolved", "ibkr_primary_exchange": None,
+            "qualification_reason": "venue_unresolved: x"}
+    assert check(row2, expected=exp2) is None
+    assert "con_id=5 != expected None" in check({**row2, "con_id": 5}, expected=exp2)
+    assert "without a real returned venue" in check({"ibkr_primary_exchange": "SMART"},
+                                                    expected={**exp, "ibkr_primary_exchange": "SMART"})
+    missing = mod.verify_checkpoint(None, run_id="run1", expected=exp, original=orig)
+    assert missing.endswith("checkpoint row missing from the store")
 
 
 def test_sdk_construction_failure_finalizes_run_failed_not_running():
@@ -490,3 +503,122 @@ def test_runner_describes_broker_readonly_and_store_writes_honestly():
     src = _RUNNER.read_text()
     assert "Broker side: READ-ONLY" in src and "WRITES qualification outcomes" in src
     assert "READ-ONLY IBKR re-qualification" not in src                # whole runner is not read-only
+
+
+
+# ------------------------------------------------------------------ review of 84a2081 (equality, ids)
+_SEC_TYPE = {AssetClass.EQUITY: "STK", AssetClass.ETF: "STK", AssetClass.FUND: "FUND",
+             AssetClass.WARRANT: "WAR"}
+
+
+def _script_all_echo():
+    """Every cash line echoes its ISIN with a class-compatible secType → the checkpoint (first cash row)
+    is deterministically VERIFIED."""
+    return {c[2]: [_detail(9000 + int(c[2][-3:]), isin=c[2], primary="SBF", sec_type=_SEC_TYPE[c[0]])]
+            for c in CASH}
+
+
+@pytest.mark.parametrize("field,value,token", [
+    ("con_id", 9999, "con_id=9999 != expected"),                 # foreign but plausible conId
+    ("ibkr_primary_exchange", "IBIS", "ibkr_primary_exchange='IBIS' != expected 'SBF'"),   # real venue, wrong
+    ("qualification_detail", "verified_venue_match", "qualification_detail='verified_venue_match'"),
+])
+def test_checkpoint_foreign_plausible_value_aborts_before_rest(field, value, token):
+    import dataclasses
+    mod = _load()
+    path, store, _targets, _ = _setup(mod)
+    order = mod.select_targets(store, source_run_id=mod.SOURCE_RUN_ID, expect=17, max_rows=17)
+    real_open = mod.open_store
+    mod.open_store = lambda url, migrate=False: _TamperingStore(
+        real_open(url, migrate=migrate), lambda row: dataclasses.replace(row, **{field: value}))
+    fake = FakeIB(_script_all_echo())
+    mod.make_ib = lambda: fake
+    rc = asyncio.run(mod.main(_ns(mod, path)))
+    assert rc == 1
+    run = _runs(store, mod.RUN_LABEL)[0]
+    assert run.status == "FAILED" and token in (run.failure_reason or "")
+    assert fake.calls == [order[0].isin]                          # REST never started
+    cp = store.im_get_instrument(order[0].instrument_id)          # the real row holds the engine's values
+    assert cp.qualification_status == "VERIFIED" and cp.con_id == 9000 + int(order[0].isin[-3:])
+    assert cp.ibkr_primary_exchange == "SBF" and cp.qualification_detail == "verified_isin_echo"
+    for r in order[1:]:
+        row = store.im_get_instrument(r.instrument_id)
+        assert row.qualification_status == "ERROR_RETRYABLE" and row.qualification_run_id == mod.SOURCE_RUN_ID
+
+
+BONDS = [(AssetClass.BOND, "AURO", "FR001400Q3S1"), (AssetClass.BOND, "AFSO", "NL000000AFS2"),
+         (AssetClass.BOND, "ALXP", "FR000000ALX3")]
+
+
+def _seed_reset_bonds(store):
+    """The 3 bonds AFTER infra/db/wp11_bond_reset.sql: DISCOVERED, run id NULL, con_id NULL."""
+    ids = []
+    for spec in BONDS:
+        rec = _rec(*spec)
+        store.im_upsert_instrument(rec.as_record())
+        ids.append(rec.instrument_id)
+    return ids
+
+
+def test_explicit_ids_requalify_exactly_the_three_reset_bonds():
+    mod = _load()
+    path, store, targets, decoys = _setup(mod)             # the 17 + decoys are present, must stay untouched
+    bond_ids = _seed_reset_bonds(store)
+    script = {"FR001400Q3S1": [_detail(7001, isin="FR001400Q3S1", primary="SBF", sec_type="BOND")],
+              "NL000000AFS2": "nosecdef", "FR000000ALX3": "nosecdef"}
+    fake = FakeIB(script)
+    mod.make_ib = lambda: fake
+    rc = asyncio.run(mod.main(_ns(mod, path, instrument_ids=",".join(bond_ids), expect=3, max=3)))
+    assert rc == 0
+    run = _runs(store, mod.RUN_LABEL)[0]
+    assert run.status == "COMPLETED" and run.processed_count == 3
+    assert (run.verified_count, run.error_retryable_count, run.not_tradable_count) == (1, 2, 0)
+    by_isin = {store.im_get_instrument(i).isin: store.im_get_instrument(i) for i in bond_ids}
+    v = by_isin["FR001400Q3S1"]
+    assert v.qualification_status == "VERIFIED" and v.con_id == 7001 and v.ibkr_primary_exchange == "SBF"
+    for isin in ("NL000000AFS2", "FR000000ALX3"):                  # bond not-found is NOT terminal
+        assert by_isin[isin].qualification_status == "ERROR_RETRYABLE"
+        assert by_isin[isin].qualification_detail == "bond_not_found"
+    assert all(store.im_get_instrument(i).qualification_run_id == run.run_id for i in bond_ids)
+    assert sorted(fake.calls) == sorted(b[2] for b in BONDS)      # bonds queried by ISIN-in-symbol, once each
+    for i in targets:                                            # the 17 are NOT widened into this run
+        row = store.im_get_instrument(i)
+        assert row.qualification_status == "ERROR_RETRYABLE" and row.qualification_run_id == mod.SOURCE_RUN_ID
+    d = store.im_get_instrument(decoys["disc"])                  # other DISCOVERED rows untouched
+    assert d.qualification_status == "DISCOVERED" and d.qualification_run_id is None
+
+
+def test_explicit_ids_refuse_unknown_non_selectable_or_miscounted_ids():
+    mod = _load()
+    path, store, _targets, decoys = _setup(mod)
+    bond_ids = _seed_reset_bonds(store)
+    called = []
+    mod.make_ib = lambda: called.append(1) or FakeIB({})
+    # (a) an id that is VERIFIED (carries a con_id) → not re-selectable
+    ids_with_verified = ",".join(bond_ids[:2] + [decoys["ver"]])
+    rc = asyncio.run(mod.main(_ns(mod, path, instrument_ids=ids_with_verified, expect=3)))
+    assert rc == 2
+    # (b) an unknown id
+    rc = asyncio.run(mod.main(_ns(mod, path, instrument_ids=",".join(bond_ids[:2] + ["INS-doesnotexist"]),
+                                  expect=3)))
+    assert rc == 2
+    # (c) --expect does not match the number of ids (the run-mode default 17 must never leak in)
+    rc = asyncio.run(mod.main(_ns(mod, path, instrument_ids=",".join(bond_ids), expect=17)))
+    assert rc == 2
+    assert called == [] and _runs(store, mod.RUN_LABEL) == []   # refused before any IB or run row
+    for i in bond_ids:
+        assert store.im_get_instrument(i).qualification_status == "DISCOVERED"
+
+
+def test_run_mode_cannot_see_reset_bonds_and_explicit_mode_does_not_widen():
+    # The honest reason for explicit-ID mode: after the reset the bonds are DISCOVERED with a NULL run id, so
+    # run mode (--expect 3 against any run id) finds 0 and refuses — it must NOT silently include them.
+    mod = _load()
+    path, store, _targets, _ = _setup(mod)
+    _seed_reset_bonds(store)
+    called = []
+    mod.make_ib = lambda: called.append(1) or FakeIB({})
+    rc = asyncio.run(mod.main(_ns(mod, path, source_run="newrun000", expect=3)))
+    assert rc == 2 and called == []
+    rc = asyncio.run(mod.main(_ns(mod, path, expect=17, dry_run=True)))   # the 17-selector is unchanged
+    assert rc == 0
