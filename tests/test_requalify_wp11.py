@@ -344,3 +344,149 @@ def test_runner_source_has_no_order_marketdata_or_account_requests():
                       "reqHistoricalData", "place_order", "cancel_order"):
         assert forbidden not in src, f"{forbidden} must not appear in the runner"
     assert "ib.client.connectAsync" in src and "migrate=False" in src and "--dry-run" in src
+
+
+# ------------------------------------------------------------------ review fixes (review of 691e72d)
+class _TamperingStore:
+    """Delegates to the real store but returns a TAMPERED row on the first im_get_instrument read (the
+    runner's checkpoint read-back) — simulating persisted values that do not match what the engine
+    reported."""
+
+    def __init__(self, real, tamper):
+        self._real, self._tamper, self._done = real, tamper, False
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def im_get_instrument(self, iid):
+        row = self._real.im_get_instrument(iid)
+        if not self._done:
+            self._done = True
+            return self._tamper(row)
+        return row
+
+
+def test_checkpoint_persisted_mismatch_aborts_before_rest():
+    import dataclasses
+    mod = _load()
+    path, store, targets, _ = _setup(mod)
+    order = mod.select_targets(store, source_run_id=mod.SOURCE_RUN_ID, expect=17, max_rows=17)
+    real_open = mod.open_store
+    mod.open_store = lambda url, migrate=False: _TamperingStore(
+        real_open(url, migrate=migrate),
+        lambda row: dataclasses.replace(row, qualification_run_id="tampered"))
+    fake = FakeIB(_script())
+    mod.make_ib = lambda: fake
+    rc = asyncio.run(mod.main(_ns(mod, path)))
+    assert rc == 1
+    run = _runs(store, mod.RUN_LABEL)[0]
+    assert run.status == "FAILED" and "checkpoint verification failed" in (run.failure_reason or "")
+    assert "run_id=" in run.failure_reason
+    assert fake.calls == [order[0].isin]                          # the REST phase never started
+    cp = store.im_get_instrument(order[0].instrument_id)          # checkpoint itself was persisted normally
+    assert cp.qualification_run_id == run.run_id and cp.qualification_status != "QUALIFICATION_PENDING"
+    for r in order[1:]:                                           # nothing after it was touched
+        row = store.im_get_instrument(r.instrument_id)
+        assert row.qualification_status == "ERROR_RETRYABLE" and row.qualification_run_id == mod.SOURCE_RUN_ID
+
+
+def test_verify_checkpoint_rules():
+    mod = _load()
+    base = dict(qualification_run_id="run1", exchange="AFSO", primary_exchange="AFSO")
+    ok = SimpleNamespace(**base, qualification_status="VERIFIED", con_id=9,
+                         qualification_detail="verified_isin_echo",
+                         ibkr_primary_exchange="SBF")
+    orig = SimpleNamespace(exchange="AFSO", primary_exchange="AFSO")
+    v = mod.verify_checkpoint
+    assert v(ok, run_id="run1", expected_status="VERIFIED", original=orig) is None
+    assert "run_id=" in v(ok, run_id="other", expected_status="VERIFIED", original=orig)
+    assert "status=" in v(ok, run_id="run1", expected_status="AMBIGUOUS", original=orig)
+    assert "without con_id" in v(SimpleNamespace(**{**ok.__dict__, "con_id": None}), run_id="run1",
+                                 expected_status="VERIFIED", original=orig)
+    assert "real returned venue" in v(SimpleNamespace(**{**ok.__dict__, "ibkr_primary_exchange": "SMART"}),
+                                      run_id="run1", expected_status="VERIFIED", original=orig)
+    assert "venue fields were modified" in v(SimpleNamespace(**{**ok.__dict__, "exchange": "SBF"}),
+                                             run_id="run1", expected_status="VERIFIED", original=orig)
+    bad = SimpleNamespace(**base, qualification_status="ERROR_RETRYABLE", con_id=9, qualification_detail=None,
+                          ibkr_primary_exchange=None)
+    assert "carries con_id" in v(bad, run_id="run1", expected_status="ERROR_RETRYABLE", original=orig)
+    pend = SimpleNamespace(**base, qualification_status="QUALIFICATION_PENDING", con_id=None,
+                           qualification_detail=None, ibkr_primary_exchange=None)
+    assert "QUALIFICATION_PENDING" in v(pend, run_id="run1", expected_status="QUALIFICATION_PENDING",
+                                        original=orig)
+    missing = v(None, run_id="run1", expected_status="VERIFIED", original=orig)
+    assert missing == "checkpoint row missing from the store"
+
+
+def test_sdk_construction_failure_finalizes_run_failed_not_running():
+    mod = _load()
+    path, store, targets, _ = _setup(mod)
+
+    def boom():
+        raise RuntimeError("SDK unavailable")
+
+    mod.make_ib = boom
+    rc = asyncio.run(mod.main(_ns(mod, path)))
+    assert rc == 1
+    runs = _runs(store, mod.RUN_LABEL)
+    assert len(runs) == 1 and runs[0].status == "FAILED" and "SDK unavailable" in runs[0].failure_reason
+    assert store.iq_list_runs(status="RUNNING", limit=50) == []       # never left RUNNING
+    for i in targets:                                                  # nothing touched
+        row = store.im_get_instrument(i)
+        assert row.qualification_status == "ERROR_RETRYABLE" and row.qualification_run_id == mod.SOURCE_RUN_ID
+
+
+def test_documented_pause_between_checkpoint_and_rest_and_between_rows():
+    mod = _load()
+    path, store, _targets, _ = _setup(mod)
+    sleeps = []
+
+    async def rec(s):
+        sleeps.append(s)
+
+    mod._sleep = rec
+    fake = FakeIB(_script())
+    mod.make_ib = lambda: fake
+    rc = asyncio.run(mod.main(_ns(mod, path, pause=0.5)))
+    assert rc == 0
+    assert sleeps == [0.5] * 16          # 1 after the checkpoint + 15 between the 16 rest rows (17 rows)
+
+
+class _TripAfterIB(FakeIB):
+    """Returns row `trip_after` normally, then raises an UNSOLICITED non-benign error on the next loop tick —
+    i.e. between requests, during the documented pause."""
+
+    def __init__(self, script, trip_after):
+        super().__init__(script)
+        self.trip_after = trip_after
+
+    async def reqContractDetailsAsync(self, contract):
+        details = await super().reqContractDetailsAsync(contract)
+        key = getattr(contract, "secId", "") or getattr(contract, "symbol", "")
+        if key == self.trip_after:
+            asyncio.get_running_loop().call_soon(self.errorEvent.emit, -1, 1100,
+                                                 "Connectivity between IB and TWS has been lost")
+        return details
+
+
+def test_tripwire_between_requests_leaves_next_row_untouched():
+    mod = _load()
+    path, store, _targets, _ = _setup(mod)
+    order = mod.select_targets(store, source_run_id=mod.SOURCE_RUN_ID, expect=17, max_rows=17)
+    fake = _TripAfterIB(_script(), trip_after=order[1].isin)     # first REST row completes, then the trip
+    mod.make_ib = lambda: fake
+    rc = asyncio.run(mod.main(_ns(mod, path)))
+    assert rc == 1
+    run = _runs(store, mod.RUN_LABEL)[0]
+    assert run.status == "FAILED" and "tripwire before request" in (run.failure_reason or "")
+    assert fake.calls == [order[0].isin, order[1].isin]
+    done = store.im_get_instrument(order[1].instrument_id)
+    assert done.qualification_run_id == run.run_id and done.qualification_status != "QUALIFICATION_PENDING"
+    nxt = store.im_get_instrument(order[2].instrument_id)            # pre-request check: untouched
+    assert nxt.qualification_status == "ERROR_RETRYABLE" and nxt.qualification_run_id == mod.SOURCE_RUN_ID
+
+
+def test_runner_describes_broker_readonly_and_store_writes_honestly():
+    src = _RUNNER.read_text()
+    assert "Broker side: READ-ONLY" in src and "WRITES qualification outcomes" in src
+    assert "READ-ONLY IBKR re-qualification" not in src                # whole runner is not read-only

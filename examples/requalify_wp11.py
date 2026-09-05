@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Bounded, READ-ONLY IBKR re-qualification of the WP11 backlog — RUN ONLY UNDER EXPLICIT AUTHORIZATION.
+"""Bounded IBKR re-qualification of the WP11 backlog — RUN ONLY UNDER EXPLICIT AUTHORIZATION.
+
+Broker side: READ-ONLY (only contract-details requests). Store side: WRITES qualification outcomes for the
+selected rows (status / reason / detail / returned venue / con_id) plus one run row and its audit events —
+exactly what the qualification engine writes, bounded to the selection below. Nothing else is written.
 
 Implements the execution step of docs/WP11_canonical_venue_identity.md §8: re-qualify EXACTLY the
 instruments a previous qualification run left in the re-selectable ``ERROR_RETRYABLE`` state (by default
@@ -20,19 +24,24 @@ Guarantees (mirrors the WP10 canary runner that produced runs ``68a330fb…`` an
     issued here).
   * Wire allowlist: ``ib.client.send`` is wrapped; only msg 71 (START_API handshake) and msg 9 (contract
     details) may leave the process — anything else is refused before it is sent and aborts the run.
-  * Tripwire: any non-benign IBKR error event aborts BEFORE the affected outcome is written (the row stays
-    ``QUALIFICATION_PENDING``, i.e. re-selectable — never mis-classified).
-  * Two phases: one checkpoint instrument, read back from the store, then the rest; fixed pause and
-    timeouts; no retries; abort on disconnect / real error / entitlement problem.
+  * Tripwire: any non-benign IBKR error event aborts. It is checked BEFORE every request (a trip between
+    requests leaves the next row completely untouched) and AFTER every request (a trip during a request
+    leaves that row ``QUALIFICATION_PENDING`` — its outcome is NOT written, so it stays re-selectable).
+  * Two phases: one checkpoint instrument whose PERSISTED values are read back and verified (run id,
+    status, con_id / detail / venue consistency, FIRDS MIC untouched) — any deviation aborts BEFORE the
+    rest; then the documented pause; then the rest. Fixed pause and timeouts; no retries; abort on
+    disconnect / real error / entitlement problem.
   * Budget-neutral WP11 outcomes (``venue_unresolved`` / ``currency_conflict`` / ``bond_not_found``) never
     abort — they are the expected, honest results for a still-unmapped venue.
+  * Run lifecycle: once the run row is RUNNING, every failure — including SDK construction or the
+    handshake — is caught and the run is finalized FAILED (never left RUNNING); the socket is closed.
   * ``--dry-run`` prints the exact selection and touches nothing (no connection, no write).
   * The store is opened with ``migrate=False``: a not-yet-deployed migration fails loudly instead of being
     applied by an ops script (deploy first — migration 032 applies at service start).
 
-SAFETY: read-only reference data. No orders, no market data, no account, position, scanner or
-subscription request. AUTONOMOUS=DISABLED · EXECUTION=DISABLED · IBKR ORDERS=0. CI never runs this against
-a broker; the offline simulation lives in tests/test_requalify_wp11.py.
+SAFETY: no orders, no market data, no account, position, scanner or subscription request.
+AUTONOMOUS=DISABLED · EXECUTION=DISABLED · IBKR ORDERS=0. CI never runs this against a broker; the offline
+simulation lives in tests/test_requalify_wp11.py.
 
 Usage (on the host, as the service user, env from atp.env — each run needs its own authorization):
     PYTHONPATH=src python3 examples/requalify_wp11.py --dry-run
@@ -72,6 +81,10 @@ BENIGN_ERROR_CODES = frozenset({200, 2104, 2106, 2107, 2108, 2119, 2158})   # pe
 _DERIVATIVES = frozenset({"future", "option"})
 _ABORT_STATUSES = frozenset({QualificationStatus.ERROR_RETRYABLE.value,
                              QualificationStatus.ERROR_PERMANENT.value})
+_VERIFIED_DETAILS = frozenset({"verified_isin_echo", "verified_venue_match"})
+_ROUTING_TOKENS = frozenset({"", "SMART", "SMARTUS", "IBKRATS", "OVERNIGHT", "VALUE", "DARKPOOL"})
+
+_sleep = asyncio.sleep     # indirection so the offline simulation can observe the documented pauses
 
 
 class SelectionMismatch(RuntimeError):
@@ -158,10 +171,45 @@ async def connect(ib: Any, host: str, port: int, client_id: int, timeout: float)
     await ib.client.connectAsync(host, port, client_id, timeout)
 
 
+def verify_checkpoint(persisted: Any, *, run_id: str, expected_status: str, original: Any) -> str | None:
+    """Compare the PERSISTED checkpoint row with what the engine reported. Returns None when consistent,
+    else a reason — any deviation must abort before the rest of the selection is processed."""
+    problems: list[str] = []
+    if persisted is None:
+        return "checkpoint row missing from the store"
+    if persisted.qualification_run_id != run_id:
+        problems.append(f"run_id={persisted.qualification_run_id!r} != {run_id!r}")
+    if persisted.qualification_status != expected_status:
+        problems.append(f"status={persisted.qualification_status!r} != {expected_status!r}")
+    if persisted.qualification_status == QualificationStatus.QUALIFICATION_PENDING.value:
+        problems.append("status is still QUALIFICATION_PENDING (outcome not persisted)")
+    if persisted.exchange != original.exchange or persisted.primary_exchange != original.primary_exchange:
+        problems.append("FIRDS venue fields were modified")
+    if expected_status == QualificationStatus.VERIFIED.value:
+        if persisted.con_id is None:
+            problems.append("VERIFIED without con_id")
+        if persisted.qualification_detail not in _VERIFIED_DETAILS:
+            problems.append(f"VERIFIED with detail={persisted.qualification_detail!r}")
+        venue = (persisted.ibkr_primary_exchange or "").strip().upper()
+        if venue in _ROUTING_TOKENS:
+            problems.append(f"VERIFIED without a real returned venue ({persisted.ibkr_primary_exchange!r})")
+    else:
+        if persisted.con_id is not None:
+            problems.append(f"non-VERIFIED row carries con_id={persisted.con_id}")
+        if persisted.ibkr_primary_exchange is not None:
+            problems.append("non-VERIFIED row carries ibkr_primary_exchange")
+    return None if not problems else "checkpoint verification failed: " + "; ".join(problems)
+
+
 async def qualify_one_instrument(store: Any, client: Any, inst: Any, run_id: str, seq: int, guard: dict,
                                  max_attempts: int) -> tuple[str, bool, bool, str, int]:
     """One instrument through the engine's exact per-instrument path → (status, has_conid, aborted,
-    reason, seq). A tripped guard means the outcome is NOT written (row stays PENDING)."""
+    reason, seq). A guard tripped BEFORE the request leaves the row untouched; a guard tripped DURING the
+    request leaves it QUALIFICATION_PENDING (outcome NOT written)."""
+    if guard_tripped(guard):
+        return ("", False, True,
+                f"tripwire before request: violation={guard['violation']} error_abort={guard['error_abort']} "
+                "(row untouched)", seq)
     attempts = store.iq_mark_pending(inst.instrument_id, run_id)
     status, matched, reason, cand_count, conn_lost, count_attempt = await _qualify_one(
         client, inst, attempts, max_attempts)
@@ -205,13 +253,13 @@ async def run_phase(store: Any, client: Any, rows: list, run_id: str, seq: int, 
         results.append({"instrument_id": inst.instrument_id, "asset_class": inst.asset_class,
                         "exchange": inst.exchange, "status": status, "con_id": has_conid,
                         "aborted": aborted, "reason": reason})
-        print(f"[{label} {i + 1}/{len(rows)}] {inst.asset_class}@{inst.exchange} → {status}"
+        print(f"[{label} {i + 1}/{len(rows)}] {inst.asset_class}@{inst.exchange} → {status or '-'}"
               f"{' con_id' if has_conid else ''} | {reason[:120]}")
         if aborted:
-            print(f"[{label}] ABORT after {inst.asset_class}@{inst.exchange}: {reason}")
+            print(f"[{label}] ABORT at {inst.asset_class}@{inst.exchange}: {reason}")
             return results, True, seq
         if i + 1 < len(rows):
-            await asyncio.sleep(pause)
+            await _sleep(pause)
     return results, False, seq
 
 
@@ -235,16 +283,21 @@ async def main(args: argparse.Namespace) -> int:
     store.iq_create_run(run_id=run_id, request_checksum=checksum, run_label=RUN_LABEL, exchange=None,
                         batch_size=1, pause_seconds=args.pause)
     store.iq_advance_run_status(run_id, "PLANNED", "RUNNING")
-    markets = sorted({r.exchange or "" for r in rows})
-    store.iq_set_planned_markets(run_id, markets)
-    seq = store.iq_max_event_seq(run_id)
+    # From here on the run row is RUNNING: EVERYTHING below — planning, SDK construction, handshake, the
+    # phases — is inside the try so no failure can leave it RUNNING or the socket open.
+    markets: list = []
+    seq = 0
     guard = new_guard()
-    ib = make_ib()
-    install_guards(ib, guard)
-    client = IbkrQualificationClient(ib, request_timeout=args.request_timeout)
+    ib: Any = None
     results: list = []
     aborted, abort_reason = False, None
     try:
+        markets = sorted({r.exchange or "" for r in rows})
+        store.iq_set_planned_markets(run_id, markets)
+        seq = store.iq_max_event_seq(run_id)
+        ib = make_ib()
+        install_guards(ib, guard)
+        client = IbkrQualificationClient(ib, request_timeout=args.request_timeout)
         await connect(ib, args.host, args.port, args.client_id, args.connect_timeout)
         if guard_tripped(guard):
             aborted, abort_reason = True, f"tripwire during handshake: {guard}"
@@ -254,9 +307,17 @@ async def main(args: argparse.Namespace) -> int:
             results += res
             if not aborted:
                 cp = store.im_get_instrument(rows[0].instrument_id)
-                print(f"CHECKPOINT read back: status={cp.qualification_status} "
-                      f"detail={cp.qualification_detail} venue={cp.ibkr_primary_exchange} "
-                      f"con_id={cp.con_id} run={cp.qualification_run_id}")
+                problem = verify_checkpoint(cp, run_id=run_id, expected_status=results[0]["status"],
+                                            original=rows[0])
+                print(f"CHECKPOINT read back: status={getattr(cp, 'qualification_status', None)} "
+                      f"detail={getattr(cp, 'qualification_detail', None)} "
+                      f"venue={getattr(cp, 'ibkr_primary_exchange', None)} "
+                      f"con_id={getattr(cp, 'con_id', None)} run={getattr(cp, 'qualification_run_id', None)}"
+                      f" → {'OK' if problem is None else 'MISMATCH'}")
+                if problem is not None:
+                    aborted, abort_reason = True, problem
+            if not aborted and len(rows) > 1:
+                await _sleep(args.pause)                         # documented pause checkpoint → rest
                 res, aborted, seq = await run_phase(store, client, rows[1:], run_id, seq, guard,
                                                     args.pause, "REST")
                 results += res
@@ -265,15 +326,20 @@ async def main(args: argparse.Namespace) -> int:
     except Exception as exc:  # noqa: BLE001 — never leave the run RUNNING or the socket open
         aborted, abort_reason = True, f"{type(exc).__name__}: {exc}"
     finally:
-        with contextlib.suppress(Exception):
-            ib.disconnect()
+        if ib is not None:
+            with contextlib.suppress(Exception):
+                ib.disconnect()
 
-    for m in markets:
-        seq += 1
-        store.iq_record_market(run_id, market=m, market_status="ABORTED" if aborted else "COMPLETED",
-                               event={"id": f"{run_id}-e{seq}", "seq": seq, "market": m,
-                                      "event_type": "MARKET_ABORTED" if aborted else "MARKET_OK",
-                                      "severity": "ERROR" if aborted else "INFO", "reason": abort_reason})
+    try:
+        for m in markets:
+            seq += 1
+            store.iq_record_market(run_id, market=m, market_status="ABORTED" if aborted else "COMPLETED",
+                                   event={"id": f"{run_id}-e{seq}", "seq": seq, "market": m,
+                                          "event_type": "MARKET_ABORTED" if aborted else "MARKET_OK",
+                                          "severity": "ERROR" if aborted else "INFO",
+                                          "reason": abort_reason})
+    except Exception as exc:  # noqa: BLE001 — bookkeeping must never block the terminal flip below
+        aborted, abort_reason = True, f"{abort_reason or ''} | market bookkeeping failed: {exc}".strip(" |")
     if aborted:
         store.iq_finalize_run(run_id, status="FAILED", failure_code="ABORTED", failure_reason=abort_reason)
     else:
@@ -289,7 +355,8 @@ async def main(args: argparse.Namespace) -> int:
 
 
 def _args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Bounded READ-ONLY IBKR re-qualification of the WP11 backlog")
+    p = argparse.ArgumentParser(
+        description="Bounded IBKR re-qualification of the WP11 backlog (broker read-only; writes outcomes)")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=4002, help="4002 IB Gateway paper")
     p.add_argument("--client-id", type=int, default=DEFAULT_CLIENT_ID)
