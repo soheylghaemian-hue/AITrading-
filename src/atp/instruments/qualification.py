@@ -94,6 +94,14 @@ class ConnectionUnavailableError(RetryableQualificationError):
     """No usable IBKR connection. Produces a visible ERROR_RETRYABLE status and aborts the run early."""
 
 
+class AmbiguousContractError(QualificationError):
+    """§ WP11 — IBKR reported the contract description is AMBIGUOUS (error 200 "...is ambiguous"): the query
+    matched several contracts but IBKR returned none because it was under-specified. This is a genuine
+    ambiguity (→ AMBIGUOUS), NOT a venue-resolution gap and NOT a not-found; it needs a more specific query
+    (more identity), never a blind identical re-query — so it is terminal for this attempt set, not
+    ERROR_RETRYABLE (which would re-issue the same ambiguous query forever)."""
+
+
 class VenueResolutionError(RetryableQualificationError):
     """§ WP10 — the request could not be resolved to a real IBKR venue/contract because it used an
     unmapped/invalid venue (a FIRDS MIC is NOT an IBKR exchange code), lacked a usable identifier, or IBKR
@@ -141,6 +149,9 @@ _VENUE_ERROR_MARKERS = (
     "no trading permissions",  # entitlement to the venue, not a tradability verdict
 )
 _NO_SECURITY_DEF_MARKERS = ("no security definition",)
+# § WP11 — IBKR's OTHER documented error-200 message: "The contract description specified for <X> is
+# ambiguous" (resolved by a more specific query, not a retry). Distinct from a venue gap and a not-found.
+_AMBIGUOUS_MARKERS = ("is ambiguous", "ambiguous")
 
 
 def classify_contract_query_error(captured: Iterable[tuple[int | None, str]]) -> QualificationError | None:
@@ -156,6 +167,9 @@ def classify_contract_query_error(captured: Iterable[tuple[int | None, str]]) ->
             if any(m in msg for m in _VENUE_ERROR_MARKERS):
                 return VenueResolutionError(f"venue/query resolution failed (IBKR 200): {message}",
                                             code="venue_unresolved")
+            if any(m in msg for m in _AMBIGUOUS_MARKERS):   # § WP11 — genuine ambiguity, not a venue gap
+                return AmbiguousContractError(f"IBKR reported an ambiguous contract (200): {message}",
+                                              code="ambiguous")
             if any(m in msg for m in _NO_SECURITY_DEF_MARKERS):
                 continue   # genuine not-found → fall through to NOT_TRADABLE
             # an error 200 we cannot attribute to a genuine not-found: do NOT assert non-tradability
@@ -249,26 +263,30 @@ def _venue_resolvable(instrument: InstrumentRow) -> bool:
                 or is_ibkr_exchange(e) or is_ibkr_exchange(p))
 
 
-def _consistent(instrument: InstrumentRow, c: GlobalContract) -> bool:
-    """True iff candidate `c` is consistent with EVERY known identity field of `instrument`. Currency, venue
-    and asset class are always required, so a symbol alone can never make a candidate consistent."""
-    if c.con_id is None or c.con_id <= 0:
-        return False
-    if c.asset_class is None or not _class_compatible(instrument.asset_class, c.asset_class.value):
-        return False
-    inst_ccy = _norm(instrument.trading_currency)
-    if not inst_ccy or _norm(c.currency) != inst_ccy:
-        return False
-    # Venue must match on a shared REAL exchange. Empty strings and routing pseudo-venues (SMART, …) are
-    # excluded, so neither a NULL venue nor the ubiquitous "SMART" routing token can satisfy the constraint
-    # by coincidence — that would verify an instrument whose actual listing venue was never confirmed.
-    # § WP10 — the instrument's stored venue is a FIRDS MIC; the returned contract's venue is an IBKR
-    # exchange code. They live in different namespaces (XPAR vs SBF), so we translate the MIC to its IBKR
-    # code(s) via the fail-closed registry before intersecting. An unmapped MIC yields NO expected venue, so
-    # this function returns False (the venue is unconfirmable → never VERIFIED). Whether that unconfirmable
-    # outcome should be NOT_TRADABLE or a re-queryable venue-resolution gap is decided in _qualify_one (see
-    # _venue_resolvable): a returned-but-inconsistent contract on an unmapped MIC is NEVER a false
-    # NOT_TRADABLE — it is reclassified ERROR_RETRYABLE.
+_DERIVATIVE_CLASSES = frozenset({"future", "option"})
+
+
+def _instrument_is_derivative(instrument: InstrumentRow) -> bool:
+    return (getattr(instrument, "asset_class", "") or "").strip().lower() in _DERIVATIVE_CLASSES
+
+
+def _venue_of_record(c: GlobalContract) -> str:
+    """§ WP11 — the REAL (non-routing) IBKR venue to store for a verified contract: its returned
+    ``primaryExchange`` (preferred) else ``exchange``. Never SMART/routing, never the FIRDS MIC. '' if the
+    reply carried no real venue (then a cash contract cannot be VERIFIED — see _isin_echo_match)."""
+    for token in (getattr(c, "primary_exchange", ""), getattr(c, "exchange", "")):
+        n = _norm(token)
+        if n and n not in _NON_VENUE_TOKENS:
+            return n
+    return ""
+
+
+def _venue_match(instrument: InstrumentRow, c: GlobalContract) -> bool:
+    """§ WP10 anchor (B) — the returned REAL venue intersects the registry translation of the instrument's
+    FIRDS MIC. The instrument's stored venue is a FIRDS MIC; the returned venue is an IBKR code (XPAR vs
+    SBF), so we translate via the fail-closed registry before intersecting. An unmapped MIC yields NO
+    expected venue → False (the venue is unconfirmable). Routing pseudo-venues (SMART, …) and NULLs are
+    excluded from the returned side, so neither can satisfy the constraint by coincidence."""
     expected_venues = {v.upper() for v in
                        (*resolve_ibkr_exchanges(instrument.exchange),
                         *resolve_ibkr_exchanges(instrument.primary_exchange)) if v}
@@ -276,7 +294,49 @@ def _consistent(instrument: InstrumentRow, c: GlobalContract) -> bool:
         if is_ibkr_exchange(raw):
             expected_venues.add(_norm(raw))
     cand_venues = _real_venues(c.exchange, c.primary_exchange)   # IBKR codes, SMART/routing excluded
-    if not expected_venues or not (expected_venues & cand_venues):
+    return bool(expected_venues and (expected_venues & cand_venues))
+
+
+def _isin_echo_match(instrument: InstrumentRow, c: GlobalContract) -> bool:
+    """§ WP11 anchor (A) — IBKR echoed the instrument's EXACT ISIN in secIdList AND returned a real
+    (non-routing) venue. Fail-closed: the echo is a POSITIVE anchor only when present and equal; its absence
+    yields False here (the caller falls back to anchor B). A real returned venue is required so a verified
+    cash line always has a venue of record (§ WP11 area 3)."""
+    echo = _norm(getattr(c, "isin", ""))
+    want = _norm(getattr(instrument, "isin", ""))
+    if not echo or not want or echo != want:
+        return False
+    return bool(_venue_of_record(c))
+
+
+def _identity_anchor_ok(instrument: InstrumentRow, c: GlobalContract) -> bool:
+    """§ WP11 — a candidate is only an identity match if it satisfies a POSITIVE anchor beyond the ISIN
+    search key: (A) an ISIN echo (cash only), or (B) a registry venue-match. Verifying on the search key
+    alone (echo absent AND MIC unmapped) is NOT fail-closed and is forbidden. An ISIN echo that is PRESENT
+    but DIFFERENT is a hard identity conflict — never consistent, and never rescued by a venue match."""
+    echo = _norm(getattr(c, "isin", ""))
+    want = _norm(getattr(instrument, "isin", ""))
+    if echo and want and echo != want:
+        return False
+    # Anchor A (ISIN echo) is a CASH anchor; derivatives keep the WP10 venue-match anchor exclusively — their
+    # identity is venue+expiry+strike+right+multiplier, and an unmapped-venue derivative never reaches here.
+    if not _instrument_is_derivative(instrument) and _isin_echo_match(instrument, c):
+        return True
+    return _venue_match(instrument, c)
+
+
+def _consistent(instrument: InstrumentRow, c: GlobalContract) -> bool:
+    """True iff candidate `c` is consistent with EVERY known identity field of `instrument`. Currency, asset
+    class and a POSITIVE identity anchor (ISIN echo or venue match — see _identity_anchor_ok) are always
+    required, so neither a symbol nor the ISIN search key alone can ever make a candidate consistent."""
+    if c.con_id is None or c.con_id <= 0:
+        return False
+    if c.asset_class is None or not _class_compatible(instrument.asset_class, c.asset_class.value):
+        return False
+    inst_ccy = _norm(instrument.trading_currency)
+    if not inst_ccy or _norm(c.currency) != inst_ccy:
+        return False
+    if not _identity_anchor_ok(instrument, c):
         return False
     if instrument.con_id is not None and int(instrument.con_id) != c.con_id:
         return False
@@ -287,6 +347,44 @@ def _consistent(instrument: InstrumentRow, c: GlobalContract) -> bool:
     if instrument.strike and canon_decimal_text(instrument.strike) != canon_decimal_text(c.strike):
         return False
     return not (instrument.option_right and _norm(instrument.option_right) != _norm(c.right))
+
+
+def _any_candidate_in_currency(instrument: InstrumentRow, candidates: Iterable[GlobalContract]) -> bool:
+    """§ WP11 — does ANY returned candidate carry the requested trading currency (and a real conId)? Used to
+    tell a currency deviation (ISIN found, wrong currency → re-queryable) apart from a genuine identity
+    mismatch on a known venue."""
+    ccy = _norm(instrument.trading_currency)
+    return bool(ccy) and any(_norm(getattr(c, "currency", "")) == ccy and (getattr(c, "con_id", 0) or 0) > 0
+                             for c in candidates)
+
+
+# § WP11 — machine-readable sub-classification stored in instruments.qualification_detail (a closed
+# vocabulary; NULL when none applies). Derived from the final (status, reason, matched) so it never needs a
+# new qualification_status value. `matched` lets a VERIFIED outcome record WHICH anchor confirmed it.
+_QUALIFICATION_DETAIL_KINDS = frozenset({
+    "verified_isin_echo", "verified_venue_match", "ambiguous", "currency_conflict", "bond_not_found",
+    "venue_unresolved", "not_found",
+})
+
+
+def _qualification_detail(status: QualificationStatus, reason: str, instrument: InstrumentRow,
+                          matched: GlobalContract | None) -> str | None:
+    """Canonical sub-classification for the outcome, or None. Never introduces a new status — it is a
+    queryable refinement of the eight existing ones."""
+    if status is QualificationStatus.VERIFIED:
+        echo = _norm(getattr(matched, "isin", "")) if matched is not None else ""
+        want = _norm(getattr(instrument, "isin", ""))
+        return "verified_isin_echo" if (echo and want and echo == want) else "verified_venue_match"
+    if status is QualificationStatus.AMBIGUOUS:
+        return "ambiguous"
+    if status is QualificationStatus.NOT_TRADABLE:
+        return "not_found"
+    if status is QualificationStatus.ERROR_RETRYABLE:
+        r = (reason or "").lower()
+        for kind in ("currency_conflict", "bond_not_found", "venue_unresolved"):
+            if kind in r:
+                return kind
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -409,20 +507,39 @@ class IbkrQualificationClient:
 
     @staticmethod
     def _build_contract(request: QualificationRequest) -> Any:
-        """§ WP10 — build a read-only contract-details query WITHOUT the two namespace bugs that produced the
-        canary's spurious NOT_TRADABLE results:
-          * The FIRDS symbol is the ISIN, not an IBKR ticker — so we NEVER put it in Contract.symbol and
-            instead discover by ISIN (secIdType='ISIN', secId=<isin>), or by a previously-resolved conId.
+        """§ WP10/WP11 — build a read-only contract-details query WITHOUT the namespace bugs that produced the
+        canary's spurious NOT_TRADABLE results, with the asset-class-correct discovery path:
+          * The FIRDS symbol is the ISIN, not an IBKR ticker — so we NEVER put it in Contract.symbol (except
+            for BONDs, see below) and instead discover by ISIN (secIdType='ISIN', secId=<isin>), or by a
+            previously-resolved conId.
           * The FIRDS MIC is NOT an IBKR exchange code — so we NEVER send it raw. Cash uses exchange='SMART'
             (search/routing only) plus, when the MIC is in the fail-closed venue registry, an IBKR
             primaryExchange to disambiguate. Derivatives need a concrete IBKR exchange, resolved via the
             registry; an unmapped MIC raises VenueResolutionError (re-queryable) rather than sending a bad
             destination and being misread as NOT_TRADABLE.
+          * § WP11 BOND: IBKR resolves bonds by the CUSIP/ISIN placed in Contract.symbol with secType='BOND'
+            — NOT via secIdType/secId. WP10's bond query used secIdType='ISIN', which is malformed for BOND,
+            so genuine bond lookups returned empty and were misread as NOT_TRADABLE. Route via SMART.
+          * § WP11 CASH currency: currency is OMITTED from the ISIN-discovery query so a listing that exists
+            only in another currency is OBSERVED (→ non-terminal currency_conflict) rather than collapsing to
+            an empty result / false NOT_TRADABLE; currency is re-applied as a Python-side consistency
+            constraint (see _consistent). conId/ticker/derivative queries keep currency as an identity field.
         """
         sec_type = request.sec_type
         is_derivative = sec_type in ("FUT", "OPT", "FOP")
         venue = request.exchange or request.primary_exchange
-        kwargs: dict[str, Any] = {"secType": sec_type, "currency": request.currency}
+
+        # --- BOND: ISIN/CUSIP in the symbol field, routed via SMART (never secIdType, never the raw MIC) ---
+        if sec_type == "BOND":
+            if not request.isin:
+                raise VenueResolutionError(
+                    "no ISIN for a BOND security-definition query (IBKR resolves bonds by the ISIN/CUSIP in "
+                    "the symbol field) — re-query once an identifier is available", code="venue_unresolved")
+            import ib_async  # lazy: no broker SDK at module load, and only after the query is validated
+            return ib_async.Contract(secType="BOND", symbol=request.isin, exchange="SMART",
+                                     currency=request.currency)
+
+        kwargs: dict[str, Any] = {"secType": sec_type}
 
         # --- venue: translate a FIRDS MIC to its IBKR code; accept a token that is ALREADY an IBKR code
         # (US listing sources); never send a raw ISO MIC ---
@@ -445,11 +562,16 @@ class IbkrQualificationClient:
         # ticker branch — we never send symbol==ISIN. ---
         if request.con_id:
             kwargs["conId"] = request.con_id
+            kwargs["currency"] = request.currency
         elif request.isin:
             kwargs["secIdType"] = "ISIN"
             kwargs["secId"] = request.isin
+            if is_derivative:
+                kwargs["currency"] = request.currency        # derivatives need currency as an identity field
+            # § WP11 cash: currency intentionally omitted here (observe currency deviation in Python).
         elif request.symbol and not is_derivative and is_ibkr_exchange(venue):
             kwargs["symbol"] = request.symbol
+            kwargs["currency"] = request.currency
         else:
             raise VenueResolutionError(
                 "no ISIN, conId or IBKR-venue ticker available — cannot build a reliable IBKR query (a FIRDS "
@@ -559,6 +681,11 @@ async def qualify_instruments(store, client: QualificationClient, *, run_label: 
                     status, matched, reason, cand_count, conn_lost, count_attempt = await _qualify_one(
                         client, inst, attempts, config.max_attempts)
                     verification, tradability, market_data, con_id, set_lv = _outcome_fields(status, matched)
+                    # § WP11 — the REAL IBKR venue returned for a verified contract (never the FIRDS MIC,
+                    # never SMART). Recorded in a NEW column so the instrument's FIRDS-MIC provenance (used by
+                    # resolve_ibkr_exchanges next run) is preserved — overwriting it would break idempotency.
+                    _verified = status is QualificationStatus.VERIFIED and matched is not None
+                    ibkr_primary_exchange = (_venue_of_record(matched) or None) if _verified else None
                     # Fail-closed conId collision guard: never overwrite another instrument's verified conId.
                     if status is QualificationStatus.VERIFIED and con_id is not None:
                         owner = store.iq_find_instrument_by_conid(con_id)
@@ -566,16 +693,20 @@ async def qualify_instruments(store, client: QualificationClient, *, run_label: 
                             status, reason = QualificationStatus.AMBIGUOUS, (
                                 f"conId {con_id} already assigned to {owner.instrument_id}")
                             verification, tradability, market_data, con_id, set_lv = None, None, None, None, False
+                            ibkr_primary_exchange = None
+                    detail = _qualification_detail(status, reason, inst, matched)   # § WP11 sub-class
                     seq += 1
                     store.iq_apply_outcome(
                         inst.instrument_id, run_id=run_id, qualification_status=status.value, reason=reason,
                         verification_status=verification, tradability_status=tradability,
                         market_data_status=market_data, con_id=con_id, set_last_verified=set_lv,
                         count_attempt=count_attempt,   # False for broker-outage AND venue-resolution faults
+                        qualification_detail=detail, ibkr_primary_exchange=ibkr_primary_exchange,
                         event={"id": f"{run_id}-e{seq}", "seq": seq, "market": market,
                                "instrument_id": inst.instrument_id, "event_type": "QUALIFY_RESULT",
                                "severity": "ERROR" if "ERROR" in status.value else "INFO",
                                "status": status.value, "con_id": con_id, "candidate_count": cand_count,
+                               "detail": detail, "ibkr_primary_exchange": ibkr_primary_exchange,
                                "reason": reason})
                     if conn_lost:                          # ConnectionUnavailableError by type — abort the run
                         connection_lost = True
@@ -635,26 +766,51 @@ async def _qualify_one(client: QualificationClient, inst, attempts: int, max_att
         details = await client.fetch_contract_details(request)
         candidates = [contract_detail_to_global(d) for d in details]
         outcome = match_contract(inst, candidates)
-        # § WP10 — contract(s) WERE returned but none is consistent, AND the instrument's FIRDS MIC is not in
-        # the venue registry: the mismatch is a venue-resolution gap (we cannot confirm the venue), NOT a
-        # tradability verdict. Reclassify to a re-queryable, budget-neutral ERROR_RETRYABLE — never a false
-        # terminal NOT_TRADABLE. (A genuinely EMPTY result — candidate_count 0 — on an unmapped MIC stays
-        # NOT_TRADABLE: the ISIN query was well-formed and IBKR found nothing.)
-        if (outcome.status is QualificationStatus.NOT_TRADABLE and outcome.candidate_count > 0
-                and not _venue_resolvable(inst)):
-            return (QualificationStatus.ERROR_RETRYABLE, None,
-                    f"venue_unresolved: {outcome.candidate_count} contract(s) returned but MIC "
-                    f"{inst.exchange!r} is unmapped — cannot confirm venue; re-query once the registry maps it",
-                    outcome.candidate_count, False, False)
+        # § WP10/WP11 — a terminal NOT_TRADABLE from the matcher must be RE-EXAMINED before it stands, so a
+        # query/venue/currency/universe artifact never becomes a false global tradability verdict.
+        if outcome.status is QualificationStatus.NOT_TRADABLE:
+            asset = (inst.asset_class or "").strip().lower()
+            if outcome.candidate_count == 0:
+                # A genuinely EMPTY, well-formed result. For a BOND (§ WP11) this is NOT a global verdict —
+                # IBKR's bond universe is entitlement/account-scoped — so it is a re-queryable, budget-neutral
+                # gap, never terminal NOT_TRADABLE. For cash, an empty ISIN lookup is a real not-found.
+                if asset == "bond":
+                    return (QualificationStatus.ERROR_RETRYABLE, None,
+                            "bond_not_found: a well-formed BOND ISIN lookup returned nothing — IBKR's bond "
+                            "universe is entitlement/account-scoped, so this is not a tradability verdict; "
+                            "re-query with the proper entitlement", 0, False, False)
+                return outcome.status, outcome.matched, outcome.reason, outcome.candidate_count, False, True
+            # Contract(s) WERE returned but none is consistent — determine WHY (fail-closed; a merely
+            # unconfirmable identity/venue/currency is re-queryable, NEVER a false NOT_TRADABLE).
+            if not _any_candidate_in_currency(inst, candidates):
+                # § WP11 (c) — the ISIN resolved to contract(s), but none in the requested currency.
+                return (QualificationStatus.ERROR_RETRYABLE, None,
+                        f"currency_conflict: {outcome.candidate_count} contract(s) for the ISIN but none in "
+                        f"the requested currency {inst.trading_currency!r}; re-query once the currency is "
+                        "reconciled", outcome.candidate_count, False, False)
+            if not _venue_resolvable(inst):
+                # § WP10 — returned-but-inconsistent on an UNMAPPED MIC: a venue-resolution gap, re-queryable.
+                return (QualificationStatus.ERROR_RETRYABLE, None,
+                        f"venue_unresolved: {outcome.candidate_count} contract(s) returned but MIC "
+                        f"{inst.exchange!r} is unmapped — cannot confirm venue; re-query once the registry "
+                        "maps it", outcome.candidate_count, False, False)
+            # Mapped MIC, currency present, candidates returned but none consistent → a genuine identity
+            # mismatch on a KNOWN venue (e.g. wrong venue returned). Keep the terminal NOT_TRADABLE (WP10).
+            return outcome.status, outcome.matched, outcome.reason, outcome.candidate_count, False, True
         return outcome.status, outcome.matched, outcome.reason, outcome.candidate_count, False, True
     except MarketDataNotEntitledError as exc:
         return QualificationStatus.MARKET_DATA_NOT_ENTITLED, None, exc.reason, 0, False, True
     except NotTradableError as exc:
         return QualificationStatus.NOT_TRADABLE, None, exc.reason, 0, False, True
+    except AmbiguousContractError as exc:          # § WP11: IBKR reported ambiguity → AMBIGUOUS (terminal)
+        return QualificationStatus.AMBIGUOUS, None, exc.reason, 0, False, True
     except PermanentQualificationError as exc:
         return QualificationStatus.ERROR_PERMANENT, None, exc.reason, 0, False, True
-    except VenueResolutionError as exc:            # § WP10: re-selectable, budget-neutral, NOT run-aborting
-        return QualificationStatus.ERROR_RETRYABLE, None, exc.reason, 0, False, False
+    except VenueResolutionError as exc:            # § WP10/WP11: re-selectable, budget-neutral, NOT aborting
+        # Carry the machine code ('venue_unresolved') into the reason so _qualification_detail labels an
+        # exception-path venue gap (unmapped derivative, bond-without-ISIN, error-200) identically to the
+        # in-matcher reclassification path — otherwise the analytics column would be NULL for those rows.
+        return QualificationStatus.ERROR_RETRYABLE, None, f"{exc.code}: {exc.reason}", 0, False, False
     except ConnectionUnavailableError as exc:      # broker outage: re-selectable, budget-neutral, aborting
         return QualificationStatus.ERROR_RETRYABLE, None, exc.reason, 0, True, False
     except RetryableQualificationError as exc:

@@ -169,7 +169,7 @@ def test_migrations_18_19_apply_sequentially_after_1_17():
     s = open_store(str(Path(tempfile.mkdtemp()) / "atp.db"))   # applies 1..20 in order
     rows = s._all("SELECT version, name FROM schema_migrations ORDER BY version")
     versions = [int(r[0]) for r in rows]
-    assert versions == list(range(1, 32))          # 1..31 all applied, in order (WP8-integrated)
+    assert versions == list(range(1, 33))          # 1..32 all applied, in order (WP8-integrated; WP11 = 32)
     names = {int(r[0]): r[1] for r in rows}
     assert names[18] == "research_backtesting" and names[19] == "backtest_actual_risk"
     assert names[20] == "research_datasets"        # R3.0A immutable dataset tables
@@ -184,6 +184,8 @@ def test_migrations_18_19_apply_sequentially_after_1_17():
     assert names[29] == "global_news_official_filings"     # WP5 worldwide news & official filings
     assert names[30] == "macro_geopolitical_events"        # WP6 macro/geopolitical/regulatory events
     assert names[31] == "global_fundamentals_macro_series" # WP7 fundamentals & macro series
+    assert names[32] == "instrument_qualification_detail_venue"  # WP11 additive detail + returned venue
+    s._one("SELECT qualification_detail, ibkr_primary_exchange FROM instruments")   # 32's columns exist
     s._one("SELECT instrument_id FROM instruments")                 # 26's tables exist
     s._one("SELECT message_id FROM news_messages")                  # 29 (news) tables exist
     s._one("SELECT source_id FROM news_sources")
@@ -213,7 +215,7 @@ def test_migrations_18_19_apply_sequentially_after_1_17():
     a = _open(same_path)
     b = _open(same_path)                                    # migrate again over an already-migrated db
     assert [int(r[0]) for r in b._all("SELECT version FROM schema_migrations ORDER BY version")] \
-        == list(range(1, 32))
+        == list(range(1, 33))
 
 
 def test_failed_migration_version_is_not_recorded_and_retry_is_safe():

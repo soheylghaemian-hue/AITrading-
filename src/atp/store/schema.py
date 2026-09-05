@@ -1708,6 +1708,33 @@ def _migration_031(dialect: str) -> list[str]:
 
 
 
+def _migration_032(dialect: str) -> list[str]:
+    """§ WP11 — Canonical Venue & Instrument Identity Resolution. PURELY ADDITIVE and backward compatible:
+    two nullable TEXT columns on `instruments`, no existing column, CHECK, index, trigger or run counter is
+    touched.
+
+      * `qualification_detail` — a machine-readable sub-classification of a qualification outcome (closed
+        vocabulary: verified_isin_echo / verified_venue_match / ambiguous / currency_conflict /
+        bond_not_found / venue_unresolved / not_found). It refines — never replaces — the 8-value
+        `qualification_status`, so NO status CHECK change, NO run *_count column, and NO enum/counter
+        lock-step is required (adding a status value would need all of those AND, on SQLite, an unsafe
+        rebuild of this FK-parent table — deferred by design; see docs/WP11_*).
+      * `ibkr_primary_exchange` — the REAL IBKR venue IBKR returned for a VERIFIED contract (its
+        primaryExchange), stored SEPARATELY from the FIRDS-MIC `primary_exchange` so the MIC provenance that
+        `resolve_ibkr_exchanges` consumes on the next run is never overwritten (re-run idempotency).
+
+    `ALTER TABLE ... ADD COLUMN <col> TEXT` (nullable, no default) is a metadata-only change on BOTH
+    dialects and is safe even though `instruments` is the FK parent of several tables: it performs no
+    DROP/CREATE/RENAME, so no child FK is disturbed and `PRAGMA foreign_keys` never needs toggling (which is
+    impossible inside the migrator's per-migration transaction). NO trading, NO orders/execution, NO
+    market-data subscription, NO account path."""
+    txt = _types(dialect)["TXT"]
+    return [
+        f"ALTER TABLE instruments ADD COLUMN qualification_detail {txt}",
+        f"ALTER TABLE instruments ADD COLUMN ibkr_primary_exchange {txt}",
+    ]
+
+
 # (version, name, builder) — append new migrations, never edit an applied one.
 MIGRATIONS = [
     (1, "initial_schema", _statements),
@@ -1741,6 +1768,7 @@ MIGRATIONS = [
     (29, "global_news_official_filings", _migration_029),
     (30, "macro_geopolitical_events", _migration_030),
     (31, "global_fundamentals_macro_series", _migration_031),
+    (32, "instrument_qualification_detail_venue", _migration_032),
 ]
 
 
